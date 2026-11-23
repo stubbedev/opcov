@@ -6,4 +6,5 @@
 /tests/phpt/**/*.log
 /tests/phpt/**/*.out
 /tests/phpt/**/*.php
+!/tests/phpt/**/fixtures/**/*.php
 /tests/phpt/**/*.sh
