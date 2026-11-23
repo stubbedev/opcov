@@ -1,0 +1,23 @@
+name: "parity-corpus"
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  corpus:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+      - name: Compare opcov with Xdebug and PCOV on pinned real projects
+        run: |
+          extension="$(nix build --no-link --print-out-paths .#opcov-php85)/lib/php/extensions/opcov.so"
+          OPCOV_EXTENSION="$extension" tools/measure/parity --suite corpus

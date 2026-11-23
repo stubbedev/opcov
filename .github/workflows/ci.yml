@@ -66,3 +66,21 @@ jobs:
     with:
       images: ${{ needs.plan.outputs.images }}
       rust-toolchain: ${{ needs.plan.outputs.rust-toolchain }}
+
+  parity:
+    strategy:
+      fail-fast: false
+      matrix:
+        php: [php84, php85]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+      - name: Compare opcov with Xdebug and PCOV on the fixtures
+        env:
+          OPCOV_MEASURE_PHP: ${{ matrix.php }}
+        run: |
+          extension="$(nix build --no-link --print-out-paths ".#opcov-${{ matrix.php }}")/lib/php/extensions/opcov.so"
+          OPCOV_EXTENSION="$extension" tools/measure/parity

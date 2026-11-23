@@ -103,3 +103,11 @@ php-check:
     mago lint
     mago fmt --check
     php vendor/bin/phpunit
+
+# Compare opcov with Xdebug and PCOV on the fixtures, or on pinned real projects with `--suite corpus`; see docs/parity.md.
+parity *args:
+    tools/measure/parity {{ args }}
+
+# Benchmark opcov against the other coverage drivers; see docs/benchmarks.md.
+bench *args:
+    tools/measure/bench {{ args }}
