@@ -4,6 +4,9 @@
     config,
     craneLib,
     lib,
+    phpDefault,
+    phpEnv,
+    phpShell,
     pkgs,
     self',
     ...
@@ -24,11 +27,14 @@
           sccache
           bacon
           just
+          jq
           git
           gh
+          phpShell
+          rustPlatform.bindgenHook
         ];
 
-        env = cargoEnv // {RUSTC_WRAPPER = lib.getExe pkgs.sccache;};
+        env = cargoEnv // phpEnv phpDefault // {RUSTC_WRAPPER = lib.getExe pkgs.sccache;};
       };
   };
 }

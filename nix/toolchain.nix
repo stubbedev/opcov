@@ -5,7 +5,6 @@
         extensions = [
           "rust-analyzer"
           "rust-src"
-          "rustc-codegen-cranelift-preview"
         ];
       });
   in {
@@ -18,8 +17,6 @@
           else p.clangStdenv;
       });
       cargoEnv = {
-        CARGO_UNSTABLE_CODEGEN_BACKEND = "true";
-        CARGO_PROFILE_DEV_CODEGEN_BACKEND = "cranelift";
         CARGO_BUILD_RUSTFLAGS = "-Zthreads=8";
       };
     };

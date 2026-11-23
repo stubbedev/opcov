@@ -1,0 +1,21 @@
+[package]
+name = "opcov-ext"
+version.workspace = true
+edition.workspace = true
+description = "The opcov PHP extension: fire-once opcode probes for line, branch-outcome and loop coverage"
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+engine-selftest = []
+
+[dependencies]
+opcov-sys.workspace = true
+
+[lints]
+workspace = true

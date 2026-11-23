@@ -7,6 +7,7 @@ runs:
     - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
     - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
       with:
-        primary-key: nix-${{ runner.os }}-${{ github.job }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'nix/**') }}
-        restore-prefixes-first-match: nix-${{ runner.os }}-${{ github.job }}-
+        primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'nix/**') }}
+        restore-prefixes-first-match: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
         gc-max-store-size-linux: 5G
+        gc-max-store-size-macos: 5G

@@ -1,3 +1,9 @@
 /target
 /result
 /.direnv
+/tests/phpt/**/*.diff
+/tests/phpt/**/*.exp
+/tests/phpt/**/*.log
+/tests/phpt/**/*.out
+/tests/phpt/**/*.php
+/tests/phpt/**/*.sh

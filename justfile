@@ -1,11 +1,16 @@
 # opcov dev tasks.
 
+set shell := ["bash", "-euo", "pipefail", "-c"]
+set script-interpreter := ["bash", "-euo", "pipefail"]
+
+php_config := env("PHP_CONFIG", "php-config")
+
 # List all recipes with their descriptions.
 default:
     @just --list
 
-# Run every release gate in order: fmt-check, lint, deny, shear, test, build.
-check: fmt-check lint deny shear test build
+# Run every release gate in order: fmt-check, lint, deny, shear, test, build, phpt.
+check: fmt-check lint deny shear test build phpt
 
 # Fail when any file is not formatted per nix/treefmt.nix.
 fmt-check:
@@ -31,10 +36,15 @@ test:
 build:
     cargo build --locked
 
-# Rerun a bacon job on every save: clippy-all by default, or e.g. `just watch nextest`.
-watch job="clippy-all":
-    bacon {{ job }}
+# Build the extension with its engine self-test and run the whole .phpt suite against php-config's PHP.
+phpt:
+    extension="$(cargo build --locked --package opcov-ext --features engine-selftest --message-format=json-render-diagnostics | jq -r 'select(.reason == "compiler-artifact" and .target.name == "opcov_ext") | .filenames[]')" && just phpt-run "$extension" tests/phpt
 
-# Format every file in place per nix/treefmt.nix.
-fmt:
-    treefmt
+# Run the .phpt tests under `paths` with php-src's run-tests.php, loading the extension at `extension`.
+[script]
+phpt-run extension +paths:
+    php="$({{ php_config }} --php-binary)"
+    runner="$(mktemp -d)"
+    trap 'rm -r "$runner"' EXIT
+    cp "{{ env('PHP_RUN_TESTS') }}" "$runner/run-tests.php"
+    "$php" "$runner/run-tests.php" -n -q --show-diff -p "$php" -d "extension={{ extension }}" {{ paths }}

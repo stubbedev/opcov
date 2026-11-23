@@ -27,6 +27,7 @@
       systems = nixpkgs.lib.systems.flakeExposed;
       imports = [
         ./nix/package.nix
+        ./nix/php.nix
         ./nix/shell.nix
         ./nix/toolchain.nix
         ./nix/treefmt.nix
