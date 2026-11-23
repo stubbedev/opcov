@@ -1,0 +1,40 @@
+# opcov dev tasks.
+
+# List all recipes with their descriptions.
+default:
+    @just --list
+
+# Run every release gate in order: fmt-check, lint, deny, shear, test, build.
+check: fmt-check lint deny shear test build
+
+# Fail when any file is not formatted per nix/treefmt.nix.
+fmt-check:
+    treefmt --ci
+
+# Lint every target; the lint levels live in Cargo.toml's [lints].
+lint:
+    cargo clippy --all-targets --locked -- -D warnings
+
+# Check deny.toml's policy: every check by default, or a subset, e.g. `just deny advisories`.
+deny *checks:
+    cargo deny --locked check {{ checks }}
+
+# Fail on dependencies no target uses.
+shear:
+    cargo shear --locked --deny-warnings --check-test-targets
+
+# Run the test suite with cargo-nextest; profiles live in .config/nextest.toml.
+test:
+    cargo nextest run --locked
+
+# Compile-check every target.
+build:
+    cargo build --locked
+
+# Rerun a bacon job on every save: clippy-all by default, or e.g. `just watch nextest`.
+watch job="clippy-all":
+    bacon {{ job }}
+
+# Format every file in place per nix/treefmt.nix.
+fmt:
+    treefmt
