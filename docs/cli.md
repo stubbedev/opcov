@@ -242,16 +242,16 @@ Exactly one of `--diff` and `--files` is required.
 ### Which functions are checked
 
 - A changed line selects the innermost function (by source span) that contains
-  it. Lines removed by the diff select the innermost function that contains the
-  gap they left (a deletion between two methods selects neither method, only
-  the file's `{main}`). A bare path selects every function of the file.
+  it. A run of removed lines that the diff replaces by new lines selects only
+  through the new lines. A run of removed lines with no new lines in its place
+  (a pure deletion) selects the innermost function that contains the gap it
+  left (a deletion between two methods selects neither method, only the file's
+  `{main}`). A bare path selects every function of the file.
 - A selected function also selects the closures and arrow functions nested in
   it, since they are part of its code.
 - Function ranges come from parsing the current source with `opcov-syntax`.
-- A changed file the report does not contain (not measured, outside the root,
-  or not PHP) is listed under "not in the report" and is not a finding. The
-  gate cannot tell a file that no test loaded from one outside the collect
-  paths.
+- A changed file the report does not contain is handled as described in
+  [Changed files the report does not contain](#changed-files-the-report-does-not-contain).
 - **Callers of changed members.** Finding the consumers of a changed member
   needs a call graph, which opcov does not build. Pass the consumers' ranges as
   extra `--files` entries; they are checked like any other change.
@@ -270,6 +270,32 @@ that ran it, so a mutation step can rerun only those. A function that the
 source declares but the report lacks is marked "not in the report" and only
 its lines are checked.
 
+### Changed files the report does not contain
+
+The extension measures the files PHP compiles during the run, so a changed file
+that no test loaded is not in the report. The gate decides for each such file
+whether the run would have measured it, from the report's `settings`:
+
+| The changed file | Result |
+|---|---|
+| does not end in `.php` | not in the report, `not a .php file` |
+| is outside the report's `paths.root` | not in the report, `outside the report's root` |
+| does not exist | not in the report, `does not exist` (`--files` naming a deleted file; a diff never lists deleted files) |
+| is not below a `collect_paths` entry, or is below an `exclude_paths` entry | not in the report, with the reason as the extension states it (`not in opcov.collect_paths`, `excluded by opcov.exclude_paths entry <entry>`) |
+| is selected by the paths while the report has an `exclude_pattern` | not in the report: the pattern is a PCRE that only PHP evaluates, so the gate cannot tell whether it excludes the file |
+| is selected | **a finding**: "never loaded by any test", with its changed lines and the gaps of removed lines, or the whole file for a bare path |
+
+A file that no test loaded is one finding, whatever the number of its changed
+lines: the report holds no executable lines for it, and the gate does not
+guess them from the source. This matches php-code-coverage, which includes the
+uncovered files of `<source>` by default, so an Xdebug-based gate fails on them
+too.
+
+Relative `collect_paths` and `exclude_paths` entries are resolved against
+`--base` (the working directory of the test run, which the extension resolved
+them against), and the changed file by its real path, as the extension does.
+An entry that no longer resolves is an error (exit code 2).
+
 Text output:
 
 ```
@@ -279,22 +305,29 @@ app/Foo.php
     loop l1 (Foreach, line 13) never ran zero times
     loop l1 (Foreach, line 13) never ran two or more times
     line 9: T\A::one, T\B::two
-gate: 3 finding(s) in 1 changed function(s)
+app/New.php
+  never loaded by any test: changed lines 3-5; lines removed before 9
+not in the report: README.md (not a .php file)
+gate: 4 finding(s) in 1 changed function(s) and 1 changed file(s) no test loaded
 ```
 
 JSON output (one line):
 
 ```json
-{"verdict":"findings","findings":3,"files":[{"path":"app/Foo.php","functions":[{
+{"verdict":"findings","findings":4,"files":[{"path":"app/Foo.php","functions":[{
   "key":"App\\Foo::bar","span":[7,5,17,6],"in_report":true,"uncovered_lines":[],
   "unseen_outcomes":[{"id":"o6","kind":"LoopSkip","line":13,"span":null}],
   "loops_never_zero":[{"id":"l1","kind":"Foreach","line":13}],
   "loops_never_twice":[{"id":"l1","kind":"Foreach","line":13}],
-  "lines":[{"line":9,"tests":["T\\A::one","T\\B::two"]}]}]}],"unmeasured":[]}
+  "lines":[{"line":9,"tests":["T\\A::one","T\\B::two"]}]}]}],
+  "unloaded":[{"path":"app/New.php","changed":{"parts":{"lines":[3,4,5],"removed_before":[9]}}}],
+  "unmeasured":[{"path":"README.md","reason":"not a .php file"}]}
 ```
 
 `verdict` is `pass` or `findings`; `kind` uses the report's outcome and loop
-kind spelling.
+kind spelling. `findings` counts every function finding plus one per
+`unloaded` file. An `unloaded` file's `changed` is `"whole_file"` or `parts`:
+its changed lines, and the lines that runs of removed lines stood before.
 
 ### Diff input
 

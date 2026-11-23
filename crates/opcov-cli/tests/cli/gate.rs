@@ -166,29 +166,185 @@ fn a_bare_path_checks_every_function_of_the_file() {
     );
 }
 
+fn edit_report(report: &Path, from: &str, to: &str) {
+    let text = fs::read_to_string(report).unwrap();
+    assert!(text.contains(from), "the report holds {from}");
+    fs::write(report, text.replacen(from, to, 1)).unwrap();
+}
+
+fn write_source(directory: &Path, relative: &str) {
+    let path = directory.join(relative);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        "<?php\n\nfunction fresh(): int\n{\n    return 1;\n}\n",
+    )
+    .unwrap();
+}
+
 #[test]
-fn lists_changed_files_missing_from_the_report_without_failing() {
-    let (directory, report) = project("gate_unmeasured", Extras::default());
+fn a_changed_file_no_test_loaded_is_a_finding() {
+    let (directory, report) = project("gate_unloaded", Extras::default());
+    write_source(&directory, "app/New.php");
+    let output = gate(&directory, &report, &["--files", "app/New.php:3-5,1"]);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a selected file that no test loaded fails the gate"
+    );
+    let text = stdout(&output);
+    assert!(
+        text.contains("app/New.php\n  never loaded by any test: changed lines 1, 3-5\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "gate: 1 finding(s) in 0 changed function(s) and 1 changed file(s) no test loaded\n"
+        ),
+        "{text}"
+    );
     let output = gate(
         &directory,
         &report,
-        &["--files", "README.md", "../outside.php"],
+        &[
+            "--files",
+            "app/New.php",
+            "app/Foo.php:28",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    let result = json(&output);
+    assert_eq!(result["verdict"], "findings", "verdict");
+    assert_eq!(result["findings"], 1, "one finding per unloaded file");
+    assert_eq!(
+        result["unloaded"],
+        serde_json::json!([{"path": "app/New.php", "changed": "whole_file"}]),
+        "a bare path changes the whole file"
+    );
+    assert_eq!(
+        function_keys(&result),
+        ["App\\helper", "{closure}@app/Foo.php:27-27"],
+        "loaded files are still checked per function"
+    );
+    assert_eq!(result["unmeasured"], serde_json::json!([]), "unmeasured");
+}
+
+#[test]
+fn a_diff_of_a_file_no_test_loaded_lists_its_changed_and_removed_lines() {
+    let (directory, report) = project("gate_unloaded_diff", Extras::default());
+    write_source(&directory, "app/New.php");
+    let patch = directory.join("change.diff");
+    fs::write(
+        &patch,
+        "--- a/app/New.php\n+++ b/app/New.php\n@@ -5 +5 @@\n-    return 2;\n+    return 1;\n@@ -7,2 +6,0 @@\n-\n-function gone() {}\n",
+    )
+    .unwrap();
+    let output = gate(
+        &directory,
+        &report,
+        &["--diff", patch.to_str().unwrap(), "--format", "json"],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert_eq!(
+        json(&output)["unloaded"],
+        serde_json::json!([{
+            "path": "app/New.php",
+            "changed": {"parts": {"lines": [5], "removed_before": [7]}}
+        }]),
+        "changed lines and the gaps of removed lines"
+    );
+}
+
+#[test]
+fn lists_changed_files_that_cannot_be_measured_without_failing() {
+    let (directory, report) = project("gate_unmeasured", Extras::default());
+    write_source(&directory, "tests/FooTest.php");
+    write_source(&directory, "app/Generated/Proxy.php");
+    edit_report(
+        &report,
+        r#""exclude_paths":[]"#,
+        r#""exclude_paths":["app/Generated"]"#,
+    );
+    let output = gate(
+        &directory,
+        &report,
+        &[
+            "--files",
+            "README.md",
+            "../outside.php",
+            "app/Gone.php",
+            "tests/FooTest.php",
+            "app/Generated/Proxy.php",
+        ],
     );
     assert_eq!(
         output.status.code(),
         Some(0),
-        "unmeasured files are not findings"
+        "unmeasurable files are not findings"
     );
     let text = stdout(&output);
-    assert!(text.contains("not in the report: README.md\n"), "{text}");
-    assert!(
-        text.contains("not in the report: ../outside.php\n"),
-        "{text}"
+    for line in [
+        "not in the report: README.md (not a .php file)\n",
+        "not in the report: ../outside.php (outside the report's root)\n",
+        "not in the report: app/Gone.php (does not exist)\n",
+        "not in the report: tests/FooTest.php (not in opcov.collect_paths)\n",
+        "not in the report: app/Generated/Proxy.php (excluded by opcov.exclude_paths entry ",
+        "gate: pass, 0 changed function(s) checked",
+    ] {
+        assert!(text.contains(line), "{line:?} in {text}");
+    }
+}
+
+#[test]
+fn does_not_guess_what_an_exclude_pattern_selects() {
+    let (directory, report) = project("gate_pattern", Extras::default());
+    write_source(&directory, "app/New.php");
+    edit_report(
+        &report,
+        r#""exclude_pattern":null"#,
+        r#""exclude_pattern":"~/New~""#,
     );
-    assert!(
-        text.contains("gate: pass, 0 changed function(s) checked"),
-        "{text}"
+    let output = gate(
+        &directory,
+        &report,
+        &["--files", "app/New.php", "--format", "json"],
     );
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    let result = json(&output);
+    assert_eq!(result["unloaded"], serde_json::json!([]), "no finding");
+    assert_eq!(
+        result["unmeasured"],
+        serde_json::json!([{
+            "path": "app/New.php",
+            "reason": "the report's opcov.exclude_pattern may exclude it, and the gate cannot evaluate PCRE patterns"
+        }]),
+        "the pattern is named as the reason"
+    );
+}
+
+#[test]
+fn refuses_a_collect_path_that_no_longer_resolves() {
+    let (directory, report) = project("gate_collect_missing", Extras::default());
+    write_source(&directory, "app/New.php");
+    edit_report(
+        &report,
+        r#""collect_paths":["app"]"#,
+        r#""collect_paths":["src"]"#,
+    );
+    let output = gate(&directory, &report, &["--files", "app/New.php"]);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "the selection cannot be rebuilt"
+    );
+    let message = stderr(&output);
+    assert!(
+        message.contains("cannot rebuild the report's file selection relative to"),
+        "{message}"
+    );
+    assert!(message.contains("src"), "{message}");
 }
 
 #[test]
@@ -234,7 +390,7 @@ fn reads_entries_from_list_files_and_standard_input() {
     );
     assert_eq!(
         result["unmeasured"],
-        serde_json::json!(["README.md"]),
+        serde_json::json!([{"path": "README.md", "reason": "not a .php file"}]),
         "unmeasured"
     );
 }

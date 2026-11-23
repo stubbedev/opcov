@@ -83,23 +83,24 @@ gate:
 
 ### Files no test loads
 
-The extension measures the files PHP compiles during the run. A changed file
-that no test loads is not in the report, and the gate lists it under "not in
-the report" without counting it as a finding, so a branch whose only change is
-an untested new file passes (exit code 0). php-code-coverage, by contrast,
-adds the files of `<source>` that no test loaded with every line uncovered
-(`includeUncoveredFiles`, on by default), so an Xdebug-based gate fails on
-them. The comparison below does not hit this, because the full suite loads
-every changed file; running only `--filter ByteStringTest` reproduces it:
-the Xdebug gate reports `Slugger/AsciiSlugger.php` with 54 uncovered lines,
-`opcov gate` lists it as not in the report and passes it. Until the gate
-reports such files itself, fail the job on them:
+The extension measures the files PHP compiles during the run, so a changed
+file that no test loads is not in the report. The gate fails on it (exit code
+1) when the run would have measured it, that is when it is a `.php` file below
+the report's `collect_paths` and below none of its `exclude_paths`: it is
+reported as "never loaded by any test" with its changed lines, and counts as
+one finding. php-code-coverage does the same by default
+(`includeUncoveredFiles`), so an Xdebug-based gate fails on the same files.
+The comparison below does not hit this, because the full suite loads every
+changed file; running only `--filter ByteStringTest` leaves
+`Slugger/AsciiSlugger.php` unloaded, which the Xdebug gate reports with 54
+uncovered lines.
 
-```sh
-git diff -U0 origin/main...HEAD -- src | opcov gate --report build/opcov.json --diff - --format json > gate.json || status=$?
-jq -e '.unmeasured | map(select(endswith(".php"))) | length == 0' gate.json
-exit "${status:-0}"
-```
+Changed files the run cannot measure (not `.php`, outside the collect paths or
+excluded by an exclude path, outside the report's root, deleted) are listed
+under "not in the report" and are not findings. A report with an
+`exclude_pattern` is the one case the gate cannot decide, since the pattern is
+a PCRE only PHP evaluates; such files are listed with that reason
+([cli.md](cli.md#changed-files-the-report-does-not-contain)).
 
 ### Callers of changed members
 
@@ -129,8 +130,9 @@ tools/measure/gate/gate compare --write-docs # and rewrite the results section o
   the child processes of process-isolated tests load it too. The
   reference script loads the serialized php-code-coverage object, parses the
   changed files with `nikic/php-parser`, selects the changed functions by the
-  same rules as `opcov gate` (the innermost function around a changed line or a
-  removed run of lines, plus the closures inside it) and reports per function
+  same rules as `opcov gate` (the innermost function around a changed line or
+  around a run of removed lines that no new lines replace, plus the closures
+  inside it) and reports per function
   the lines php-code-coverage counts as executable and not covered, and the
   branches never taken. A branch is Xdebug's notion: a basic block of the
   function, taken when any test executed it. php-code-coverage records hits

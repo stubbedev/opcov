@@ -6,10 +6,18 @@ use opcov_core::cfg::Line;
 use super::{Change, ChangeError, ChangeSet, FileChange, LineRange};
 
 #[derive(Debug, Clone, Copy)]
+enum Block {
+    Unchanged,
+    Removed { before: Line },
+    Added,
+}
+
+#[derive(Debug, Clone, Copy)]
 struct Hunk {
     old: u32,
     new: u32,
     next: u32,
+    block: Block,
 }
 
 enum Target {
@@ -162,7 +170,12 @@ impl Parser<'_> {
         } else {
             start
         };
-        self.hunk = Some(Hunk { old, new, next });
+        self.hunk = Some(Hunk {
+            old,
+            new,
+            next,
+            block: Block::Unchanged,
+        });
         return Ok(());
     }
 
@@ -170,33 +183,49 @@ impl Parser<'_> {
         return Line::new(number).ok_or_else(|| return self.fail("hunk refers to line 0"));
     }
 
+    fn close_block(&mut self, block: Block) {
+        if let Block::Removed { before } = block
+            && !matches!(self.target, Target::Deleted)
+        {
+            self.changes.insert(Change::Deletion { before });
+        }
+    }
+
     fn body(&mut self, mut hunk: Hunk, line: &[u8]) -> Result<(), ChangeError> {
-        let deleting = matches!(self.target, Target::Deleted);
         match line.first() {
             Some(b'\\') => return Ok(()),
             Some(b'+') if hunk.new > 0 => {
-                if !deleting {
+                if !matches!(self.target, Target::Deleted) {
                     let at = self.line_at(hunk.next)?;
                     self.changes.insert(Change::Lines(LineRange::single(at)));
                 }
+                hunk.block = Block::Added;
                 hunk.new = hunk.new.saturating_sub(1);
                 hunk.next = hunk.next.saturating_add(1);
             }
             Some(b'-') if hunk.old > 0 => {
-                if !deleting {
-                    let before = self.line_at(hunk.next)?;
-                    self.changes.insert(Change::Deletion { before });
+                if matches!(hunk.block, Block::Unchanged) {
+                    hunk.block = Block::Removed {
+                        before: self.line_at(hunk.next)?,
+                    };
                 }
                 hunk.old = hunk.old.saturating_sub(1);
             }
             Some(b' ') | None if hunk.old > 0 && hunk.new > 0 => {
+                self.close_block(hunk.block);
+                hunk.block = Block::Unchanged;
                 hunk.old = hunk.old.saturating_sub(1);
                 hunk.new = hunk.new.saturating_sub(1);
                 hunk.next = hunk.next.saturating_add(1);
             }
             _ => return Err(self.fail("line does not fit the hunk's line counts")),
         }
-        self.hunk = (hunk.old > 0 || hunk.new > 0).then_some(hunk);
+        if hunk.old > 0 || hunk.new > 0 {
+            self.hunk = Some(hunk);
+        } else {
+            self.close_block(hunk.block);
+            self.hunk = None;
+        }
         return Ok(());
     }
 

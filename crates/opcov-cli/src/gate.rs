@@ -1,22 +1,37 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use opcov_core::cfg::{Line, LoopShape};
+use opcov_core::filter::{
+    CaseSensitivity, CompiledFile, Decision, Selection, SelectionConfig, SkipReason,
+};
 use opcov_core::kind::EdgeKind;
 use opcov_core::report::{
-    FileCoverage, Function, Header, HitSet, Identified, LoopId, OutcomeId, SourcePath,
+    FileCoverage, Function, Header, HitSet, Identified, LoopId, OutcomeId, Settings, SourcePath,
     Span as ReportSpan, TestTable,
 };
 use opcov_syntax::{FunctionSource, Span};
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
 use crate::changes::{Change, ChangeSet, FileChange, resolve};
 use crate::failure::{Failure, Verdict};
 use crate::source;
 use crate::stream;
-use crate::view::is_nested;
+use crate::view::{is_nested, location};
+
+const CASE: CaseSensitivity = if cfg!(target_os = "macos") {
+    CaseSensitivity::Insensitive
+} else {
+    CaseSensitivity::Sensitive
+};
+
+const PHP_EXTENSION: &str = "php";
+const COLLECT_LISTFILE: &str = "collect_paths";
+const EXCLUDE_LISTFILE: &str = "exclude_paths";
 
 #[derive(Debug, Serialize)]
 pub(crate) struct OutcomeFinding {
@@ -68,6 +83,81 @@ pub(crate) struct FileResult<'r> {
     functions: Vec<FunctionResult<'r>>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ChangedLines {
+    WholeFile,
+    Parts {
+        lines: Vec<Line>,
+        removed_before: Vec<Line>,
+    },
+}
+
+impl ChangedLines {
+    fn of(changes: &[&FileChange]) -> Self {
+        let mut lines = BTreeSet::new();
+        let mut removed_before = BTreeSet::new();
+        for change in changes {
+            let FileChange::Parts(parts) = change else {
+                return Self::WholeFile;
+            };
+            for part in parts {
+                match *part {
+                    Change::Lines(range) => lines.extend(range.lines()),
+                    Change::Deletion { before } => {
+                        removed_before.insert(before);
+                    }
+                }
+            }
+        }
+        return Self::Parts {
+            lines: lines.into_iter().collect(),
+            removed_before: removed_before.into_iter().collect(),
+        };
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct UnloadedFile {
+    path: SourcePath,
+    changed: ChangedLines,
+}
+
+#[derive(Debug)]
+enum Unmeasurable {
+    OutsideRoot,
+    NotPhp,
+    Missing,
+    NotSelected(SkipReason),
+    PatternNotEvaluated,
+}
+
+impl fmt::Display for Unmeasurable {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        return match self {
+            Self::OutsideRoot => formatter.write_str("outside the report's root"),
+            Self::NotPhp => write!(formatter, "not a .{PHP_EXTENSION} file"),
+            Self::Missing => formatter.write_str("does not exist"),
+            Self::NotSelected(reason) => write!(formatter, "{reason}"),
+            Self::PatternNotEvaluated => formatter.write_str(
+                "the report's opcov.exclude_pattern may exclude it, and the gate cannot evaluate PCRE patterns",
+            ),
+        };
+    }
+}
+
+impl Serialize for Unmeasurable {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        return serializer.collect_str(self);
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct Unmeasured {
+    path: String,
+    reason: Unmeasurable,
+}
+
 #[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum VerdictName {
@@ -80,7 +170,8 @@ pub(crate) struct GateResult<'r> {
     verdict: VerdictName,
     findings: usize,
     files: Vec<FileResult<'r>>,
-    unmeasured: Vec<String>,
+    unloaded: Vec<UnloadedFile>,
+    unmeasured: Vec<Unmeasured>,
 }
 
 impl GateResult<'_> {
@@ -282,20 +373,117 @@ fn evaluate_file<'r>(
     });
 }
 
+fn selection(settings: &Settings, base: &Path) -> Result<Selection, Failure> {
+    let entries = |listfile: &Path| {
+        let configured = if listfile == Path::new(COLLECT_LISTFILE) {
+            &settings.collect_paths
+        } else if listfile == Path::new(EXCLUDE_LISTFILE) {
+            &settings.exclude_paths
+        } else {
+            return Err(io::Error::other(format!(
+                "the report names no setting {}",
+                listfile.display()
+            )));
+        };
+        return Ok(configured
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join("\n"));
+    };
+    let exclude = if settings.exclude_paths.is_empty() {
+        String::new()
+    } else {
+        format!("@{EXCLUDE_LISTFILE}")
+    };
+    return SelectionConfig::parse(&format!("@{COLLECT_LISTFILE}"), &exclude, entries)
+        .and_then(|unresolved| {
+            return unresolved.resolve(|entry| return fs::canonicalize(base.join(entry)), CASE);
+        })
+        .map_err(|error| {
+            return Failure::failed(format!(
+                "cannot rebuild the report's file selection relative to {}: {error}",
+                base.display()
+            ));
+        });
+}
+
+fn canonical(disk: &Path) -> Result<Option<PathBuf>, Failure> {
+    return match fs::canonicalize(disk) {
+        Ok(resolved) => Ok(Some(resolved)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(Failure::io("resolve", disk, &error)),
+    };
+}
+
+fn split_unloaded<'c>(
+    header: &Header,
+    base: &Path,
+    missing: impl Iterator<Item = (SourcePath, Vec<&'c FileChange>)>,
+) -> Result<(Vec<UnloadedFile>, Vec<Unmeasured>), Failure> {
+    let mut unmeasured = Vec::new();
+    let mut candidates = Vec::new();
+    for (path, changes) in missing {
+        let is_php = Path::new(path.as_str())
+            .extension()
+            .is_some_and(|extension| return extension == PHP_EXTENSION);
+        if !is_php {
+            unmeasured.push(Unmeasured {
+                path: path.to_string(),
+                reason: Unmeasurable::NotPhp,
+            });
+            continue;
+        }
+        match canonical(Path::new(&location(&header.paths, &path)))? {
+            Some(disk) => candidates.push((path, changes, disk)),
+            None => unmeasured.push(Unmeasured {
+                path: path.to_string(),
+                reason: Unmeasurable::Missing,
+            }),
+        }
+    }
+    if candidates.is_empty() {
+        return Ok((Vec::new(), unmeasured));
+    }
+    let selection = selection(&header.settings, base)?;
+    let mut unloaded = Vec::new();
+    for (path, changes, disk) in candidates {
+        let reason = match selection.decide(CompiledFile::Resolved(&disk), false) {
+            Decision::Skipped(reason) => Unmeasurable::NotSelected(reason),
+            Decision::Selected if header.settings.exclude_pattern.is_some() => {
+                Unmeasurable::PatternNotEvaluated
+            }
+            Decision::Selected => {
+                unloaded.push(UnloadedFile {
+                    path,
+                    changed: ChangedLines::of(&changes),
+                });
+                continue;
+            }
+        };
+        unmeasured.push(Unmeasured {
+            path: path.to_string(),
+            reason,
+        });
+    }
+    return Ok((unloaded, unmeasured));
+}
+
 pub(crate) fn evaluate<'r>(
     report: &Path,
     header: &'r Header,
     changes: &ChangeSet,
     base: &Path,
 ) -> Result<GateResult<'r>, Failure> {
-    let resolved: Vec<(&Path, Option<SourcePath>)> = changes
-        .files()
-        .map(|(changed, _)| return (changed, resolve(&header.paths, base, changed)))
-        .collect();
-    let mut targets: BTreeMap<&SourcePath, Vec<&FileChange>> = BTreeMap::new();
-    for ((_, path), (_, change)) in resolved.iter().zip(changes.files()) {
-        if let Some(path) = path {
-            targets.entry(path).or_default().push(change);
+    let mut targets: BTreeMap<SourcePath, Vec<&FileChange>> = BTreeMap::new();
+    let mut outside = Vec::new();
+    for (changed, change) in changes.files() {
+        match resolve(&header.paths, base, changed) {
+            Some(path) => targets.entry(path).or_default().push(change),
+            None => outside.push(Unmeasured {
+                path: changed.display().to_string(),
+                reason: Unmeasurable::OutsideRoot,
+            }),
         }
     }
     let mut files = Vec::with_capacity(targets.len());
@@ -313,19 +501,15 @@ pub(crate) fn evaluate<'r>(
         },
     )?;
     let measured: BTreeSet<&SourcePath> = files.iter().map(|file| return &file.path).collect();
-    let unmeasured = resolved
-        .iter()
-        .filter(|(_, path)| {
-            return path
-                .as_ref()
-                .is_none_or(|path| return !measured.contains(path));
-        })
-        .map(|(changed, _)| return changed.display().to_string())
-        .collect();
+    let missing = targets
+        .into_iter()
+        .filter(|(path, _)| return !measured.contains(path));
+    let (unloaded, mut unmeasured) = split_unloaded(header, base, missing)?;
+    unmeasured.extend(outside);
     let findings = files
         .iter()
         .flat_map(|file| return file.functions.iter())
-        .fold(0_usize, |total, function| {
+        .fold(unloaded.len(), |total, function| {
             return total.saturating_add(function.findings());
         });
     let verdict = if findings == 0 {
@@ -337,6 +521,7 @@ pub(crate) fn evaluate<'r>(
         verdict,
         findings,
         files,
+        unloaded,
         unmeasured,
     });
 }
@@ -421,6 +606,24 @@ fn render_function(out: &mut dyn Write, function: &FunctionResult<'_>) -> io::Re
     return Ok(());
 }
 
+fn render_unloaded(out: &mut dyn Write, changed: &ChangedLines) -> io::Result<()> {
+    let ChangedLines::Parts {
+        lines,
+        removed_before,
+    } = changed
+    else {
+        return writeln!(out, "  never loaded by any test: the whole file");
+    };
+    let mut parts = Vec::with_capacity(2);
+    if !lines.is_empty() {
+        parts.push(format!("changed lines {}", ranges(lines)));
+    }
+    if !removed_before.is_empty() {
+        parts.push(format!("lines removed before {}", ranges(removed_before)));
+    }
+    return writeln!(out, "  never loaded by any test: {}", parts.join("; "));
+}
+
 pub(crate) fn render_text(out: &mut dyn Write, result: &GateResult<'_>) -> io::Result<()> {
     let mut checked = 0_usize;
     for file in &result.files {
@@ -430,17 +633,33 @@ pub(crate) fn render_text(out: &mut dyn Write, result: &GateResult<'_>) -> io::R
             checked = checked.saturating_add(1);
         }
     }
-    for path in &result.unmeasured {
-        writeln!(out, "not in the report: {path}")?;
+    for file in &result.unloaded {
+        writeln!(out, "{}", file.path)?;
+        render_unloaded(out, &file.changed)?;
     }
-    return match result.verdict {
-        VerdictName::Pass => writeln!(out, "gate: pass, {checked} changed function(s) checked"),
-        VerdictName::Findings => writeln!(
+    for unmeasured in &result.unmeasured {
+        writeln!(
             out,
-            "gate: {} finding(s) in {checked} changed function(s)",
-            result.findings
-        ),
-    };
+            "not in the report: {} ({})",
+            unmeasured.path, unmeasured.reason
+        )?;
+    }
+    if result.verdict == VerdictName::Pass {
+        return writeln!(out, "gate: pass, {checked} changed function(s) checked");
+    }
+    write!(
+        out,
+        "gate: {} finding(s) in {checked} changed function(s)",
+        result.findings
+    )?;
+    if !result.unloaded.is_empty() {
+        write!(
+            out,
+            " and {} changed file(s) no test loaded",
+            result.unloaded.len()
+        )?;
+    }
+    return writeln!(out);
 }
 
 pub(crate) fn render_json(out: &mut dyn Write, result: &GateResult<'_>) -> io::Result<()> {

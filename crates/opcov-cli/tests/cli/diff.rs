@@ -68,6 +68,48 @@ fn a_deletion_selects_the_function_around_the_gap() {
 }
 
 #[test]
+fn a_modified_first_line_selects_only_its_function() {
+    let diff = format!(
+        "{HEADER}@@ -19 +19 @@ class Foo\n-    public function baz(int $y): int\n+    public function baz(int $x): int\n"
+    );
+    assert_eq!(
+        keys(&gate_diff("diff_modified_first_line", &diff, &[])),
+        ["App\\Foo::baz"],
+        "replaced lines leave no gap, so the file's top level is not selected"
+    );
+    let replaced = format!(
+        "{HEADER}@@ -25,2 +25 @@\n+function helper(): int\n-function helper()\n-    : int\n"
+    );
+    assert_eq!(
+        keys(&gate_diff("diff_added_then_removed", &replaced, &[])),
+        ["App\\helper", "{closure}@app/Foo.php:27-27"],
+        "removed lines after added ones are part of the same replacement"
+    );
+}
+
+#[test]
+fn an_insertion_selects_the_function_of_the_new_line() {
+    let diff = format!("{HEADER}@@ -20,0 +21 @@\n+        return $x * 2;\n");
+    assert_eq!(
+        keys(&gate_diff("diff_inserted", &diff, &[])),
+        ["App\\Foo::baz"],
+        "line 21"
+    );
+}
+
+#[test]
+fn a_replacement_and_a_deletion_in_one_hunk_are_kept_apart() {
+    let diff = format!(
+        "{HEADER}@@ -14,10 +14,9 @@\n-            $label .= $item . ',';\n+            $label .= $item;\n         }}\n         return $label;\n     }}\n \n     public function baz(int $x): int\n     {{\n-        $x++;\n         return $x * 2;\n     }}\n"
+    );
+    assert_eq!(
+        keys(&gate_diff("diff_replace_and_delete", &diff, &[])),
+        ["App\\Foo::bar", "App\\Foo::baz"],
+        "line 14 selects bar, the gap before 21 selects baz"
+    );
+}
+
+#[test]
 fn context_lines_advance_the_new_side() {
     let diff = format!(
         "{HEADER}@@ -19,4 +19,4 @@\n     public function baz(int $x): int\n     {{\n-        return $x * 3;\n+        return $x * 2;\n     }}\n"
