@@ -5,7 +5,8 @@ use opcov_sys::{
     add_assoc_zval_ex, opcov_add_index_zval, opcov_add_next_index_zval, opcov_array_init,
     opcov_register_class, opcov_string_init, opcov_string_release, opcov_zval_bool,
     opcov_zval_long, opcov_zval_null, opcov_zval_stringl, spl_ce_LogicException,
-    spl_ce_RuntimeException, zend_class_entry, zend_throw_exception, zval,
+    spl_ce_RuntimeException, zend_ce_type_error, zend_ce_value_error, zend_class_entry,
+    zend_throw_exception, zval,
 };
 use serde_json::Value;
 
@@ -30,13 +31,23 @@ pub(crate) fn register_classes() {
 pub(crate) enum Exception {
     CannotCollect,
     Logic,
+    Runtime,
+    Value,
+    Type,
 }
 
 pub(crate) fn throw(kind: Exception, message: &str) {
     let class = match kind {
         Exception::CannotCollect => CANNOT_COLLECT_CLASS.load(Ordering::Acquire),
-        // SAFETY: SPL's exception classes are registered for the whole process lifetime.
+        // SAFETY: SPL's and the engine's exception classes are registered for the whole process
+        // lifetime.
         Exception::Logic => unsafe { spl_ce_LogicException },
+        // SAFETY: as above.
+        Exception::Runtime => unsafe { spl_ce_RuntimeException },
+        // SAFETY: as above.
+        Exception::Value => unsafe { zend_ce_value_error },
+        // SAFETY: as above.
+        Exception::Type => unsafe { zend_ce_type_error },
     };
     // SAFETY: creates a request-scoped, NUL-terminated copy of the message, so no Rust value is held
     // across the throw.
@@ -101,7 +112,9 @@ pub(crate) unsafe fn emit(target: *mut zval, value: &Value) {
             }
             Value::Object(entries) => {
                 array(target, entries.len());
-                for (key, item) in entries {
+                let mut sorted: Vec<(&String, &Value)> = entries.iter().collect();
+                sorted.sort_unstable_by(|left, right| return left.0.cmp(right.0));
+                for (key, item) in sorted {
                     let mut child = zval::default();
                     emit(&raw mut child, item);
                     set(target, key, &mut child);
