@@ -11,6 +11,10 @@ impl OperandType {
         return Self(raw);
     }
 
+    const fn is_const(self) -> bool {
+        return self.0 == IS_CONST;
+    }
+
     const fn is_const_or_cv(self) -> bool {
         return self.0 & (IS_CONST | IS_CV) != 0;
     }
@@ -63,7 +67,7 @@ pub(crate) struct Placement {
     pub(crate) lines: BTreeSet<Line>,
 }
 
-const fn is_ignored(opcode: Opcode) -> bool {
+pub(crate) const fn is_ignored(opcode: Opcode) -> bool {
     return matches!(
         opcode,
         Opcode::Nop
@@ -217,6 +221,14 @@ fn line_has_only_consumers(version: PhpVersion, ops: &[Instr]) -> bool {
 
 fn block_ops<'a>(instrs: &'a [Instr], block: &LineBlock) -> &'a [Instr] {
     return instrs.get(block.ops.clone()).unwrap_or_default();
+}
+
+pub(crate) fn declarations_only(instrs: &[Instr]) -> bool {
+    return instrs.split_last().is_some_and(|(last, rest)| {
+        return last.opcode == Opcode::Return
+            && last.op1.is_const()
+            && rest.iter().all(|op| return is_ignored(op.opcode));
+    });
 }
 
 pub(crate) fn place(version: PhpVersion, instrs: &[Instr], blocks: &[LineBlock]) -> Placement {
@@ -428,6 +440,24 @@ mod tests {
         ];
         let placement = place(PhpVersion::Php85, &instrs, &blocks);
         assert_eq!(probe_lines(&placement), vec![(0, 3)], "probes");
+    }
+
+    #[test]
+    fn a_main_of_declarations_and_a_constant_return_is_declarations_only() {
+        let declare = op(Opcode::DeclareClassDelayed, 3);
+        let ret = with(op(Opcode::Return, 9), CONST, UNUSED, UNUSED);
+        assert!(declarations_only(&[ret]), "a lone RETURN");
+        assert!(
+            declarations_only(&[declare, ret]),
+            "declarations, then RETURN"
+        );
+        let echo = with(op(Opcode::Echo, 4), CONST, UNUSED, UNUSED);
+        assert!(!declarations_only(&[echo, ret]), "executable code");
+        let returns_variable = with(op(Opcode::Return, 9), CV, UNUSED, UNUSED);
+        assert!(
+            !declarations_only(&[returns_variable]),
+            "a RETURN of a variable"
+        );
     }
 
     #[test]

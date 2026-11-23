@@ -8,8 +8,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest as _, Sha256 as Hasher};
 
 use super::error::{Collection, HitSite, ModelError, SchemaError};
-use crate::cfg::{FunctionKey, Line};
-use crate::kind::{EdgeKind, LoopKind};
+use crate::cfg::{FunctionKey, Line, LoopShape, OpIndex};
+use crate::kind::EdgeKind;
 
 const SCHEMA_FAMILY: &str = "opcov-report";
 const SCHEMA_MAJOR: u32 = 1;
@@ -806,6 +806,7 @@ pub trait Identified {
 #[serde(try_from = "OutcomeRecord")]
 pub struct Outcome {
     pub(super) id: OutcomeId,
+    pub(super) site: OpIndex,
     pub(super) kind: OutcomeKind,
     pub(super) line: Line,
     pub(super) span: Option<Span>,
@@ -815,6 +816,7 @@ pub struct Outcome {
 impl Outcome {
     pub fn new(
         id: OutcomeId,
+        site: OpIndex,
         kind: OutcomeKind,
         line: Line,
         span: Option<Span>,
@@ -827,11 +829,17 @@ impl Outcome {
         }
         return Ok(Self {
             id,
+            site,
             kind,
             line,
             span,
             hits,
         });
+    }
+
+    #[must_use]
+    pub const fn site(&self) -> OpIndex {
+        return self.site;
     }
 
     #[must_use]
@@ -868,6 +876,7 @@ impl Identified for Outcome {
 #[serde(deny_unknown_fields)]
 struct OutcomeRecord {
     id: OutcomeId,
+    site: OpIndex,
     kind: OutcomeKind,
     line: Line,
     #[serde(deserialize_with = "required")]
@@ -881,6 +890,7 @@ impl TryFrom<OutcomeRecord> for Outcome {
     fn try_from(record: OutcomeRecord) -> Result<Self, ModelError> {
         return Self::new(
             record.id,
+            record.site,
             record.kind,
             record.line,
             record.span,
@@ -889,14 +899,86 @@ impl TryFrom<OutcomeRecord> for Outcome {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "LoopShape", into = "LoopShape")]
+pub struct MeasuredShape(LoopShape);
+
+impl MeasuredShape {
+    pub const fn new(shape: LoopShape) -> Result<Self, ModelError> {
+        if matches!(shape, LoopShape::Unstructured) {
+            return Err(ModelError::UnstructuredLoop);
+        }
+        return Ok(Self(shape));
+    }
+
+    #[must_use]
+    pub const fn get(self) -> LoopShape {
+        return self.0;
+    }
+}
+
+impl TryFrom<LoopShape> for MeasuredShape {
+    type Error = ModelError;
+
+    fn try_from(shape: LoopShape) -> Result<Self, ModelError> {
+        return Self::new(shape);
+    }
+}
+
+impl From<MeasuredShape> for LoopShape {
+    fn from(kind: MeasuredShape) -> Self {
+        return kind.0;
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Loop {
-    pub id: LoopId,
-    pub kind: LoopKind,
-    pub line: Line,
-    pub zero: HitSet,
-    pub second: HitSet,
+    pub(super) id: LoopId,
+    pub(super) kind: MeasuredShape,
+    pub(super) line: Line,
+    #[serde(deserialize_with = "required")]
+    pub(super) zero: Option<HitSet>,
+    pub(super) second: HitSet,
+}
+
+impl Loop {
+    #[must_use]
+    pub const fn new(
+        id: LoopId,
+        kind: MeasuredShape,
+        line: Line,
+        zero: Option<HitSet>,
+        second: HitSet,
+    ) -> Self {
+        return Self {
+            id,
+            kind,
+            line,
+            zero,
+            second,
+        };
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> MeasuredShape {
+        return self.kind;
+    }
+
+    #[must_use]
+    pub const fn line(&self) -> Line {
+        return self.line;
+    }
+
+    #[must_use]
+    pub const fn zero(&self) -> Option<&HitSet> {
+        return self.zero.as_ref();
+    }
+
+    #[must_use]
+    pub const fn second(&self) -> &HitSet {
+        return &self.second;
+    }
 }
 
 impl Identified for Loop {
@@ -984,12 +1066,17 @@ impl Function {
             .into_iter()
             .map(|looped| {
                 let id = looped.id;
-                let zero = looped.zero.resolve(refs, || {
-                    return HitSite::LoopZero {
-                        function: key.clone(),
-                        id,
-                    };
-                })?;
+                let zero = looped
+                    .zero
+                    .map(|zero| {
+                        return zero.resolve(refs, || {
+                            return HitSite::LoopZero {
+                                function: key.clone(),
+                                id,
+                            };
+                        });
+                    })
+                    .transpose()?;
                 let second = looped.second.resolve(refs, || {
                     return HitSite::LoopSecond {
                         function: key.clone(),

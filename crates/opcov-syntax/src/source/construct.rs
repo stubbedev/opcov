@@ -376,10 +376,16 @@ impl Construct {
                     };
                 })
                 .collect(),
-            Shape::Finally { clause } => vec![ConstructOutcome {
-                kind: EdgeKind::Finally,
-                span: *clause,
-            }],
+            Shape::Finally { clause } => vec![
+                ConstructOutcome {
+                    kind: EdgeKind::Finally,
+                    span: *clause,
+                },
+                ConstructOutcome {
+                    kind: EdgeKind::FinallyException,
+                    span: *clause,
+                },
+            ],
         };
     }
 
@@ -456,9 +462,11 @@ impl Construct {
                 .get(index)
                 .map(|&span| return self.locate(span))
                 .ok_or(mismatch),
-            (Shape::Finally { clause }, Detail::Whole, EdgeKind::Finally) => {
-                Ok(self.locate(*clause))
-            }
+            (
+                Shape::Finally { clause },
+                Detail::Whole,
+                EdgeKind::Finally | EdgeKind::FinallyException,
+            ) => Ok(self.locate(*clause)),
             _ => Err(mismatch),
         };
     }

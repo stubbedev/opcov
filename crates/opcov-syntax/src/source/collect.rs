@@ -813,6 +813,12 @@ impl<'ast, 'arena> MutWalker<'ast, 'arena, ()> for Collector {
             self.current.unwind.pop();
             let claim = ByteSpan::between(clause.finally.span, clause.block.left_brace);
             self.site(Some(id), SiteClass::Finally, vec![claim], Detail::Whole);
+            self.site(
+                Some(id),
+                SiteClass::FinallyEntry,
+                vec![ByteSpan::of(clause.block.span())],
+                Detail::Whole,
+            );
             self.walk_block(&clause.block, context);
         }
     }

@@ -22,11 +22,12 @@ The schema id is `opcov-report/1`. The JSON Schema (draft 2020-12) is
         "App\\Foo::bar": {
           "span": [10, 1, 30, 5],
           "outcomes": [
-            {"id": "o7", "kind": "CoalesceFallback", "line": 14, "span": [14, 20, 14, 31], "hits": [0]},
-            {"id": "o8", "kind": {"MatchArm": 2}, "line": 15, "span": null, "hits": []}
+            {"id": "o7", "site": 21, "kind": "CoalesceFallback", "line": 14, "span": [14, 20, 14, 31], "hits": [0]},
+            {"id": "o8", "site": 25, "kind": {"MatchArm": 2}, "line": 15, "span": null, "hits": []}
           ],
           "loops": [
-            {"id": "l1", "kind": "Foreach", "line": 18, "zero": [], "second": [1]}
+            {"id": "l1", "kind": "Foreach", "line": 18, "zero": [], "second": [1]},
+            {"id": "l2", "kind": "PostTest", "line": 20, "zero": null, "second": []}
           ]
         }
       }
@@ -106,7 +107,9 @@ array and fits in an unsigned 32-bit integer.
 | `functions` | object | Functions of the file, keyed by their stable function key (see below). Keys are parsed into opcov's typed function key, so a malformed key is rejected. |
 
 Every executable line, outcome and loop is present, including the ones nothing
-hit: an empty hit list means "uncovered".
+hit: an empty hit list means "uncovered". The top-level code of a file that
+declares only classes, functions and constants has no executable line (see
+[configuration.md](configuration.md#executable-lines)).
 
 ### Function keys
 
@@ -148,28 +151,62 @@ hit: an empty hit list means "uncovered".
 | Member | Type | Meaning |
 |---|---|---|
 | `id` | string | `o` followed by a decimal number without leading zeros, unique within the function. |
+| `site` | integer | Index (from 0) of the opcode the outcome comes from within its function: the branching opcode, or for `FinallyException` the first opcode of the `finally` block. Outcomes with the same `site` are the outcomes of one source construct. |
 | `kind` | outcome kind | What the outcome is (see below). |
 | `line` | integer | Line of the branching construct, from 1. |
 | `span` | span or `null` | Exact source range of the construct, or `null` when it could not be matched unambiguously. When present it contains `line`. |
 | `hits` | hit list | Tests that took this outcome. |
 
+Outcome ids are numbered from `o0` in the order of (`site`, successor): by
+the opcode they come from, then by the block they lead to. Two constructs of
+the same kind on one line (`$a ?? $b ?? $c`) therefore differ by `site`, and a
+consumer groups outcomes into constructs by `site` instead of counting the
+n-th outcome of a kind on a line.
+
 Outcome kinds are the strings `IfTrue`, `IfFalse`, `ShortCircuit`, `Evaluate`,
 `CoalesceValue`, `CoalesceFallback`, `TernaryValue`, `TernaryFallback`,
 `NullsafeNull`, `NullsafeValue`, `MatchNoArm`, `SwitchDefault`, `LoopEnter`,
-`LoopSkip`, `LoopBack`, `LoopExit`, `Catch`, `Finally`, `Engine` and `Jump`, or
-one of the objects `{"MatchArm": n}` and `{"SwitchCase": n}` for the n-th
-(zero-based) arm or case. `Engine` outcomes come from engine-internal jumps and
-are excluded from verdicts by default.
+`LoopSkip`, `LoopBack`, `LoopExit`, `Catch`, `Finally`, `FinallyException`,
+`Engine` and `Jump`, or one of the objects `{"MatchArm": n}` and
+`{"SwitchCase": n}` for the n-th (zero-based) arm or case.
+
+| Kind | Taken when |
+|---|---|
+| `IfTrue`, `IfFalse` | the condition of an `if`/`elseif` or of a full `a ? b : c` ternary was true or false; an `if` without `else` still has `IfFalse` |
+| `ShortCircuit`, `Evaluate` | `&&`/`and` or `\|\|`/`or` decided by its left operand, or went on to evaluate the right one |
+| `CoalesceValue`, `CoalesceFallback` | `??` or `??=` found a non-null value, or used its fallback |
+| `TernaryValue`, `TernaryFallback` | `?:` kept its truthy left operand, or used its fallback |
+| `NullsafeNull`, `NullsafeValue` | `?->` met `null` and short-circuited, or went on |
+| `MatchArm(n)`, `MatchNoArm` | a `match` took arm `n` (the `default` arm included), or no arm matched (`UnhandledMatchError`) |
+| `SwitchCase(n)`, `SwitchDefault` | a `switch` jumped to case `n`, or to `default` (or past the `switch` without one) |
+| `LoopEnter`, `LoopSkip` | a `foreach` started iterating, or skipped its loop entirely because the subject is not iterable or an empty object or `Traversable`; an empty array iterates zero times through `LoopEnter` and `LoopExit` |
+| `LoopBack`, `LoopExit` | a loop test (the `foreach` fetch, or the condition of `for`, `while`, `do-while`) entered the body, or left the loop |
+| `Catch` | a `catch` clause caught the exception |
+| `Finally` | a `finally` block was entered by normal flow (`try` finished, or `return`, `break` or `continue` left it) |
+| `FinallyException` | a `finally` block was entered because an exception unwound the `try` |
+| `Engine` | an engine-internal jump (`JMP_FRAMELESS`, `BIND_INIT_STATIC_OR_JMP`, `ASSERT_CHECK`, a jump table's fallthrough) |
+| `Jump` | an edge opcov could not classify (reported by `opcov-cli doctor`) |
+
+`Engine` outcomes, and the `LoopEnter`/`LoopSkip` outcomes of `foreach`, are
+reported but excluded from verdicts (`EdgeKind::counts_toward_verdict`): whether
+a `foreach` ran zero times is what its loop's `zero` list says, and arrays
+never take `LoopSkip`.
 
 ### Loop
 
 | Member | Type | Meaning |
 |---|---|---|
-| `id` | string | `l` followed by a decimal number without leading zeros, unique within the function. |
-| `kind` | `"Foreach"`, `"For"`, `"While"` or `"DoWhile"` | The loop construct. |
+| `id` | string | `l` followed by a decimal number without leading zeros, unique within the function; loops are numbered from `l0` in the order of their header block. |
+| `kind` | `"Foreach"`, `"PreTest"` or `"PostTest"` | The loop's shape in the compiled code: `foreach`; a loop that tests before the body (`for`, `while`); a loop that tests after it (`do-while`). Which source keyword it was comes from the source when a report is consumed (`opcov-syntax`). Loops built from `goto` have no shape and are not reported. |
 | `line` | integer | Line of the loop header, from 1. |
-| `zero` | hit list | Tests in which the loop ran zero times. |
-| `second` | hit list | Tests in which the loop ran two or more times. |
+| `zero` | hit list or `null` | Tests in which the loop ran zero times, or `null` when it cannot: a `do-while`, and a loop whose condition is a constant true (`while (true)`, `for (;;)`). |
+| `second` | hit list | Tests in which one activation of the loop ran its body two or more times. |
+
+An activation is one execution of the loop from its entry: a recursive call,
+another call of the function or a later entry into the loop starts a new one,
+and a generator's activation spans its resumptions. A `foreach` counts its
+iterations from the iterator's position, so iterating an `Iterator` never
+calls one of its methods on opcov's behalf.
 
 ### Span
 
@@ -198,7 +235,8 @@ readers check and producers must emit:
   hooks, closures, each by its parts);
 - the `<file>` of every function key equal to the `files` key it is listed
   under;
-- outcomes and loops strictly ascending by the number in their id;
+- outcomes and loops strictly ascending by the number in their id (opcov
+  numbers outcomes by `site`, so their sites never decrease);
 - every test index within the test table;
 - every `files` key relative in `relative` mode and absolute in `absolute` mode;
 - an outcome's `line` within its `span`.
@@ -236,8 +274,8 @@ file.
    file is stale.
 3. For each line, outcome and loop, map the indexes of its hit lists through
    `tests` to get the tests that hit it. An empty list means uncovered; for
-   loops, an empty `zero` means "never ran zero times" and an empty `second`
-   means "never ran two or more times".
+   loops, an empty `zero` means "never ran zero times" (`null`: it cannot) and
+   an empty `second` means "never ran two or more times".
 4. Validate reports from outside opcov against the JSON Schema. The Rust model
    in `opcov-core` (`opcov_core::report::Report::read`) checks the schema and
    every canonical-form rule above.
@@ -255,7 +293,8 @@ for example one `<out>.<TEST_TOKEN>.json` per paratest worker:
 - The merge refuses, with exit code 1: reports whose `generator`, `settings` or
   `paths` differ, naming the field and both values; a file whose `sha256`
   differs between inputs, naming the path; a function, outcome or loop whose
-  model (span, kind, line) differs between inputs; an unknown schema version.
+  model (span; site, kind, line; or whether `zero` is `null`) differs between
+  inputs; an unknown schema version.
 - Invalid input, unreadable inputs and write errors exit with code 2. The
   output is written to a temporary file next to it and renamed into place, so a
   failed merge never leaves a partial report.

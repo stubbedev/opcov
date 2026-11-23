@@ -3,15 +3,16 @@ use std::{collections::BTreeMap, ffi::CStr, fmt};
 use opcov_core::{
     cfg::{FilePath, FunctionKey, KeyError, Line},
     report::{
-        FileCoverage, Function, Generator, Header, HitSet, ModelError, PathBase, Report, Sha256,
-        SourcePath, TestIndex, TestTable, VmKind, line_hits,
+        FileCoverage, Function, Generator, Header, HitSet, IdSorted, Loop, MeasuredShape,
+        ModelError, Outcome, OutcomeKind, PathBase, Report, Sha256, SourcePath, TestIndex,
+        TestTable, VmKind, line_hits,
     },
 };
 use opcov_sys::{ZTS, opcov_php_version, zend_vm_kind};
 
 use crate::{
     VERSION,
-    engine::{Engine, FileId, FileRecord, Source},
+    engine::{Covered, Engine, FileId, FileRecord, Files, FunctionId, FunctionRecord, Source},
 };
 
 #[derive(Debug)]
@@ -73,18 +74,113 @@ pub(crate) struct Entry {
     pub(crate) functions: BTreeMap<FunctionKey, Function>,
 }
 
+fn hit_set(mut tests: Vec<TestIndex>) -> Result<HitSet, ModelError> {
+    tests.sort_unstable();
+    tests.dedup();
+    return HitSet::new(tests);
+}
+
+#[derive(Default)]
+struct FunctionTests {
+    outcomes: BTreeMap<u32, Vec<TestIndex>>,
+    zero: BTreeMap<u32, Vec<TestIndex>>,
+    second: BTreeMap<u32, Vec<TestIndex>>,
+}
+
+fn function_model(
+    record: &FunctionRecord,
+    mut tests: FunctionTests,
+) -> Result<Function, ModelError> {
+    let outcomes = record
+        .plan
+        .outcomes()
+        .iter()
+        .map(|outcome| {
+            return Outcome::new(
+                outcome.id,
+                outcome.site,
+                OutcomeKind::new(outcome.kind)?,
+                outcome.line,
+                None,
+                hit_set(tests.outcomes.remove(&outcome.id.get()).unwrap_or_default())?,
+            );
+        })
+        .collect::<Result<Vec<_>, ModelError>>()?;
+    let loops = record
+        .plan
+        .loops()
+        .iter()
+        .zip(
+            record
+                .zero_possible
+                .iter()
+                .copied()
+                .chain(core::iter::repeat(true)),
+        )
+        .map(|(planned, zero_possible)| {
+            let number = planned.id.get();
+            let zero = hit_set(tests.zero.remove(&number).unwrap_or_default())?;
+            return Ok(Loop::new(
+                planned.id,
+                MeasuredShape::new(planned.test.shape())?,
+                planned.line,
+                zero_possible.then_some(zero),
+                hit_set(tests.second.remove(&number).unwrap_or_default())?,
+            ));
+        })
+        .collect::<Result<Vec<_>, ModelError>>()?;
+    return Ok(Function {
+        span: None,
+        outcomes: IdSorted::new(outcomes)?,
+        loops: IdSorted::new(loops)?,
+    });
+}
+
 pub(crate) fn entry(
+    files: &Files,
     record: &FileRecord,
     key_file: &FilePath,
-    hits: impl IntoIterator<Item = (Line, TestIndex)>,
+    hits: &[(Covered, TestIndex)],
 ) -> Result<Entry, ModelError> {
+    let mut by_function: BTreeMap<FunctionId, FunctionTests> = BTreeMap::new();
+    let mut lines = Vec::new();
+    for &(covered, test) in hits {
+        match covered {
+            Covered::Line(_, line) => lines.push((line, test)),
+            Covered::Outcome(function, number) => by_function
+                .entry(function)
+                .or_default()
+                .outcomes
+                .entry(number)
+                .or_default()
+                .push(test),
+            Covered::Zero(function, number) => by_function
+                .entry(function)
+                .or_default()
+                .zero
+                .entry(number)
+                .or_default()
+                .push(test),
+            Covered::Second(function, number) => by_function
+                .entry(function)
+                .or_default()
+                .second
+                .entry(number)
+                .or_default()
+                .push(test),
+        }
+    }
+    let mut functions = BTreeMap::new();
+    for (key, &id) in &record.functions {
+        let Some(function) = files.function(id) else {
+            continue;
+        };
+        let tests = by_function.remove(&id).unwrap_or_default();
+        functions.insert(key.in_file(key_file), function_model(function, tests)?);
+    }
     return Ok(Entry {
-        lines: line_hits(record.lines.iter().copied(), hits)?,
-        functions: record
-            .functions
-            .keys()
-            .map(|key| return (key.in_file(key_file), Function::default()))
-            .collect(),
+        lines: line_hits(record.lines.iter().copied(), lines)?,
+        functions,
     });
 }
 
@@ -146,10 +242,21 @@ impl Engine {
             .map(|test| return test.name.clone())
             .collect();
         let (tests, indexes) = TestTable::from_unordered(&names)?;
-        let mut hits: BTreeMap<FileId, Vec<(Line, TestIndex)>> = BTreeMap::new();
+        let mut hits: BTreeMap<FileId, Vec<(Covered, TestIndex)>> = BTreeMap::new();
         for (test, index) in attributed.iter().zip(indexes) {
-            for &(file, line) in &test.lines {
-                hits.entry(file).or_default().push((line, index));
+            for &covered in &test.covered {
+                let file = match covered {
+                    Covered::Line(file, _) => Some(file),
+                    Covered::Outcome(function, _)
+                    | Covered::Zero(function, _)
+                    | Covered::Second(function, _) => self
+                        .files
+                        .function(function)
+                        .map(|record| return record.file),
+                };
+                if let Some(file) = file {
+                    hits.entry(file).or_default().push((covered, index));
+                }
             }
         }
         let mut files = BTreeMap::new();
@@ -170,7 +277,7 @@ impl Engine {
                     error,
                 };
             })?;
-            let Entry { lines, functions } = entry(record, &key_file, file_hits)?;
+            let Entry { lines, functions } = entry(&self.files, record, &key_file, &file_hits)?;
             files.insert(
                 path,
                 FileCoverage {

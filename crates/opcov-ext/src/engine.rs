@@ -6,13 +6,14 @@ use std::{
 };
 
 use opcov_core::{
-    cfg::{Analysis, FunctionKey, Line},
+    cfg::{Analysis, FunctionKey, Line, Plan},
     filter::{Selection, SkipReason},
     report::{Settings, Sha256},
 };
 use opcov_sys::{zend_op, zend_op_array};
 
 use crate::{
+    branches::{Activations, LoopState, Owner, Pending, SourceProbe},
     guard::{COLLECTION, Disabled},
     select::Pattern,
     threads,
@@ -97,32 +98,46 @@ impl Handler {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Role {
     Line,
+    Source,
+    Watch,
+    LoopEntry,
+    FinallyEntry,
 }
 
 impl Role {
     const fn bit(self) -> u8 {
         return match self {
             Self::Line => 1,
+            Self::Source => 2,
+            Self::Watch => 4,
+            Self::LoopEntry => 8,
+            Self::FinallyEntry => 16,
         };
     }
 
     pub(crate) const fn name(self) -> &'static str {
         return match self {
             Self::Line => "Line",
+            Self::Source => "Source",
+            Self::Watch => "Watch",
+            Self::LoopEntry => "LoopEntry",
+            Self::FinallyEntry => "FinallyEntry",
         };
     }
 
-    const ALL: [Self; 1] = [Self::Line];
+    const ALL: [Self; 5] = [
+        Self::Line,
+        Self::Source,
+        Self::Watch,
+        Self::LoopEntry,
+        Self::FinallyEntry,
+    ];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct Roles(u8);
 
 impl Roles {
-    pub(crate) const fn only(role: Role) -> Self {
-        return Self(role.bit());
-    }
-
     pub(crate) const fn contains(self, role: Role) -> bool {
         return self.0 & role.bit() != 0;
     }
@@ -146,12 +161,37 @@ impl Roles {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FinallyEntry {
+    pub(crate) outcome: u32,
+    pub(crate) fast_call: u32,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Probe {
     pub(crate) op: usize,
-    pub(crate) line: Line,
+    pub(crate) line: Option<Line>,
     pub(crate) handler: Handler,
     pub(crate) armed: Roles,
+    pub(crate) watchers: u16,
+    pub(crate) source: Option<u32>,
+    pub(crate) entries: Box<[u32]>,
+    pub(crate) finally: Option<FinallyEntry>,
+}
+
+impl Probe {
+    pub(crate) fn new(op: usize, handler: Handler) -> Self {
+        return Self {
+            op,
+            line: None,
+            handler,
+            armed: Roles::default(),
+            watchers: 0,
+            source: None,
+            entries: Box::default(),
+            finally: None,
+        };
+    }
 }
 
 #[derive(Debug)]
@@ -159,9 +199,13 @@ pub(crate) struct Unit {
     pub(crate) opcodes: Option<*mut zend_op>,
     pub(crate) last: usize,
     pub(crate) file: FileId,
-    pub(crate) function: FunctionKey,
+    pub(crate) function: FunctionId,
     pub(crate) index: Box<[u32]>,
     pub(crate) probes: Vec<Probe>,
+    pub(crate) sources: Vec<SourceProbe>,
+    pub(crate) owners: Box<[Option<Owner>]>,
+    pub(crate) seen: Vec<bool>,
+    pub(crate) loops: Vec<LoopState>,
     pub(crate) pending: usize,
 }
 
@@ -180,6 +224,19 @@ impl Unit {
             // SAFETY: the unit's op array is alive (`opcodes` is cleared by its destructor) and the
             // probe's opcode index is below `last`.
             unsafe { label.install(opcodes.wrapping_add(slot.op)) };
+        }
+    }
+
+    pub(crate) unsafe fn disarm(&mut self, probe: usize, role: Role) {
+        let Some(slot) = self.probes.get_mut(probe) else {
+            return;
+        };
+        slot.armed.remove(role);
+        if slot.armed.is_empty()
+            && let Some(opcodes) = self.opcodes
+        {
+            // SAFETY: as in `arm`.
+            unsafe { slot.handler.install(opcodes.wrapping_add(slot.op)) };
         }
     }
 }
@@ -308,16 +365,24 @@ impl Units {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ProbeRef {
+pub(crate) enum Hit {
+    Line(u32),
+    Outcome(u32),
+    Zero(u32),
+    Second(u32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FiredRef {
     pub(crate) unit: UnitId,
-    pub(crate) probe: usize,
+    pub(crate) hit: Hit,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct Fired {
-    pub(crate) hits: Vec<ProbeRef>,
-    pub(crate) strays: Vec<ProbeRef>,
-    pub(crate) stopped: Vec<ProbeRef>,
+    pub(crate) hits: Vec<FiredRef>,
+    pub(crate) strays: Vec<FiredRef>,
+    pub(crate) stopped: Vec<FiredRef>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -350,7 +415,19 @@ pub(crate) struct FileRecord {
     pub(crate) path: String,
     pub(crate) source: Option<Source>,
     pub(crate) lines: BTreeSet<Line>,
-    pub(crate) functions: BTreeMap<FunctionKey, Analysis>,
+    pub(crate) functions: BTreeMap<FunctionKey, FunctionId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct FunctionId(usize);
+
+#[derive(Debug)]
+pub(crate) struct FunctionRecord {
+    pub(crate) file: FileId,
+    pub(crate) key: FunctionKey,
+    pub(crate) analysis: Analysis,
+    pub(crate) plan: Plan,
+    pub(crate) zero_possible: Box<[bool]>,
 }
 
 impl FileRecord {
@@ -363,6 +440,7 @@ impl FileRecord {
 pub(crate) struct Files {
     records: Vec<FileRecord>,
     by_path: HashMap<String, FileId>,
+    functions: Vec<FunctionRecord>,
 }
 
 impl Files {
@@ -400,12 +478,36 @@ impl Files {
             .enumerate()
             .map(|(index, record)| return (FileId(index), record));
     }
+
+    pub(crate) fn function(&self, id: FunctionId) -> Option<&FunctionRecord> {
+        return self.functions.get(id.0);
+    }
+
+    pub(crate) fn find_function(&self, file: FileId, key: &FunctionKey) -> Option<FunctionId> {
+        return self.get(file)?.functions.get(key).copied();
+    }
+
+    pub(crate) fn add_function(&mut self, record: FunctionRecord) -> Option<FunctionId> {
+        let id = FunctionId(self.functions.len());
+        let file = self.records.get_mut(record.file.0)?;
+        file.functions.insert(record.key.clone(), id);
+        self.functions.push(record);
+        return Some(id);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum Covered {
+    Line(FileId, Line),
+    Outcome(FunctionId, u32),
+    Zero(FunctionId, u32),
+    Second(FunctionId, u32),
 }
 
 #[derive(Debug)]
 pub(crate) struct AttributedTest {
     pub(crate) name: String,
-    pub(crate) lines: Vec<(FileId, Line)>,
+    pub(crate) covered: Vec<Covered>,
 }
 
 #[derive(Debug, Default)]
@@ -415,13 +517,13 @@ pub(crate) struct Attribution {
 }
 
 impl Attribution {
-    pub(crate) fn attribute(&mut self, name: &str, lines: &[(FileId, Line)]) {
+    pub(crate) fn attribute(&mut self, name: &str, covered: &[Covered]) {
         let position = if let Some(&position) = self.by_name.get(name) {
             position
         } else {
             self.tests.push(AttributedTest {
                 name: name.to_owned(),
-                lines: Vec::new(),
+                covered: Vec::new(),
             });
             let position = self.tests.len().saturating_sub(1);
             self.by_name.insert(name.to_owned(), position);
@@ -430,9 +532,9 @@ impl Attribution {
         let Some(test) = self.tests.get_mut(position) else {
             return;
         };
-        test.lines.extend_from_slice(lines);
-        test.lines.sort_unstable();
-        test.lines.dedup();
+        test.covered.extend_from_slice(covered);
+        test.covered.sort_unstable();
+        test.covered.dedup();
     }
 
     pub(crate) fn tests(&self) -> &[AttributedTest] {
@@ -467,7 +569,7 @@ pub(crate) struct Counters {
 #[derive(Debug, Default)]
 pub(crate) struct Scratch {
     pub(crate) op_arrays: Vec<*mut zend_op_array>,
-    pub(crate) lines: Vec<(FileId, Line)>,
+    pub(crate) covered: Vec<Covered>,
     pub(crate) files: Vec<FileId>,
     pub(crate) value: serde_json::Value,
 }
@@ -481,6 +583,8 @@ pub(crate) struct Engine {
     pub(crate) files: Files,
     pub(crate) attribution: Attribution,
     pub(crate) fired: Fired,
+    pub(crate) pending: Vec<Pending>,
+    pub(crate) activations: Activations,
     pub(crate) collecting: bool,
     pub(crate) completed_cycles: u64,
     pub(crate) counters: Counters,
@@ -497,6 +601,8 @@ impl Engine {
             files: Files::default(),
             attribution: Attribution::default(),
             fired: Fired::default(),
+            pending: Vec::new(),
+            activations: Activations::default(),
             collecting: false,
             completed_cycles: 0,
             counters: Counters::default(),
@@ -504,7 +610,7 @@ impl Engine {
         };
     }
 
-    pub(crate) const fn list(&mut self, list: FiredList) -> &mut Vec<ProbeRef> {
+    pub(crate) const fn list(&mut self, list: FiredList) -> &mut Vec<FiredRef> {
         return match list {
             FiredList::Hits => &mut self.fired.hits,
             FiredList::Strays => &mut self.fired.strays,
@@ -512,7 +618,7 @@ impl Engine {
         };
     }
 
-    pub(crate) fn record(&mut self, fired: ProbeRef) {
+    pub(crate) fn record(&mut self, fired: FiredRef) {
         self.counters.probes_fired = self.counters.probes_fired.saturating_add(1);
         if let Some(unit) = self.units.get_mut(fired.unit) {
             unit.pending = unit.pending.saturating_add(1);
@@ -542,9 +648,8 @@ impl Engine {
                 continue;
             }
             if let Some(label) = label {
-                // SAFETY: the unit is alive, so its opcodes are; the probe index comes from the
-                // unit's own probe list.
-                unsafe { unit.arm(fired.probe, Role::Line, label) };
+                // SAFETY: the unit is alive, so its opcodes are; the hit names the unit's own probes.
+                unsafe { unit.rearm(fired.hit, label) };
             }
         }
         self.counters.probes_rearmed = self
@@ -557,6 +662,8 @@ impl Engine {
     }
 
     pub(crate) fn rearm_all(&mut self) {
+        self.drop_pending();
+        self.activations.clear();
         self.rearm(FiredList::Hits);
         self.rearm(FiredList::Strays);
         self.rearm(FiredList::Stopped);
@@ -586,11 +693,15 @@ impl Engine {
     }
 
     pub(crate) fn restore_every_probe(&mut self) {
+        self.pending.clear();
+        self.activations.clear();
         for unit in self.units.live_mut() {
             let Some(opcodes) = unit.opcodes else {
                 continue;
             };
+            unit.restore_producers();
             for probe in &mut unit.probes {
+                probe.watchers = 0;
                 if probe.armed.is_empty() {
                     continue;
                 }
@@ -639,6 +750,10 @@ pub(crate) fn with_engine<R>(body: impl FnOnce(&mut Engine) -> R) -> Option<R> {
     }));
     ENGINE.busy.store(false, Ordering::Release);
     return result.unwrap_or_else(|payload| panic::resume_unwind(payload));
+}
+
+pub(crate) fn idle() -> bool {
+    return !threads::foreign() && !ENGINE.busy.load(Ordering::Acquire);
 }
 
 pub(crate) fn install(engine: Engine) {

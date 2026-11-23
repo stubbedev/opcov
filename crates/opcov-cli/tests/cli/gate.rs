@@ -93,7 +93,7 @@ fn reports_unseen_outcomes_and_loop_findings_with_the_tests_per_line() {
     );
     assert_eq!(
         bar["unseen_outcomes"],
-        serde_json::json!([{"id": "o6", "kind": "LoopSkip", "line": 13, "span": null}]),
+        serde_json::json!([{"id": "o6", "kind": "LoopExit", "line": 13, "span": null}]),
         "the engine outcome o7 does not count toward verdicts"
     );
     let looped = serde_json::json!([{"id": "l1", "kind": "Foreach", "line": 13}]);

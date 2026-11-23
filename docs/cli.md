@@ -67,10 +67,12 @@ These rules apply to every format.
 
 - **Counts are numbers of tests.** The report records which tests hit a line,
   not how often, so a line's count is the length of its hit list.
-- **Branches.** Every outcome is one branch, except `Engine` outcomes, which do
-  not count toward verdicts (`EdgeKind::counts_toward_verdict`) and are left
-  out. Every loop adds two branches: "ran zero times" (taken by the tests in
-  its `zero` list) and "ran two or more times" (its `second` list). A branch is
+- **Branches.** Every outcome is one branch, except the outcomes that do not
+  count toward verdicts (`EdgeKind::counts_toward_verdict`: `Engine`, and the
+  `LoopEnter`/`LoopSkip` of `foreach`), which are left out. Every loop adds
+  "ran two or more times" (taken by the tests in its `second` list) and, unless
+  its `zero` is `null` (a loop that cannot run zero times), "ran zero times"
+  (its `zero` list). A branch is
   covered when at least one test took it.
 - **Functions.** A function's line range is its `span`, or for closures and
   arrow functions without a span the line range in their key. Each executable
@@ -230,8 +232,8 @@ Exactly one of `--diff` and `--files` is required.
 | Finding | Meaning |
 |---|---|
 | uncovered lines | executable lines the function owns that no test ran |
-| unseen outcomes | outcomes no test took, except those that do not count toward verdicts (`Engine`) |
-| loops never zero | loops no test ran zero times |
+| unseen outcomes | outcomes no test took, except those that do not count toward verdicts (`Engine`, and the `LoopEnter`/`LoopSkip` of `foreach`) |
+| loops never zero | loops no test ran zero times (never a loop whose `zero` is `null`) |
 | loops never twice | loops no test ran two or more times |
 
 The output also lists, for every executable line of the function, the tests
@@ -292,8 +294,9 @@ opcov doctor --report out.json --format json
 
 For every file of the report, doctor parses the source and matches every
 outcome of every function to the source construct that produced it, with
-`opcov-syntax`'s matcher (by line, construct kind and ordinal on the line). It
-lists:
+`opcov-syntax`'s matcher (by line and construct kind; outcomes with the same
+`site` belong to one construct, and the constructs of one kind on a line are
+matched to the distinct sites on it in source order). It lists:
 
 - outcomes that match no construct, with the reason (no construct of that kind
   on the line, more opcodes than candidate constructs, a construct claimed from

@@ -1,5 +1,5 @@
 --TEST--
-write_report() writes every attributed test and every measured file: a line hit by two tests lists both, unhit lines have empty lists, paths are relative to the root
+write_report() writes every attributed test and every measured file: a line hit by two tests lists both, unhit lines have empty lists, paths are relative to the root; outcomes list the tests that took them, and the RETURN of a declarations-only file is not executable
 --INI--
 opcov.enabled=1
 opcov.collect_paths={PWD}/fixtures/app:{PWD}/fixtures/outside
@@ -90,7 +90,28 @@ bool(true)
                 },
                 "sign": {
                     "span": null,
-                    "outcomes": [],
+                    "outcomes": [
+                        {
+                            "id": "o0",
+                            "site": 2,
+                            "kind": "IfTrue",
+                            "line": 9,
+                            "span": null,
+                            "hits": [
+                                1
+                            ]
+                        },
+                        {
+                            "id": "o1",
+                            "site": 2,
+                            "kind": "IfFalse",
+                            "line": 9,
+                            "span": null,
+                            "hits": [
+                                0
+                            ]
+                        }
+                    ],
                     "loops": []
                 },
                 "{closure}@calc.php:15-15": {
@@ -104,8 +125,7 @@ bool(true)
             "sha256": "{IDLE}",
             "lines": {
                 "4": [],
-                "5": [],
-                "6": []
+                "5": []
             },
             "functions": {
                 "{main}@idle.php": {

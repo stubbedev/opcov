@@ -18,7 +18,7 @@ echo opcov_lines(__DIR__ . "/fixtures/generator.php", static function () use ($n
 --EXPECT--
 generator.php
   covered: 4
-  uncovered: 2,5,6,7,8
+  uncovered: 2,5,6,7
 generator.php
   covered: 5,6
-  uncovered: 2,4,7,8
+  uncovered: 2,4,7

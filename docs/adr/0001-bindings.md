@@ -96,6 +96,11 @@ target headers:
 | `opcov_array_value_at()` | element `n` of a packed or hash array, dereferenced, null for `IS_UNDEF` |
 | `opcov_string_init()`, `opcov_string_release()` | inline `zend_string_init`, `zend_string_release` |
 | `opcov_register_class()` | `INIT_CLASS_ENTRY_EX` plus `zend_register_internal_class_ex` |
+| `opcov_branch_truth()`, `opcov_constant_truth()` | `i_zend_is_true` on op1 (`RT_CONSTANT`/`EX_VAR`), without the cast handler of objects other than `zend_std_cast_object_tostring` and without the undefined-variable warning: both report "undecided" |
+| `opcov_branch_set()`, `opcov_branch_null()` | the `COALESCE` and `JMP_NULL` tests on op1 (`Z_TYPE_P(value) > IS_NULL` after `ZVAL_DEREF`) |
+| `opcov_match_target()` | the `MATCH` jump-table lookup (`zend_hash_index_find`/`zend_hash_find`, `ZEND_OFFSET_TO_OPLINE`) |
+| `opcov_foreach_started()` | `Z_FE_POS_P`, `EG(ht_iterators)[Z_FE_ITER_P].pos` and `zend_object_iterator.index` at an `FE_FETCH_*` |
+| `opcov_fast_call_var()`, `opcov_fast_call_threw()` | the finally's fast-call variable (`try_catch_array[].finally_end`'s op1) and `Z_OBJ_P` of it |
 
 `shim.h` also declares four PCRE functions by hand (`pcre_get_compiled_regex_cache`,
 `php_pcre_pce_incref`, `php_pcre_pce_decref`, `php_pcre_match_impl`, with
@@ -224,7 +229,8 @@ left out):
 | `zend_vm_set_opcode_handler` | the probe label, and the real handlers after `pass_two()` |
 | `zend_compile_file`, `zend_compile_string` | the compile hooks (#3, #5) |
 | `zend_resolve_path` | resolving a file before compilation for the jump-table decision |
-| `zend_execute_ex`, `execute_ex` | detecting the stock executor for declarations-only files |
+| `zend_throw_exception_hook` | discarding pending branch watches when an exception is thrown (ADR 0002) |
+| `zend_std_cast_object_tostring`, `zend_iterator_unwrap`, `zend_hash_index_find`, `zend_hash_find` | inside the shim's branch evaluators (ADR 0002) |
 | `zend_get_resource_handle` | the `op_array.reserved[]` slot that maps an op array to its unit |
 | `zend_register_extension` | the runtime `zend_extension` whose `op_array_dtor` frees units |
 | `zend_build_cfg`, `zend_cfg_build_predecessors`, `zend_cfg_compute_dominators_tree`, `zend_cfg_identify_loops` | the CFG snapshot (#4) |
@@ -235,7 +241,7 @@ Constants and types taken from the headers at compile time:
 `ZEND_MODULE_API_NO`, `ZEND_DEBUG`, `PHP_API_VERSION`, `PHP_VERSION`,
 `PHP_VERSION_ID`, `ZEND_NOP`, `ZEND_USER_OPCODE`, `ZEND_USER_OPCODE_CONTINUE`,
 `ZEND_USER_OPCODE_DISPATCH`, `ZEND_VM_KIND_*`, `IS_UNUSED`, `IS_CONST`,
-`IS_TMP_VAR`, `IS_VAR`, `IS_CV`, `MAY_BE_ARRAY`, `MAY_BE_STRING`,
+`IS_TMP_VAR`, `IS_VAR`, `IS_CV`, `IS_SMART_BRANCH_JMPZ`, `IS_SMART_BRANCH_JMPNZ`, `MAY_BE_ARRAY`, `MAY_BE_STRING`,
 `MAY_BE_VOID`, `ZEND_ACC_ABSTRACT`, `ZEND_ACC_ANON_CLASS`, `ZEND_ACC_CLOSURE`,
 `ZEND_ACC_DONE_PASS_TWO`, `ZEND_BB_START`, `ZEND_BB_CATCH`,
 `ZEND_BB_FINALLY`, `ZEND_BB_FINALLY_END`, `ZEND_BB_RECV_ENTRY`,
@@ -245,7 +251,7 @@ and the structs `zend_module_entry`, `zend_function_entry`,
 `zend_internal_arg_info`, `zend_ini_entry_def`, `zend_execute_data`,
 `zend_function`, `zend_op`, `zend_op_array`, `zend_class_entry`,
 `zend_property_info`, `zend_file_handle`, `zend_string`, `HashTable`,
-`zend_cfg`, `zend_basic_block`, `zend_extension`, `zval` and the engine
+`zend_cfg`, `zend_basic_block`, `zend_extension`, `zend_object`, `zval` and the engine
 globals.
 
 ## Generated code and lints

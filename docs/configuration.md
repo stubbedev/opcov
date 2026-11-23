@@ -115,7 +115,8 @@ of its name:
 
 `match` is different: PHP compiles a `match` with constant arms to a `MATCH`
 jump table whatever the compiler options say. Its arms are still separate
-blocks and edges of the CFG.
+blocks and edges of the CFG, and the probe on the `MATCH` opcode looks the
+subject up in the jump table itself to record the arm taken.
 
 ## `eval()` and stream wrappers
 
@@ -148,9 +149,15 @@ so it is reported as covered only when one of its own operands ran. PCOV
 reports such lines as covered whenever the expression ran; these are the
 documented precision differences.
 
-A file that contains only declarations compiles to a single `RETURN` that the
-VM skips when the file is included; opcov records that `RETURN`'s line as
-executed anyway, as PCOV does.
+A file whose top-level code is only declarations (classes, interfaces, traits,
+enums, functions, constants) has no executable line: its main code is the
+declaration opcodes, which are never lines, and a final `RETURN 1`, which the
+VM skips on `include` when nothing replaced `zend_execute_ex` and runs
+otherwise. opcov reports no line for it, whatever the executor. PCOV and
+Xdebug, which replace `zend_execute_ex`, report that `RETURN`'s line as
+executed by whichever test happened to load the file first, so their per-test
+data depends on test order and on how a run is split across processes; opcov's
+does not, which keeps a merged parallel report identical to a serial one.
 
 `\opcov\executable($files)` compiles nothing: it reports the model of files
 that were compiled in this process and omits files that were never loaded,
@@ -165,16 +172,43 @@ All functions live in the `opcov` namespace.
 |---|---|
 | `ensure_can_collect(): void` | Throws `\opcov\CannotCollectException` (a `RuntimeException`) with the reason when collection is off. After at least one `start()`/`stop()` cycle it also throws when no compiled file was selected. |
 | `start(): void` | Starts recording. Re-arms the probes that fired while collection was off (bootstrap code), so the collection sees them again. Throws `CannotCollectException` when collection is off and `LogicException` when already collecting. |
-| `stop(?string $test = null): array` | Stops recording and returns `[file => ['lines' => [line => true]]]` for the probes that fired since `start()`, sorted by file and line. It does not re-arm them. With `$test`, the same hits are also attributed to that test id for `write_report()`. Throws `LogicException` without a `start()`, `CannotCollectException` when collection went off meanwhile, and `ValueError` (before stopping) when `$test` is empty or not UTF-8. |
+| `stop(?string $test = null): array` | Stops recording and returns what fired since `start()` (shape below), sorted by file, line, function key and id. It does not re-arm the probes. With `$test`, the same hits are also attributed to that test id for `write_report()`. Throws `LogicException` without a `start()`, `CannotCollectException` when collection went off meanwhile, and `ValueError` (before stopping) when `$test` is empty or not UTF-8. |
 | `reset(): void` | Re-arms every probe that fired since the last `reset()`; its cost is proportional to the probes that fired, not to the probes installed. Throws `LogicException` while collecting. |
-| `executable(array $files): array` | `[file => ['lines' => [line => []], 'functions' => [key => ['span' => null, 'outcomes' => [], 'loops' => []]]]]` for the given files that were compiled, built by the same conversion as a report's `lines` and `functions` (function keys name the file by its resolved path). |
+| `executable(array $files): array` | `[file => ['lines' => [line => []], 'functions' => [key => ['span' => null, 'outcomes' => [...], 'loops' => [...]]]]]` for the given files that were compiled, built by the same conversion as a report's `lines` and `functions` (function keys name the file by its resolved path; outcomes and loops are the report's, with empty hit lists). |
 | `write_report(string $path, array $options = []): void` | Writes a canonical `opcov-report/1` report (see [report-schema.md](report-schema.md)) to `$path`; see below. |
 | `get_status(): array` | `enabled`, `collecting`, `off_reason`, `selected_files`, `skipped_files` (file => reason) and `counters` (`units`, `probes_installed`, `probes_fired`, `probes_rearmed`, `jump_table_files`). |
 | `get_debug_info(string $file): array` | `skip_reason`, `executable_lines`, `functions` (function key => CFG snapshot with blocks, edges, loops and diagnostics) and `probes` (function, opcode index, line, armed roles). |
 
+`stop()` returns, for every file with a hit:
+
+```php
+[
+    '/srv/app/src/Foo.php' => [
+        'lines' => [12 => true, 14 => true],
+        'functions' => [
+            'App\Foo::bar' => [
+                'outcomes' => ['o0' => true, 'o3' => true],
+                'loops' => ['l0' => ['zero' => true], 'l1' => ['zero' => true, 'second' => true]],
+            ],
+        ],
+    ],
+]
+```
+
+Files are keyed by their resolved path and functions by the function key the
+report uses, with the file named by its resolved path. A function is listed
+only when one of its outcomes or loops was hit; `lines` and `functions` are
+always present. Outcome ids `o<n>` and loop ids `l<n>` are the ids of
+`executable()` and the report, which name the kind, line and site of each
+(see [report-schema.md](report-schema.md)); a loop lists `zero` when it ran zero
+times and `second` when it ran two or more times in one activation.
+
 A test runner calls `start()`, runs one test, calls `stop()` and then
 `reset()`, so each test is measured on its own; without `reset()` a probe
-that fired in one test stays fired in the next.
+that fired in one test stays fired in the next. A branch probe stays armed
+until every outcome of its branch (and, for a loop test, both loop flags) was
+seen since the last `reset()`, so a loop running a branch whose outcomes were
+all seen runs at full speed.
 
 If the request ends while collecting, the pending hits are discarded at
 request shutdown.
@@ -195,15 +229,15 @@ foreach ($tests as $test) {
 
 - Attribution accumulates in the extension for the life of the process: it
   survives `reset()`, a test id stopped twice is one test whose hits are
-  united, and memory grows with the distinct (test, executable line) pairs,
-  stored as one sorted list of lines per test. `stop()` without a test id
+  united, and memory grows with the distinct (test, line, outcome or loop
+  flag) pairs, stored as one sorted list per test. `stop()` without a test id
   attributes nothing.
 - `write_report()` writes every attributed test and every measured file
   compiled in this process, including files no test touched: every executable
   line is present, with the sorted indexes of the tests that ran it, or an
-  empty list. Function spans are `null` and `outcomes`/`loops` are empty until
-  branch and loop probes exist; spans come from the source when a report is
-  consumed. It may be called more than once; each call writes the state so far.
+  empty list, and every outcome and loop likewise. Spans (of functions and
+  outcomes) are `null`: the extension sees compiled code, which has no
+  columns; they come from the source when a report is consumed. It may be called more than once; each call writes the state so far.
 - The report is serialised by `opcov-core`, the same writer as `opcov merge`,
   to a temporary file next to `$path` (`.<name>.<pid>.tmp`), synced and renamed
   into place, so `$path` is either the previous file or the complete report.

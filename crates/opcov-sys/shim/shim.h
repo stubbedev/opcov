@@ -47,5 +47,13 @@ zval *opcov_array_value_at(HashTable *array, uint32_t index);
 bool opcov_read_string(const zval *value, const char **str, size_t *len);
 bool opcov_read_long(const zval *value, zend_long *number);
 zend_class_entry *opcov_register_class(const char *name, size_t len, zend_class_entry *parent);
+int opcov_branch_truth(const zend_execute_data *execute_data, const zend_op *op);
+int opcov_constant_truth(const zend_op *op);
+int opcov_branch_set(const zend_execute_data *execute_data, const zend_op *op);
+int opcov_branch_null(const zend_execute_data *execute_data, const zend_op *op);
+int64_t opcov_match_target(const zend_execute_data *execute_data, const zend_op *op, const zend_op *opcodes);
+int opcov_foreach_started(const zend_execute_data *execute_data, const zend_op *op);
+bool opcov_fast_call_threw(const zend_execute_data *execute_data, uint32_t var);
+uint32_t opcov_fast_call_var(const zend_op_array *op_array, uint32_t finally_op);
 
 #endif

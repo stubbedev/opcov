@@ -19,8 +19,8 @@ echo implode(", ", $functions), "\n";
 --EXPECT--
 traits.php
   covered: 6,16
-  uncovered: 26,29
+  uncovered: 26
 traits.php
   covered: 6,26
-  uncovered: 16,29
+  uncovered: 16
 Ann::name, Bob::name, Greets::greet

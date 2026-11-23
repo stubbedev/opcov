@@ -13,6 +13,7 @@ compile_error!(
 );
 
 mod api;
+mod branches;
 mod compiler;
 mod engine;
 mod guard;
@@ -69,7 +70,7 @@ static FUNCTIONS: FunctionTable<9> = FunctionTable::new([
 ]);
 
 #[cfg(feature = "engine-selftest")]
-static FUNCTIONS: FunctionTable<12> = FunctionTable::new([
+static FUNCTIONS: FunctionTable<13> = FunctionTable::new([
     VERSION_FUNCTION,
     api::ENSURE_CAN_COLLECT,
     api::START,
@@ -82,6 +83,7 @@ static FUNCTIONS: FunctionTable<12> = FunctionTable::new([
     selftest::ENGINE_SELFTEST_FUNCTION,
     selftest::SELFTEST_PANIC_FUNCTION,
     selftest::SELFTEST_PANIC_IN_PROBE_FUNCTION,
+    selftest::SELFTEST_FORCE_WATCH_FUNCTION,
 ]);
 
 static MODULE: Module = Module::new(ModuleDefinition {

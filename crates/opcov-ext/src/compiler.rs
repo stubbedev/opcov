@@ -5,19 +5,20 @@ use core::{
 use std::{fs, sync::OnceLock};
 
 use opcov_core::{
-    cfg::{FunctionFlag, Opcode},
+    cfg::{FunctionFlag, FunctionKey, Plan},
     report::Sha256,
 };
 use opcov_sys::{
-    IS_CONST, ZEND_ACC_DONE_PASS_TWO, ZEND_COMPILE_NO_JUMPTABLES, ZEND_PROPERTY_HOOK_COUNT,
-    execute_ex, opcov_is_user_class, opcov_is_user_code, opcov_string_release, zend_class_entry,
-    zend_compile_file, zend_compile_position, zend_compile_string, zend_execute_data,
-    zend_execute_ex, zend_file_handle, zend_function, zend_op_array, zend_property_info,
-    zend_resolve_path, zend_string,
+    ZEND_ACC_DONE_PASS_TWO, ZEND_COMPILE_NO_JUMPTABLES, ZEND_PROPERTY_HOOK_COUNT,
+    opcov_is_user_class, opcov_is_user_code, opcov_string_release, zend_class_entry,
+    zend_compile_file, zend_compile_position, zend_compile_string, zend_file_handle, zend_function,
+    zend_object, zend_op_array, zend_property_info, zend_resolve_path, zend_string,
+    zend_throw_exception_hook,
 };
 
 use crate::{
-    engine::{Engine, FileId, OffReason, Probe, Reserved, Role, Roles, Unit, Verdict, with_engine},
+    branches::{self, Layout},
+    engine::{Engine, FileId, FunctionRecord, OffReason, Reserved, Unit, Verdict, with_engine},
     guard::{COLLECTION, EntryPoint, guard},
     lines,
     ordinals::Ordinals,
@@ -42,6 +43,18 @@ struct Originals {
 
 static ORIGINALS: OnceLock<Originals> = OnceLock::new();
 
+type ThrowHook = unsafe extern "C" fn(*mut zend_object);
+
+static PREVIOUS_THROW_HOOK: OnceLock<Option<ThrowHook>> = OnceLock::new();
+
+unsafe extern "C" fn throw_hook(exception: *mut zend_object) {
+    guard(EntryPoint::ExceptionHook, (), branches::on_exception);
+    if let Some(Some(previous)) = PREVIOUS_THROW_HOOK.get() {
+        // SAFETY: the hook installed before opcov's, called with the engine's own argument.
+        unsafe { previous(exception) };
+    }
+}
+
 pub(crate) fn hook() -> bool {
     // SAFETY: reads and replaces the engine's compile hooks at the first request, on the owner
     // thread, before any file of that request is compiled.
@@ -54,6 +67,9 @@ pub(crate) fn hook() -> bool {
         }
         zend_compile_file = Some(compile_file);
         zend_compile_string = Some(compile_string);
+        if PREVIOUS_THROW_HOOK.set(zend_throw_exception_hook).is_ok() {
+            zend_throw_exception_hook = Some(throw_hook);
+        }
     }
     return true;
 }
@@ -312,21 +328,52 @@ impl Engine {
         let Some(label) = self.label else {
             return;
         };
-        let function = snapshot.analysis.function.key().clone();
+        // SAFETY: the caller passes a live op array.
+        let (opcodes, last) = unsafe { ((*op_array).opcodes, (*op_array).last) };
+        let Ok(last) = usize::try_from(last) else {
+            return;
+        };
+        let key = snapshot.analysis.function.key().clone();
         let abstract_function = snapshot
             .analysis
             .function
             .flags()
             .contains(FunctionFlag::Abstract);
-        if let Some(record) = self.files.get_mut(file) {
-            record
-                .functions
-                .entry(function.clone())
-                .or_insert(snapshot.analysis);
-        }
-        // SAFETY: the caller passes a live op array.
-        let (opcodes, last) = unsafe { ((*op_array).opcodes, (*op_array).last) };
-        let Ok(last) = usize::try_from(last) else {
+        let plan = Plan::of(&snapshot.analysis.function);
+        let zero_possible = branches::zero_possible(&plan, &snapshot.analysis.function, opcodes);
+        let declarations_only =
+            matches!(key, FunctionKey::Main { .. }) && lines::declarations_only(&snapshot.instrs);
+        let placement = if declarations_only {
+            lines::Placement::default()
+        } else {
+            lines::place(PHP, &snapshot.instrs, &snapshot.blocks)
+        };
+        // SAFETY: the op array is live; the layout only reads its opcodes and try/catch table.
+        let built = unsafe {
+            Layout {
+                op_array,
+                opcodes,
+                last,
+                function: &snapshot.analysis.function,
+                plan: &plan,
+                zero_possible: &zero_possible,
+                lines: &placement.probes,
+                instrs: &snapshot.instrs,
+            }
+            .build()
+        };
+        let outcomes = plan.outcomes().len();
+        let function = match self.files.find_function(file, &key) {
+            Some(function) => Some(function),
+            None => self.files.add_function(FunctionRecord {
+                file,
+                key,
+                analysis: snapshot.analysis,
+                plan,
+                zero_possible,
+            }),
+        };
+        let Some(function) = function else {
             return;
         };
         if abstract_function || COLLECTION.disabled().is_some() {
@@ -334,51 +381,42 @@ impl Engine {
             unsafe { Reserved::NoProbes.write(op_array, self.slot) };
             return;
         }
-        let placement = lines::place(PHP, &snapshot.instrs, &snapshot.blocks);
         if let Some(record) = self.files.get_mut(file) {
             record.lines.extend(placement.lines.iter().copied());
         }
-        let mut index = vec![0_u32; last].into_boxed_slice();
-        let mut installed = Vec::with_capacity(placement.probes.len());
-        for site in placement.probes.iter().filter(|site| return site.op < last) {
-            let (Some(entry), Ok(number)) = (
-                index.get_mut(site.op),
-                u32::try_from(installed.len().saturating_add(1)),
-            ) else {
-                continue;
-            };
-            *entry = number;
-            let op = opcodes.wrapping_add(site.op);
-            // SAFETY: `site.op` is below `last`; the handler is the real one set by the reset.
-            let handler = unsafe { Handler::of(op) };
-            installed.push(Probe {
-                op: site.op,
-                line: site.line,
-                handler,
-                armed: Roles::only(Role::Line),
-            });
-            // SAFETY: as above; the probe label sends the opcode to the probe callback.
-            unsafe { label.install(op) };
-        }
-        self.counters.probes_installed = self
-            .counters
-            .probes_installed
-            .saturating_add(u64::try_from(installed.len()).unwrap_or(u64::MAX));
-        let id = self.units.insert(Unit {
+        let mut unit = Unit {
             opcodes: Some(opcodes),
             last,
             file,
             function,
-            index,
-            probes: installed,
+            index: built.index,
+            probes: built.probes,
+            sources: built.sources,
+            owners: built.owners,
+            seen: vec![false; outcomes],
+            loops: built.loops,
             pending: 0,
-        });
+        };
+        let producers = unit.producer_ops();
+        if !producers.is_empty() {
+            // SAFETY: the op array is live and its producers lie below `last`.
+            match unsafe { probes::plain_handlers(opcodes, &producers) } {
+                // SAFETY: as above.
+                Some(handlers) => unsafe { unit.prepare_producers(&handlers) },
+                None => unit.drop_producers(),
+            }
+        }
+        // SAFETY: the op array is live; the unit's probes lie below `last`.
+        unsafe { unit.arm_everything(label) };
+        self.counters.probes_installed = self
+            .counters
+            .probes_installed
+            .saturating_add(u64::try_from(unit.probes.len()).unwrap_or(u64::MAX));
+        let id = self.units.insert(unit);
         // SAFETY: as above.
         unsafe { Reserved::Unit(id).write(op_array, self.slot) };
     }
 }
-
-use crate::engine::Handler;
 
 unsafe fn process(op_array: *mut zend_op_array, ordinals: &Ordinals) {
     let Some(slot) = with_engine(|engine| return engine.slot) else {
@@ -518,7 +556,7 @@ unsafe fn after_compile(
     // SAFETY: `main` was just compiled from `compiled`, which is still live.
     unsafe { record_source(main, compiled) };
     // SAFETY: the compiler's tables are live; the new entries start at the given positions.
-    let instrumented = unsafe {
+    unsafe {
         instrument(|list, slot| {
             gather(list, main, slot);
             for function in zend::new_functions(first_function) {
@@ -529,67 +567,11 @@ unsafe fn after_compile(
             }
         })
     };
-    if instrumented {
-        // SAFETY: `main` was just compiled and is live.
-        unsafe { record_skipped_return(main) };
-    }
 }
 
 pub(crate) unsafe fn adopt(op_array: *mut zend_op_array) -> bool {
     // SAFETY: the caller passes the running frame's live op array.
     return unsafe { instrument(|list, slot| gather(list, op_array, slot)) };
-}
-
-unsafe fn record_skipped_return(main: *mut zend_op_array) {
-    // SAFETY: the caller passes a live, compiled op array.
-    let array = unsafe { &*main };
-    if array.last != 1 || array.opcodes.is_null() {
-        return;
-    }
-    // SAFETY: the op array has exactly one opcode.
-    let only = unsafe { &*array.opcodes };
-    let stock: unsafe extern "C" fn(*mut zend_execute_data) = execute_ex;
-    // SAFETY: reads the engine's executor hook by value.
-    let stock_executor =
-        unsafe { zend_execute_ex }.is_some_and(|current| return ptr::fn_addr_eq(current, stock));
-    if Opcode::decode(PHP, only.opcode) != Opcode::Return
-        || only.op1_type != IS_CONST
-        || !stock_executor
-    {
-        return;
-    }
-    // SAFETY: the executor globals are live during a request.
-    let caller = unsafe { (*zend::executor_globals()).current_execute_data };
-    if caller.is_null() {
-        return;
-    }
-    // SAFETY: the current frame is live while the include compiles.
-    let (function, opline) = unsafe { ((*caller).func, (*caller).opline) };
-    // SAFETY: a non-null frame function is live.
-    if function.is_null() || opline.is_null() || !unsafe { opcov_is_user_code(function) } {
-        return;
-    }
-    // SAFETY: the frame's current opcode is live.
-    if Opcode::decode(PHP, unsafe { (*opline).opcode }) != Opcode::IncludeOrEval {
-        return;
-    }
-    with_engine(|engine| {
-        // SAFETY: as above.
-        let Reserved::Unit(id) = (unsafe { Reserved::read(main, engine.slot) }) else {
-            return;
-        };
-        let armed = engine.units.get(id).and_then(|unit| {
-            let probe = unit.probe_at(0)?;
-            return unit
-                .probes
-                .get(probe)
-                .filter(|slot| return slot.armed.contains(Role::Line))
-                .map(|_| return probe);
-        });
-        if let Some(probe) = armed {
-            engine.fire(id, probe);
-        }
-    });
 }
 
 pub(crate) unsafe extern "C" fn op_array_dtor(op_array: *mut zend_op_array) {
@@ -604,6 +586,7 @@ pub(crate) unsafe extern "C" fn op_array_dtor(op_array: *mut zend_op_array) {
             };
             // SAFETY: as above.
             unsafe { Reserved::Unknown.write(op_array, engine.slot) };
+            engine.forget_unit(id);
             engine.units.destroyed(id);
         });
     });

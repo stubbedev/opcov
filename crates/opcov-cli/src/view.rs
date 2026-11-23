@@ -319,19 +319,20 @@ fn branches(lines: &BTreeMap<Line, HitSet>, ordinal: u64, function: &Function) -
             };
         });
     let loops = function.loops.as_slice().iter().flat_map(|looped| {
-        let zero = u64::from(looped.id.get()).saturating_mul(2);
-        return [
-            (zero, &looped.zero),
-            (zero.saturating_add(1), &looped.second),
-        ]
-        .map(|(number, hits)| {
-            return Branch {
-                line: looped.line,
-                block: loop_block,
-                number,
-                taken: taken(lines, looped.line, hits),
-            };
-        });
+        let zero = u64::from(looped.id().get()).saturating_mul(2);
+        let zero_branch = looped.zero().map(|hits| return (zero, hits));
+        let second_branch = Some((zero.saturating_add(1), looped.second()));
+        return zero_branch
+            .into_iter()
+            .chain(second_branch)
+            .map(move |(number, hits)| {
+                return Branch {
+                    line: looped.line(),
+                    block: loop_block,
+                    number,
+                    taken: taken(lines, looped.line(), hits),
+                };
+            });
     });
     return outcomes.chain(loops).collect();
 }

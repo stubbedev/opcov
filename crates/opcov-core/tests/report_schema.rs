@@ -26,9 +26,9 @@ mod schema {
         r#""sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","#,
         r#""lines":{"12":[0,1],"14":[]},"#,
         r#""functions":{"App\\Foo::bar":{"span":[10,1,30,5],"outcomes":["#,
-        r#"{"id":"o7","kind":"CoalesceFallback","line":14,"span":[14,20,14,31],"hits":[0]},"#,
-        r#"{"id":"o8","kind":{"MatchArm":2},"line":15,"span":null,"hits":[]}],"#,
-        r#""loops":[{"id":"l1","kind":"Foreach","line":18,"zero":[],"second":[1]}]}}}}}"#,
+        r#"{"id":"o7","site":21,"kind":"CoalesceFallback","line":14,"span":[14,20,14,31],"hits":[0]},"#,
+        r#"{"id":"o8","site":25,"kind":{"MatchArm":2},"line":15,"span":null,"hits":[]}],"#,
+        r#""loops":[{"id":"l1","kind":"Foreach","line":18,"zero":[],"second":[1]},{"id":"l2","kind":"PostTest","line":20,"zero":null,"second":[]}]}}}}}"#,
         "\n"
     );
 
@@ -74,8 +74,9 @@ mod schema {
             EdgeKind::LoopExit => Some(15),
             EdgeKind::Catch => Some(16),
             EdgeKind::Finally => Some(17),
-            EdgeKind::Engine => Some(18),
-            EdgeKind::Jump => Some(19),
+            EdgeKind::FinallyException => Some(18),
+            EdgeKind::Engine => Some(19),
+            EdgeKind::Jump => Some(20),
             EdgeKind::Flow | EdgeKind::MatchArm(_) | EdgeKind::SwitchCase(_) => None,
         };
     }
@@ -169,6 +170,17 @@ mod schema {
                 mutate(r#","exclude_pattern":null"#, ""),
             ),
             ("missing span", mutate(r#""span":null,"#, "")),
+            ("missing site", mutate(r#""site":21,"#, "")),
+            ("negative site", mutate(r#""site":21"#, r#""site":-1"#)),
+            (
+                "unstructured loop",
+                mutate(r#""kind":"PostTest""#, r#""kind":"Unstructured""#),
+            ),
+            (
+                "source loop kind",
+                mutate(r#""kind":"Foreach""#, r#""kind":"For""#),
+            ),
+            ("missing zero", mutate(r#""zero":null,"#, "")),
             (
                 "empty test name",
                 mutate(r#""Tests\\Unit\\FooTest::test_bar""#, r#""""#),

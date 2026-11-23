@@ -96,7 +96,7 @@ fn lcov_matches_the_documented_mapping() {
     assert_eq!(lcov, golden("report.lcov"), "lcov output");
     assert!(
         lcov.contains("BRDA:13,4,6,0\n"),
-        "the unseen LoopSkip outcome o6 of the third function is block 4, branch 6, taken 0"
+        "the unseen LoopExit outcome o6 of the third function is block 4, branch 6, taken 0"
     );
     assert!(
         lcov.contains("BRDA:13,5,2,0\nBRDA:13,5,3,0\n"),

@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use opcov_core::cfg::{BlockId, Function, Line, Loop};
+use opcov_core::cfg::{Function, Line, LoopSite, LoopTest, OpIndex, Plan};
 use opcov_core::kind::{EdgeKind, LoopKind};
 
 use super::construct::{Construct, ConstructKind, Detail, Location, Unmatched};
@@ -17,6 +17,7 @@ pub(super) enum SiteClass {
     LoopTest,
     Catch,
     Finally,
+    FinallyEntry,
     Arms,
 }
 
@@ -35,6 +36,7 @@ const fn class_of(kind: EdgeKind) -> Option<SiteClass> {
         EdgeKind::LoopBack | EdgeKind::LoopExit => Some(SiteClass::LoopTest),
         EdgeKind::Catch => Some(SiteClass::Catch),
         EdgeKind::Finally => Some(SiteClass::Finally),
+        EdgeKind::FinallyException => Some(SiteClass::FinallyEntry),
         EdgeKind::Flow | EdgeKind::Engine | EdgeKind::Jump => None,
     };
 }
@@ -83,24 +85,22 @@ impl Site<Span, LineRange> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OutcomeRef {
-    pub source: BlockId,
+    pub site: OpIndex,
     pub kind: EdgeKind,
     pub line: Line,
 }
 
 #[must_use]
 pub fn outcome_refs(function: &Function) -> Vec<OutcomeRef> {
-    return function
-        .edges()
+    return Plan::of(function)
+        .outcomes()
         .iter()
-        .filter(|edge| return edge.kind.is_outcome())
-        .filter_map(|edge| {
-            let terminator = function.block(edge.from)?.ops().last()?;
-            return Some(OutcomeRef {
-                source: edge.from,
-                kind: edge.kind,
-                line: terminator.line,
-            });
+        .map(|outcome| {
+            return OutcomeRef {
+                site: outcome.site,
+                kind: outcome.kind,
+                line: outcome.line,
+            };
         })
         .collect();
 }
@@ -116,7 +116,7 @@ pub struct Matching {
     outcomes: Vec<MatchedOutcome>,
 }
 
-type Assignments = BTreeMap<(SiteClass, Line, BlockId), Result<usize, Unmatched>>;
+type Assignments = BTreeMap<(SiteClass, Line, OpIndex), Result<usize, Unmatched>>;
 
 fn candidates(sites: &[Site<Span, LineRange>], class: SiteClass, line: Line) -> Vec<usize> {
     return sites
@@ -138,14 +138,13 @@ const fn shortfall(sources: usize, found: usize) -> Unmatched {
 }
 
 fn assign_ordinals(sites: &[Site<Span, LineRange>], outcomes: &[OutcomeRef]) -> Assignments {
-    let mut groups: BTreeMap<(SiteClass, Line), BTreeSet<BlockId>> = BTreeMap::new();
+    let mut groups: BTreeMap<(SiteClass, Line), BTreeSet<OpIndex>> = BTreeMap::new();
     for outcome in outcomes {
-        if let Some(class) = class_of(outcome.kind).filter(|&class| return class != SiteClass::Arms)
-        {
+        if let Some(class) = class_of(outcome.kind).filter(|&class| return !claims_whole(class)) {
             groups
                 .entry((class, outcome.line))
                 .or_default()
-                .insert(outcome.source);
+                .insert(outcome.site);
         }
     }
     let mut assigned = Assignments::new();
@@ -173,8 +172,16 @@ fn assign_ordinals(sites: &[Site<Span, LineRange>], outcomes: &[OutcomeRef]) -> 
     return assigned;
 }
 
-fn assign_arms(sites: &[Site<Span, LineRange>], outcome: &OutcomeRef) -> Result<usize, Unmatched> {
-    return match candidates(sites, SiteClass::Arms, outcome.line).as_slice() {
+const fn claims_whole(class: SiteClass) -> bool {
+    return matches!(class, SiteClass::Arms);
+}
+
+fn assign_whole(
+    sites: &[Site<Span, LineRange>],
+    class: SiteClass,
+    outcome: &OutcomeRef,
+) -> Result<usize, Unmatched> {
+    return match candidates(sites, class, outcome.line).as_slice() {
         &[only] => Ok(only),
         found => Err(shortfall(1, found.len())),
     };
@@ -192,9 +199,9 @@ impl Matching {
             .map(|&outcome| {
                 let site = match class_of(outcome.kind) {
                     None => Err(Unmatched::NotFromSource),
-                    Some(SiteClass::Arms) => assign_arms(sites, &outcome),
+                    Some(class) if claims_whole(class) => assign_whole(sites, class, &outcome),
                     Some(class) => assigned
-                        .get(&(class, outcome.line, outcome.source))
+                        .get(&(class, outcome.line, outcome.site))
                         .copied()
                         .unwrap_or(Err(Unmatched::NoConstruct)),
                 };
@@ -231,35 +238,23 @@ impl Matching {
     }
 
     #[must_use]
-    pub fn location(&self, source: BlockId, kind: EdgeKind) -> Option<Result<Location, Unmatched>> {
+    pub fn location(&self, site: OpIndex, kind: EdgeKind) -> Option<Result<Location, Unmatched>> {
         return self
             .outcomes
             .iter()
-            .find(|matched| return matched.outcome.source == source && matched.outcome.kind == kind)
+            .find(|matched| return matched.outcome.site == site && matched.outcome.kind == kind)
             .map(|matched| return matched.location);
     }
 
     #[must_use]
-    pub fn loop_kind(&self, function: &Function, cfg_loop: &Loop) -> Option<LoopKind> {
-        let header = cfg_loop.header();
-        let header_tests = function
-            .edges()
-            .iter()
-            .any(|edge| return edge.from == header && edge.kind == EdgeKind::LoopBack);
-        let test = if header_tests {
-            header
-        } else {
-            function
-                .edges()
-                .iter()
-                .find(|edge| {
-                    return edge.kind == EdgeKind::LoopBack
-                        && edge.to == header
-                        && cfg_loop.body_blocks().contains(&edge.from);
-                })?
-                .from
+    pub fn loop_kind(&self, plan: &Plan, planned: &LoopSite) -> Option<LoopKind> {
+        let back = match planned.test {
+            LoopTest::Foreach { back, .. }
+            | LoopTest::PreTest { back, .. }
+            | LoopTest::PostTest { back, .. } => back,
         };
-        let location = self.location(test, EdgeKind::LoopBack)?.ok()?;
+        let site = plan.outcome(back)?.site;
+        let location = self.location(site, EdgeKind::LoopBack)?.ok()?;
         return match location.construct {
             ConstructKind::Loop(kind) => Some(kind),
             _ => None,

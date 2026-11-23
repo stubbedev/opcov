@@ -8,8 +8,9 @@ use opcov_sys::{
 };
 
 use crate::{
+    branches::{After, Frame},
     compiler,
-    engine::{Engine, Handler, ProbeRef, Reserved, Role, UnitId, with_engine},
+    engine::{Engine, Handler, Reserved, with_engine},
     guard::{COLLECTION, EntryPoint, guard},
     threads,
 };
@@ -88,6 +89,36 @@ pub(crate) unsafe fn reset_handlers(op_array: *mut zend_op_array) {
     }
 }
 
+pub(crate) unsafe fn plain_handlers(
+    opcodes: *mut zend_op,
+    producers: &[(usize, u8)],
+) -> Option<Vec<(usize, Handler)>> {
+    return threads::with_handler_table(|| {
+        unregister();
+        let plain = producers
+            .iter()
+            .map(|&(op, plain_type)| {
+                let opcode = opcodes.wrapping_add(op);
+                // SAFETY: the caller passes live opcodes and producer indexes below `last`; the
+                // user handlers are unregistered, so the VM picks the real handler for the
+                // operand types, which are put back right after.
+                unsafe {
+                    let smart_type = (*opcode).result_type;
+                    let smart = Handler::of(opcode);
+                    (*opcode).result_type = plain_type;
+                    zend_vm_set_opcode_handler(opcode);
+                    let plain = Handler::of(opcode);
+                    (*opcode).result_type = smart_type;
+                    smart.install(opcode);
+                    return (op, plain);
+                }
+            })
+            .collect();
+        register();
+        return plain;
+    });
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Outcome {
     Continue,
@@ -101,28 +132,7 @@ enum Hit {
 }
 
 impl Engine {
-    pub(crate) fn fire(&mut self, unit: UnitId, probe: usize) {
-        let recording = self.request.is_some() && COLLECTION.disabled().is_none();
-        let Some(owner) = self.units.get_mut(unit) else {
-            return;
-        };
-        let opcodes = owner.opcodes;
-        let Some(slot) = owner.probes.get_mut(probe) else {
-            return;
-        };
-        slot.armed.remove(Role::Line);
-        if slot.armed.is_empty()
-            && let Some(opcodes) = opcodes
-        {
-            // SAFETY: the unit is alive, so its opcodes are; `op` is below `last`.
-            unsafe { slot.handler.install(opcodes.wrapping_add(slot.op)) };
-        }
-        if recording {
-            self.record(ProbeRef { unit, probe });
-        }
-    }
-
-    unsafe fn hit(&mut self, op_array: *const zend_op_array, opline: *const zend_op) -> Hit {
+    unsafe fn hit(&mut self, op_array: *const zend_op_array, frame: Frame) -> Hit {
         // SAFETY: forwarded from the caller.
         let reserved = unsafe { Reserved::read(op_array, self.slot) };
         let id = match reserved {
@@ -136,7 +146,8 @@ impl Engine {
         let Some(opcodes) = unit.opcodes else {
             return Hit::Done(Outcome::Forward);
         };
-        let op = opline
+        let op = frame
+            .opline
             .addr()
             .checked_sub(opcodes.addr())
             .and_then(|bytes| return bytes.checked_div(size_of::<zend_op>()))
@@ -147,14 +158,19 @@ impl Engine {
         let armed = unit
             .probes
             .get(probe)
-            .is_some_and(|slot| return slot.armed.contains(Role::Line));
+            .is_some_and(|slot| return !slot.armed.is_empty());
         if !armed {
             return Hit::Done(Outcome::Forward);
         }
         #[cfg(feature = "engine-selftest")]
         inject_panic();
-        self.fire(id, probe);
-        return Hit::Done(Outcome::Continue);
+        let recording = self.request.is_some() && COLLECTION.disabled().is_none();
+        // SAFETY: the frame is the one the VM is executing and the probe belongs to its unit.
+        let after = unsafe { self.trigger(recording, id, probe, frame) };
+        return Hit::Done(match after {
+            After::Restored => Outcome::Continue,
+            After::Armed => Outcome::Forward,
+        });
     }
 }
 
@@ -178,14 +194,18 @@ unsafe fn fire(execute_data: *mut zend_execute_data) -> Outcome {
     }
     // SAFETY: user code is an op array.
     let op_array = unsafe { &raw mut (*function).op_array };
+    let frame = Frame {
+        execute_data,
+        opline,
+    };
     // SAFETY: `op_array` and `opline` belong to the running frame.
-    let first = with_engine(|engine| return unsafe { engine.hit(op_array, opline) });
+    let first = with_engine(|engine| return unsafe { engine.hit(op_array, frame) });
     return match first {
         Some(Hit::Done(outcome)) => outcome,
         // SAFETY: `op_array` is the running frame's live op array.
         Some(Hit::Adopt) if unsafe { compiler::adopt(op_array) } => {
             // SAFETY: as above.
-            match with_engine(|engine| return unsafe { engine.hit(op_array, opline) }) {
+            match with_engine(|engine| return unsafe { engine.hit(op_array, frame) }) {
                 Some(Hit::Done(outcome)) => outcome,
                 Some(Hit::Adopt) | None => Outcome::Forward,
             }

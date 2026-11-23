@@ -24,3 +24,45 @@ function opcov_child(string $script, array $ini = []): string
     unlink($file);
     return (string) $output;
 }
+
+function opcov_kind(array $outcome): string
+{
+    $kind = $outcome['kind'];
+    return is_array($kind) ? key($kind) . '(' . current($kind) . ')' : $kind;
+}
+
+function opcov_short_key(string $key): string
+{
+    return preg_replace('~@.*/~', '@', $key);
+}
+
+function opcov_branches(string $file, callable $run): string
+{
+    \opcov\start();
+    try {
+        $run();
+    } catch (\Throwable $e) {
+        echo 'threw ', get_class($e), "\n";
+    }
+    $hits = \opcov\stop();
+    \opcov\reset();
+    $model = \opcov\executable([$file])[$file]['functions'] ?? [];
+    $text = '';
+    foreach ($hits[$file]['functions'] ?? [] as $key => $function) {
+        $taken = [];
+        foreach ($model[$key]['outcomes'] as $outcome) {
+            if (isset($function['outcomes'][$outcome['id']])) {
+                $taken[] = opcov_kind($outcome) . '@' . $outcome['line'];
+            }
+        }
+        foreach ($model[$key]['loops'] as $loop) {
+            foreach (['zero', 'second'] as $flag) {
+                if (isset($function['loops'][$loop['id']][$flag])) {
+                    $taken[] = $loop['kind'] . '@' . $loop['line'] . ':' . $flag;
+                }
+            }
+        }
+        $text .= '  ' . opcov_short_key($key) . ': ' . implode(' ', $taken) . "\n";
+    }
+    return $text === '' ? "  (none)\n" : $text;
+}

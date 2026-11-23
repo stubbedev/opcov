@@ -17,6 +17,7 @@ pub(crate) enum EntryPoint {
     CompileFile,
     CompileString,
     OpArrayDtor,
+    ExceptionHook,
     Probe,
     EnsureCanCollect,
     Start,
@@ -30,6 +31,8 @@ pub(crate) enum EntryPoint {
     EngineSelftest,
     #[cfg(feature = "engine-selftest")]
     SelftestPanic,
+    #[cfg(feature = "engine-selftest")]
+    SelftestForceWatch,
     #[cfg(feature = "engine-selftest")]
     SelftestPanicInProbe,
 }
@@ -47,6 +50,7 @@ impl EntryPoint {
             Self::CompileFile => "the zend_compile_file hook",
             Self::CompileString => "the zend_compile_string hook",
             Self::OpArrayDtor => "the op_array destructor",
+            Self::ExceptionHook => "the zend_throw_exception_hook",
             Self::Probe => "the probe callback",
             Self::EnsureCanCollect => "opcov\\ensure_can_collect()",
             Self::Start => "opcov\\start()",
@@ -60,6 +64,8 @@ impl EntryPoint {
             Self::EngineSelftest => "opcov\\engine_selftest()",
             #[cfg(feature = "engine-selftest")]
             Self::SelftestPanic => "opcov\\selftest_panic()",
+            #[cfg(feature = "engine-selftest")]
+            Self::SelftestForceWatch => "opcov\\selftest_force_watch()",
             #[cfg(feature = "engine-selftest")]
             Self::SelftestPanicInProbe => "opcov\\selftest_panic_in_probe()",
         };

@@ -3,11 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 use std::path::Path;
 
-use opcov_core::cfg::Line;
-use opcov_core::kind::{EdgeKind, LoopKind};
+use opcov_core::cfg::{Line, LoopShape};
+use opcov_core::kind::EdgeKind;
 use opcov_core::report::{
-    FileCoverage, Function, Identified, LoopId, OutcomeId, Report, SourcePath, Span as ReportSpan,
-    TestTable,
+    FileCoverage, Function, HitSet, Identified, LoopId, OutcomeId, Report, SourcePath,
+    Span as ReportSpan, TestTable,
 };
 use opcov_syntax::{FunctionSource, SourceFile, Span};
 use serde::Serialize;
@@ -28,7 +28,7 @@ pub(crate) struct OutcomeFinding {
 #[derive(Debug, Serialize)]
 pub(crate) struct LoopFinding {
     id: LoopId,
-    kind: LoopKind,
+    kind: LoopShape,
     line: Line,
 }
 
@@ -166,7 +166,7 @@ fn parent_of(functions: &[FunctionSource], child: usize) -> Option<usize> {
     }));
 }
 
-fn test_names<'r>(tests: &'r TestTable, hits: &opcov_core::report::HitSet) -> Vec<&'r str> {
+fn test_names<'r>(tests: &'r TestTable, hits: &HitSet) -> Vec<&'r str> {
     return hits
         .as_slice()
         .iter()
@@ -225,19 +225,19 @@ fn evaluate_function<'r>(
             .loops
             .as_slice()
             .iter()
-            .filter(|looped| return within(looped.line))
+            .filter(|looped| return within(looped.line()))
         {
             let finding = || {
                 return LoopFinding {
-                    id: looped.id,
-                    kind: looped.kind,
-                    line: looped.line,
+                    id: looped.id(),
+                    kind: looped.kind().get(),
+                    line: looped.line(),
                 };
             };
-            if looped.zero.is_empty() {
+            if looped.zero().is_some_and(HitSet::is_empty) {
                 loops_never_zero.push(finding());
             }
-            if looped.second.is_empty() {
+            if looped.second().is_empty() {
                 loops_never_twice.push(finding());
             }
         }

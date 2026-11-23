@@ -95,6 +95,7 @@ pub enum ModelError {
     NotAnOutcome {
         kind: EdgeKind,
     },
+    UnstructuredLoop,
     EmptyTestName,
     FunctionKey(KeyError),
     TooManyTests {
@@ -170,6 +171,9 @@ impl fmt::Display for ModelError {
             Self::NotAnOutcome { kind } => {
                 write!(formatter, "edge kind {kind:?} is not an outcome")
             }
+            Self::UnstructuredLoop => formatter.write_str(
+                "an unstructured loop has no zero or second iteration to report; loops are Foreach, PreTest or PostTest",
+            ),
             Self::EmptyTestName => formatter.write_str("test names must not be empty"),
             Self::FunctionKey(error) => write!(formatter, "invalid function key: {error}"),
             Self::TooManyTests { count } => write!(

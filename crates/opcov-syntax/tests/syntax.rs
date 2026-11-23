@@ -3,7 +3,7 @@ mod syntax {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use opcov_core::cfg::{Analysis, BlockId, FunctionKey, Line};
+    use opcov_core::cfg::{Analysis, FunctionKey, Line, OpIndex, Plan};
     use opcov_core::kind::{EdgeKind, LoopKind};
     use opcov_syntax::{
         BranchKind, ConstructKind, FunctionSource, Location, LookupError, OutcomeRef, SourceFile,
@@ -30,9 +30,9 @@ mod syntax {
         return Line::new(number).unwrap();
     }
 
-    fn outcome(source: u32, kind: EdgeKind, at: u32) -> OutcomeRef {
+    fn outcome(site: u32, kind: EdgeKind, at: u32) -> OutcomeRef {
         return OutcomeRef {
-            source: BlockId::new(source),
+            site: OpIndex::new(site),
             kind,
             line: line(at),
         };
@@ -350,6 +350,47 @@ mod syntax {
     }
 
     #[test]
+    fn a_finally_entered_by_an_exception_matches_its_finally_clause() {
+        let file = parse("loops");
+        let loops = function(&file, "loops");
+        let location = located(loops, outcome(40, EdgeKind::FinallyException, 26));
+        assert_eq!(location.construct, ConstructKind::Finally, "the construct");
+        assert_eq!(
+            spans(location).1,
+            "25:7-27:6",
+            "the outcome spans the finally clause"
+        );
+    }
+
+    #[test]
+    fn outcomes_of_one_line_are_told_apart_by_their_site() {
+        let file = parse("branches");
+        let branches = function(&file, "branches");
+        let found = locate(
+            branches,
+            &[
+                outcome(40, EdgeKind::CoalesceValue, 16),
+                outcome(40, EdgeKind::CoalesceFallback, 16),
+                outcome(43, EdgeKind::CoalesceValue, 16),
+                outcome(43, EdgeKind::CoalesceFallback, 16),
+            ],
+        );
+        let spans: Vec<String> = found
+            .iter()
+            .map(|result| return result.unwrap().span.to_string())
+            .collect();
+        assert_eq!(
+            spans[0], spans[1],
+            "both outcomes of the first site share a construct"
+        );
+        assert_eq!(
+            spans[2], spans[3],
+            "both outcomes of the second site share a construct"
+        );
+        assert_ne!(spans[0], spans[2], "the two sites are two constructs");
+    }
+
+    #[test]
     fn functions_are_keyed_like_the_engine() {
         let file = parse("functions");
         for (key, line) in [
@@ -552,7 +593,9 @@ mod syntax {
                 matches!(construct, ConstructKind::Loop(_))
             }
             EdgeKind::Catch => matches!(construct, ConstructKind::Catch),
-            EdgeKind::Finally => matches!(construct, ConstructKind::Finally),
+            EdgeKind::Finally | EdgeKind::FinallyException => {
+                matches!(construct, ConstructKind::Finally)
+            }
             EdgeKind::Flow | EdgeKind::Engine | EdgeKind::Jump => false,
         };
     }
@@ -601,10 +644,11 @@ mod syntax {
                     location.span
                 );
             }
-            let loops: Vec<LoopKind> = cfg
+            let plan = Plan::of(cfg);
+            let loops: Vec<LoopKind> = plan
                 .loops()
                 .iter()
-                .map(|cfg_loop| return matching.loop_kind(cfg, cfg_loop).unwrap())
+                .map(|planned| return matching.loop_kind(&plan, planned).unwrap())
                 .collect();
             assert_eq!(loops, expected_loops(&name), "{name}: loop kinds");
         }

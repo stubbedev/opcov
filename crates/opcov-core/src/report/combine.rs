@@ -64,6 +64,7 @@ impl fmt::Display for HeaderField {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutcomeField {
+    Site,
     Kind,
     Line,
     Span,
@@ -73,6 +74,7 @@ pub enum OutcomeField {
 pub enum LoopField {
     Kind,
     Line,
+    Zero,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +106,7 @@ impl fmt::Display for ConflictSite {
                 field,
             } => {
                 let field = match field {
+                    OutcomeField::Site => "site",
                     OutcomeField::Kind => "kind",
                     OutcomeField::Line => "line",
                     OutcomeField::Span => "span",
@@ -121,6 +124,7 @@ impl fmt::Display for ConflictSite {
                 let field = match field {
                     LoopField::Kind => "kind",
                     LoopField::Line => "line",
+                    LoopField::Zero => "zero",
                 };
                 write!(formatter, "{field} of loop {id} in function `{function}`")
             }
@@ -442,6 +446,7 @@ fn union_outcomes(
             };
         };
     };
+    clash_if(&left.site, &right.site, site(OutcomeField::Site))?;
     clash_if(&left.kind, &right.kind, site(OutcomeField::Kind))?;
     clash_if(&left.line, &right.line, site(OutcomeField::Line))?;
     clash_if(&left.span, &right.span, site(OutcomeField::Span))?;
@@ -463,8 +468,16 @@ fn union_loops(function: &FunctionKey, left: Loop, right: Loop) -> Result<Loop, 
     };
     clash_if(&left.kind, &right.kind, site(LoopField::Kind))?;
     clash_if(&left.line, &right.line, site(LoopField::Line))?;
+    clash_if(
+        &left.zero.is_some(),
+        &right.zero.is_some(),
+        site(LoopField::Zero),
+    )?;
     return Ok(Loop {
-        zero: union_hits(left.zero, right.zero),
+        zero: left
+            .zero
+            .zip(right.zero)
+            .map(|(left, right)| return union_hits(left, right)),
         second: union_hits(left.second, right.second),
         ..left
     });

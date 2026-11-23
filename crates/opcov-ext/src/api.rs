@@ -1,14 +1,15 @@
 use core::ffi::c_char;
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
 
 use opcov_core::{
-    cfg::FilePath,
+    cfg::{FilePath, FunctionKey, Line},
     output::write_atomically,
-    report::{PathBase, Root},
+    report::{LoopId, OutcomeId, PathBase, Root},
 };
 use opcov_sys::{
     ArgInfo, HashTable, MAXPATHLEN, MAY_BE_ARRAY, MAY_BE_NULL, MAY_BE_STRING, MAY_BE_VOID,
@@ -21,7 +22,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     accepts_no_arguments,
-    engine::{Engine, FileId, FiredList, OffReason, Role, Verdict, with_engine},
+    engine::{Covered, Engine, FileId, FiredList, Hit, OffReason, Role, Verdict, with_engine},
     guard::{COLLECTION, EntryPoint, guard},
     ini,
     php::{self, Exception},
@@ -180,59 +181,170 @@ unsafe extern "C" fn start(execute_data: *mut zend_execute_data, _return_value: 
     });
 }
 
-unsafe fn emit_hits(engine: &Engine, return_value: *mut zval) {
-    let lines = &engine.scratch.lines;
-    let mut files = 0_usize;
-    let mut previous: Option<FileId> = None;
-    for &(file, _) in lines {
-        if previous != Some(file) {
-            files = files.saturating_add(1);
-            previous = Some(file);
-        }
+#[derive(Debug, Default)]
+struct FunctionHits {
+    outcomes: Vec<u32>,
+    loops: BTreeMap<u32, (bool, bool)>,
+}
+
+#[derive(Debug)]
+struct FileHits<'a> {
+    path: &'a str,
+    lines: Vec<u32>,
+    functions: BTreeMap<&'a FunctionKey, FunctionHits>,
+}
+
+impl Engine {
+    fn covered_file(&self, covered: Covered) -> Option<FileId> {
+        return match covered {
+            Covered::Line(file, _) => Some(file),
+            Covered::Outcome(function, _)
+            | Covered::Zero(function, _)
+            | Covered::Second(function, _) => self
+                .files
+                .function(function)
+                .map(|record| return record.file),
+        };
     }
+
+    fn file_hits(&self) -> Vec<FileHits<'_>> {
+        let mut by_file: BTreeMap<&str, FileHits<'_>> = BTreeMap::new();
+        for &covered in &self.scratch.covered {
+            let Some(file) = self.covered_file(covered) else {
+                continue;
+            };
+            let path = self.path(file);
+            let entry = by_file.entry(path).or_insert_with(|| {
+                return FileHits {
+                    path,
+                    lines: Vec::new(),
+                    functions: BTreeMap::new(),
+                };
+            });
+            let (function, hit) = match covered {
+                Covered::Line(_, line) => {
+                    entry.lines.push(line.get());
+                    continue;
+                }
+                Covered::Outcome(function, number) => {
+                    (function, Covered::Outcome(function, number))
+                }
+                Covered::Zero(function, number) => (function, Covered::Zero(function, number)),
+                Covered::Second(function, number) => (function, Covered::Second(function, number)),
+            };
+            let Some(record) = self.files.function(function) else {
+                continue;
+            };
+            let hits = entry.functions.entry(&record.key).or_default();
+            match hit {
+                Covered::Outcome(_, number) => hits.outcomes.push(number),
+                Covered::Zero(_, number) => hits.loops.entry(number).or_default().0 = true,
+                Covered::Second(_, number) => hits.loops.entry(number).or_default().1 = true,
+                Covered::Line(..) => {}
+            }
+        }
+        return by_file
+            .into_values()
+            .map(|mut hits| {
+                hits.lines.sort_unstable();
+                hits.lines.dedup();
+                for function in hits.functions.values_mut() {
+                    function.outcomes.sort_unstable();
+                    function.outcomes.dedup();
+                }
+                return hits;
+            })
+            .collect();
+    }
+}
+
+unsafe fn emit_function(target: *mut zval, hits: &FunctionHits) {
+    // SAFETY: the caller passes a writable zval; every child zval is moved into its parent.
+    unsafe {
+        php::array(target, 2);
+        let mut outcomes = zval::default();
+        php::array(&raw mut outcomes, hits.outcomes.len());
+        for number in &hits.outcomes {
+            let mut hit = php::bool_value(true);
+            php::set(
+                &raw mut outcomes,
+                &OutcomeId::new(*number).to_string(),
+                &mut hit,
+            );
+        }
+        php::set(target, "outcomes", &mut outcomes);
+        let mut loops = zval::default();
+        php::array(&raw mut loops, hits.loops.len());
+        for (number, &(zero, second)) in &hits.loops {
+            let mut looped = zval::default();
+            php::array(&raw mut looped, 2);
+            for (name, flag) in [("zero", zero), ("second", second)] {
+                if flag {
+                    let mut hit = php::bool_value(true);
+                    php::set(&raw mut looped, name, &mut hit);
+                }
+            }
+            php::set(
+                &raw mut loops,
+                &LoopId::new(*number).to_string(),
+                &mut looped,
+            );
+        }
+        php::set(target, "loops", &mut loops);
+    }
+}
+
+unsafe fn emit_hits(engine: &Engine, return_value: *mut zval) {
+    let files = engine.file_hits();
     // SAFETY: the caller passes the engine's return slot; every child zval is moved into its parent.
     unsafe {
-        php::array(return_value, files);
-        let mut position = 0_usize;
-        while let Some(&(file, _)) = lines.get(position) {
+        php::array(return_value, files.len());
+        for file in &files {
             let mut entry = zval::default();
-            php::array(&raw mut entry, 1);
+            php::array(&raw mut entry, 2);
             let mut covered = zval::default();
-            php::array(&raw mut covered, 0);
-            while let Some(&(current, line)) = lines.get(position) {
-                if current != file {
-                    break;
-                }
+            php::array(&raw mut covered, file.lines.len());
+            for &line in &file.lines {
                 let mut hit = php::bool_value(true);
-                php::set_index(&raw mut covered, line.get(), &mut hit);
-                position = position.saturating_add(1);
+                php::set_index(&raw mut covered, line, &mut hit);
             }
             php::set(&raw mut entry, "lines", &mut covered);
-            php::set(return_value, engine.path(file), &mut entry);
+            let mut functions = zval::default();
+            php::array(&raw mut functions, file.functions.len());
+            for (key, hits) in &file.functions {
+                let mut function = zval::default();
+                emit_function(&raw mut function, hits);
+                php::set(&raw mut functions, &key.to_string(), &mut function);
+            }
+            php::set(&raw mut entry, "functions", &mut functions);
+            php::set(return_value, file.path, &mut entry);
         }
     }
 }
 
 impl Engine {
     fn collect_hits(&mut self) {
-        let mut lines = core::mem::take(&mut self.scratch.lines);
-        lines.clear();
+        let mut covered = core::mem::take(&mut self.scratch.covered);
+        covered.clear();
         for fired in &self.fired.hits {
             let Some(unit) = self.units.get(fired.unit) else {
                 continue;
             };
-            if let Some(probe) = unit.probes.get(fired.probe) {
-                lines.push((unit.file, probe.line));
-            }
+            let item = match fired.hit {
+                Hit::Line(probe) => usize::try_from(probe)
+                    .ok()
+                    .and_then(|probe| return unit.probes.get(probe))
+                    .and_then(|probe| return probe.line)
+                    .map(|line| return Covered::Line(unit.file, line)),
+                Hit::Outcome(number) => Some(Covered::Outcome(unit.function, number)),
+                Hit::Zero(number) => Some(Covered::Zero(unit.function, number)),
+                Hit::Second(number) => Some(Covered::Second(unit.function, number)),
+            };
+            covered.extend(item);
         }
-        lines.sort_unstable_by(|left, right| {
-            return self
-                .path(left.0)
-                .cmp(self.path(right.0))
-                .then(left.1.cmp(&right.1));
-        });
-        lines.dedup();
-        self.scratch.lines = lines;
+        covered.sort_unstable();
+        covered.dedup();
+        self.scratch.covered = covered;
         let hits = core::mem::take(&mut self.fired.hits);
         self.fired.stopped.extend_from_slice(&hits);
         let mut emptied = hits;
@@ -297,7 +409,7 @@ unsafe extern "C" fn stop(execute_data: *mut zend_execute_data, return_value: *m
             engine.completed_cycles = engine.completed_cycles.saturating_add(1);
             engine.collect_hits();
             if let Some(test) = test {
-                engine.attribution.attribute(test, &engine.scratch.lines);
+                engine.attribution.attribute(test, &engine.scratch.covered);
             }
             // SAFETY: the engine passes this call's return slot.
             unsafe { emit_hits(engine, return_value) };
@@ -378,7 +490,7 @@ impl Engine {
             .path
             .parse()
             .map_err(|error| return format!("{}: {error}", record.path))?;
-        return report::entry(record, &key_file, [])
+        return report::entry(&self.files, record, &key_file, &[])
             .map_err(|error| return format!("{}: {error}", record.path));
     }
 }
@@ -562,6 +674,7 @@ impl Engine {
         let functions: Map<String, Value> = record
             .functions
             .iter()
+            .filter_map(|(key, &id)| return Some((key, &self.files.function(id)?.analysis)))
             .map(|(key, analysis)| {
                 return (
                     key.to_string(),
@@ -576,11 +689,15 @@ impl Engine {
             .live()
             .filter(|unit| return unit.file == file)
             .flat_map(|unit| {
-                return unit.probes.iter().map(|probe| {
+                let function = self
+                    .files
+                    .function(unit.function)
+                    .map_or_else(String::new, |record| return record.key.to_string());
+                return unit.probes.iter().map(move |probe| {
                     return json!({
-                        "function": unit.function.to_string(),
+                        "function": function,
                         "op": probe.op,
-                        "line": probe.line.get(),
+                        "line": probe.line.map(Line::get),
                         "armed": probe.armed.iter().map(Role::name).collect::<Vec<_>>(),
                     });
                 });

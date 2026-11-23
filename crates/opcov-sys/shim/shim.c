@@ -241,3 +241,132 @@ zend_class_entry *opcov_register_class(const char *name, size_t len, zend_class_
 	INIT_CLASS_ENTRY_EX(entry, name, len, NULL);
 	return zend_register_internal_class_ex(&entry, parent);
 }
+
+static zval *opcov_first_operand(const zend_execute_data *execute_data, const zend_op *op)
+{
+	if (op->op1_type == IS_CONST) {
+		return RT_CONSTANT(op, op->op1);
+	}
+	if (op->op1_type & (IS_TMP_VAR | IS_VAR | IS_CV)) {
+		return EX_VAR(op->op1.var);
+	}
+	return NULL;
+}
+
+static int opcov_truth(const zval *value)
+{
+	switch (Z_TYPE_P(value)) {
+		case IS_NULL:
+		case IS_FALSE:
+			return 0;
+		case IS_TRUE:
+		case IS_RESOURCE:
+			return 1;
+		case IS_LONG:
+			return Z_LVAL_P(value) != 0;
+		case IS_DOUBLE:
+			return Z_DVAL_P(value) ? 1 : 0;
+		case IS_STRING:
+			return !(Z_STRLEN_P(value) == 0 || (Z_STRLEN_P(value) == 1 && Z_STRVAL_P(value)[0] == '0'));
+		case IS_ARRAY:
+			return zend_hash_num_elements(Z_ARRVAL_P(value)) != 0;
+		case IS_OBJECT:
+			return Z_OBJ_HT_P(value)->cast_object == zend_std_cast_object_tostring ? 1 : -1;
+		case IS_REFERENCE:
+			return opcov_truth(Z_REFVAL_P(value));
+		default:
+			return -1;
+	}
+}
+
+int opcov_branch_truth(const zend_execute_data *execute_data, const zend_op *op)
+{
+	const zval *value = opcov_first_operand(execute_data, op);
+	return value ? opcov_truth(value) : -1;
+}
+
+int opcov_constant_truth(const zend_op *op)
+{
+	return op->op1_type == IS_CONST ? opcov_truth(RT_CONSTANT(op, op->op1)) : -1;
+}
+
+int opcov_branch_set(const zend_execute_data *execute_data, const zend_op *op)
+{
+	const zval *value = opcov_first_operand(execute_data, op);
+	if (!value) {
+		return -1;
+	}
+	ZVAL_DEREF(value);
+	return Z_TYPE_P(value) > IS_NULL;
+}
+
+int opcov_branch_null(const zend_execute_data *execute_data, const zend_op *op)
+{
+	const zval *value = opcov_first_operand(execute_data, op);
+	if (!value) {
+		return -1;
+	}
+	if (op->op1_type == IS_CV && Z_TYPE_P(value) == IS_UNDEF && !(op->extended_value & ZEND_JMP_NULL_BP_VAR_IS)) {
+		return -1;
+	}
+	ZVAL_DEREF(value);
+	return Z_TYPE_P(value) <= IS_NULL;
+}
+
+int64_t opcov_match_target(const zend_execute_data *execute_data, const zend_op *op, const zend_op *opcodes)
+{
+	const zval *value = opcov_first_operand(execute_data, op);
+	if (!value) {
+		return -1;
+	}
+	ZVAL_DEREF(value);
+	HashTable *table = Z_ARRVAL_P(RT_CONSTANT(op, op->op2));
+	const zval *jump = NULL;
+	if (Z_TYPE_P(value) == IS_LONG) {
+		jump = zend_hash_index_find(table, Z_LVAL_P(value));
+	} else if (Z_TYPE_P(value) == IS_STRING) {
+		jump = zend_hash_find(table, Z_STR_P(value));
+	} else if (Z_TYPE_P(value) == IS_UNDEF) {
+		return -1;
+	}
+	zend_long offset = jump ? Z_LVAL_P(jump) : (zend_long) op->extended_value;
+	const zend_op *target = ZEND_OFFSET_TO_OPLINE(op, offset);
+	return target - opcodes;
+}
+
+int opcov_foreach_started(const zend_execute_data *execute_data, const zend_op *op)
+{
+	zval *iteration = EX_VAR(op->op1.var);
+	zval *value = iteration;
+	ZVAL_DEREF(value);
+	if (Z_TYPE_P(value) == IS_ARRAY && op->opcode == ZEND_FE_FETCH_R) {
+		return Z_FE_POS_P(iteration) > 0;
+	}
+	if (Z_TYPE_P(value) == IS_OBJECT) {
+		zend_object_iterator *iterator = zend_iterator_unwrap(value);
+		if (iterator) {
+			return iterator->index != (zend_ulong) -1;
+		}
+	}
+	uint32_t position = Z_FE_ITER_P(iteration);
+	if (position == (uint32_t) -1 || position >= EG(ht_iterators_used)) {
+		return -1;
+	}
+	return EG(ht_iterators)[position].pos > 0;
+}
+
+bool opcov_fast_call_threw(const zend_execute_data *execute_data, uint32_t var)
+{
+	return Z_OBJ_P(EX_VAR(var)) != NULL;
+}
+
+uint32_t opcov_fast_call_var(const zend_op_array *op_array, uint32_t finally_op)
+{
+	for (int index = 0; index < op_array->last_try_catch; index++) {
+		const zend_try_catch_element *element = &op_array->try_catch_array[index];
+		if (element->finally_op == finally_op && element->finally_end > 0) {
+			return op_array->opcodes[element->finally_end].op1.var;
+		}
+	}
+	return (uint32_t) -1;
+}

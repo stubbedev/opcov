@@ -17,7 +17,7 @@ pub use combine::{
 pub use error::{Collection, HitSite, ModelError, ReadError, SchemaError};
 pub use model::{
     Column, FileCoverage, Function, Generator, Header, HitSet, Id, IdSorted, Identified, Loop,
-    LoopId, Outcome, OutcomeId, OutcomeKind, PathBase, PathMode, Report, Root, Settings, Sha256,
-    SourcePath, Span, TestIndex, TestTable, VmKind, line_hits, schema_id,
+    LoopId, MeasuredShape, Outcome, OutcomeId, OutcomeKind, PathBase, PathMode, Report, Root,
+    Settings, Sha256, SourcePath, Span, TestIndex, TestTable, VmKind, line_hits, schema_id,
 };
 pub use streaming::{StreamMergeError, merge_streams};

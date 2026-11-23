@@ -3,8 +3,8 @@ mod refusals {
     use std::io;
 
     use opcov_core::report::{
-        ConflictSite, HeaderField, InputId, MergeError, OutcomeField, Report, StreamMergeError,
-        merge, merge_streams,
+        ConflictSite, HeaderField, InputId, LoopField, MergeError, OutcomeField, Report,
+        StreamMergeError, merge, merge_streams,
     };
 
     const BASE: &str = concat!(
@@ -17,7 +17,7 @@ mod refusals {
         r#""sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","#,
         r#""lines":{"12":[0]},"#,
         r#""functions":{"App\\Foo::bar":{"span":null,"outcomes":["#,
-        r#"{"id":"o1","kind":"IfTrue","line":12,"span":null,"hits":[0]}],"#,
+        r#"{"id":"o1","site":4,"kind":"IfTrue","line":12,"span":null,"hits":[0]}],"#,
         r#""loops":[]}}}}}"#,
         "\n"
     );
@@ -127,6 +127,51 @@ mod refusals {
                 }
             ),
             "the outcome kind is named, got {error}"
+        );
+    }
+
+    #[test]
+    fn differing_outcome_sites_are_refused() {
+        let other = variant(r#""site":4"#, r#""site":5"#);
+        let error = merge(&[report(BASE), report(&other)]).unwrap_err();
+        let MergeError::Conflict(conflict) = &error else {
+            panic!("expected a conflict, got {error}");
+        };
+        assert!(
+            matches!(
+                conflict.site,
+                ConflictSite::Outcome {
+                    field: OutcomeField::Site,
+                    ..
+                }
+            ),
+            "the outcome site is named, got {error}"
+        );
+    }
+
+    #[test]
+    fn a_loop_that_cannot_run_zero_times_in_one_input_only_is_refused() {
+        let with_loop = |zero: &str| {
+            return variant(
+                r#""loops":[]"#,
+                &format!(
+                    r#""loops":[{{"id":"l0","kind":"PreTest","line":12,"zero":{zero},"second":[]}}]"#
+                ),
+            );
+        };
+        let error = merge(&[report(&with_loop("[]")), report(&with_loop("null"))]).unwrap_err();
+        let MergeError::Conflict(conflict) = &error else {
+            panic!("expected a conflict, got {error}");
+        };
+        assert!(
+            matches!(
+                conflict.site,
+                ConflictSite::Loop {
+                    field: LoopField::Zero,
+                    ..
+                }
+            ),
+            "the loop's zero list is named, got {error}"
         );
     }
 

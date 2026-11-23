@@ -1,5 +1,5 @@
 --TEST--
-A file with declarations only is recorded as executed although the VM skips its single RETURN; abstract methods have no lines
+A file with declarations only has no executable line (its main code runs only declarations and the final RETURN), so no test is credited with loading it; abstract methods have no lines
 --INI--
 opcov.enabled=1
 opcov.collect_paths={PWD}/fixtures
@@ -14,9 +14,9 @@ echo opcov_lines(__DIR__ . "/fixtures/declarations.php", static function (): voi
 });
 --EXPECT--
 declarations.php
-  covered: 18
+  covered: 
   uncovered: 9,11,15
 float(4)
 declarations.php
   covered: 9,11,15
-  uncovered: 18
+  uncovered: 

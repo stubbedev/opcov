@@ -1,7 +1,6 @@
-use std::collections::BTreeMap;
 use std::io::{self, Write};
 
-use opcov_core::cfg::{BlockId, FunctionKey, Line};
+use opcov_core::cfg::{FunctionKey, Line};
 use opcov_core::kind::EdgeKind;
 use opcov_core::report::{FileCoverage, Function, Identified, OutcomeId, Report, SourcePath};
 use opcov_syntax::{OutcomeRef, SourceFile};
@@ -58,21 +57,16 @@ impl Diagnosis<'_> {
 }
 
 fn outcome_refs(function: &Function) -> Vec<(OutcomeId, OutcomeRef)> {
-    let mut ordinals: BTreeMap<(EdgeKind, Line), u32> = BTreeMap::new();
     return function
         .outcomes
         .as_slice()
         .iter()
         .map(|outcome| {
-            let kind = outcome.kind().get();
-            let ordinal = ordinals.entry((kind, outcome.line())).or_default();
-            let source = BlockId::new(*ordinal);
-            *ordinal = ordinal.saturating_add(1);
             return (
                 outcome.id(),
                 OutcomeRef {
-                    source,
-                    kind,
+                    site: outcome.site(),
+                    kind: outcome.kind().get(),
                     line: outcome.line(),
                 },
             );

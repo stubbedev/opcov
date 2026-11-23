@@ -23,6 +23,7 @@ pub enum EdgeKind {
     LoopExit,
     Catch,
     Finally,
+    FinallyException,
     Engine,
     Jump,
 }
@@ -35,7 +36,10 @@ impl EdgeKind {
 
     #[must_use]
     pub const fn counts_toward_verdict(self) -> bool {
-        return !matches!(self, Self::Flow | Self::Engine);
+        return !matches!(
+            self,
+            Self::Flow | Self::Engine | Self::LoopEnter | Self::LoopSkip
+        );
     }
 }
 

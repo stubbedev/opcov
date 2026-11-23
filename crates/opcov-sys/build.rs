@@ -16,7 +16,6 @@ const ENGINE_ITEMS: &[&str] = &[
     "opcov_.*",
     "add_assoc_zval_ex",
     "display_ini_entries",
-    "execute_ex",
     "pcre_get_compiled_regex_cache",
     "php_info_print_table_end",
     "php_info_print_table_row",
@@ -34,7 +33,6 @@ const ENGINE_ITEMS: &[&str] = &[
     "zend_cfg_identify_loops",
     "zend_compile_file",
     "zend_compile_string",
-    "zend_execute_ex",
     "zend_get_extension",
     "zend_get_resource_handle",
     "zend_get_user_opcode_handler",
@@ -43,6 +41,8 @@ const ENGINE_ITEMS: &[&str] = &[
     "zend_resolve_path",
     "zend_set_user_opcode_handler",
     "zend_throw_exception",
+    "zend_throw_exception_hook",
+    "zend_object",
     "zend_unregister_ini_entries_ex",
     "zend_vm_kind",
     "zend_vm_set_opcode_handler",
@@ -51,6 +51,8 @@ const ENGINE_ITEMS: &[&str] = &[
     "IS_TMP_VAR",
     "IS_UNUSED",
     "IS_VAR",
+    "IS_SMART_BRANCH_JMPZ",
+    "IS_SMART_BRANCH_JMPNZ",
     "MAY_BE_ARRAY",
     "MAY_BE_NULL",
     "MAY_BE_STRING",
@@ -110,6 +112,8 @@ impl bindgen::callbacks::ParseCallbacks for MacroTypes {
             name,
             "IS_CONST"
                 | "IS_CV"
+                | "IS_SMART_BRANCH_JMPZ"
+                | "IS_SMART_BRANCH_JMPNZ"
                 | "IS_TMP_VAR"
                 | "IS_UNUSED"
                 | "IS_VAR"

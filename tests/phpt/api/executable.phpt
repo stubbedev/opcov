@@ -1,5 +1,5 @@
 --TEST--
-executable() reports the lines and functions of compiled files, in the report schema's shape
+executable() reports the lines, outcomes and loops of compiled files, in the report schema's shape; the RETURN of a declarations-only file is not executable
 --INI--
 opcov.enabled=1
 opcov.collect_paths={PWD}/fixtures
@@ -19,7 +19,7 @@ try {
 }
 --EXPECT--
 true
-{"4":[],"5":[],"6":[],"8":[],"10":[]}
+{"4":[],"5":[],"6":[],"8":[]}
 ["{main}@work.php","work"]
-{"loops":[],"outcomes":[],"span":null}
+{"loops":[{"id":"l0","kind":"PreTest","line":5,"second":[],"zero":[]}],"outcomes":[{"hits":[],"id":"o0","kind":"LoopBack","line":5,"site":7,"span":null},{"hits":[],"id":"o1","kind":"LoopExit","line":5,"site":7,"span":null}],"span":null}
 opcov\executable() expects file paths; element 0 is not a UTF-8 string

@@ -14,6 +14,7 @@ $script = "<?php require \"" . __DIR__ . "/fixtures/report.inc\";
 require \"$dir/linked/main.php\";
 require_once \"" . __DIR__ . "/fixtures/application/../app/helper.php\";
 app_main();
+helper();
 echo json_encode(array_map(\"basename\", array_keys(\\opcov\\stop()))), \"\\n\";
 report();";
 echo opcov_child($script, ["opcov.collect_paths" => "$dir/linked"]);

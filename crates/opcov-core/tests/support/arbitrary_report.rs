@@ -5,16 +5,16 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use opcov_core::cfg::{FunctionKey, Line};
-use opcov_core::kind::{EdgeKind, LoopKind};
+use opcov_core::cfg::{FunctionKey, Line, LoopShape, OpIndex};
+use opcov_core::kind::EdgeKind;
 use opcov_core::report::{
-    FileCoverage, Function, Generator, Header, HitSet, IdSorted, Loop, LoopId, Outcome, OutcomeId,
-    OutcomeKind, PathBase, Report, Root, Settings, Sha256, SourcePath, Span, TestIndex, TestTable,
-    VmKind,
+    FileCoverage, Function, Generator, Header, HitSet, IdSorted, Loop, LoopId, MeasuredShape,
+    Outcome, OutcomeId, OutcomeKind, PathBase, Report, Root, Settings, Sha256, SourcePath, Span,
+    TestIndex, TestTable, VmKind,
 };
 use proptest::prelude::*;
 
-pub(super) const UNIT_OUTCOME_KINDS: [EdgeKind; 20] = [
+pub(super) const UNIT_OUTCOME_KINDS: [EdgeKind; 21] = [
     EdgeKind::IfTrue,
     EdgeKind::IfFalse,
     EdgeKind::ShortCircuit,
@@ -33,22 +33,18 @@ pub(super) const UNIT_OUTCOME_KINDS: [EdgeKind; 20] = [
     EdgeKind::LoopExit,
     EdgeKind::Catch,
     EdgeKind::Finally,
+    EdgeKind::FinallyException,
     EdgeKind::Engine,
     EdgeKind::Jump,
 ];
 
-const LOOP_KINDS: [LoopKind; 4] = [
-    LoopKind::Foreach,
-    LoopKind::For,
-    LoopKind::While,
-    LoopKind::DoWhile,
-];
+const LOOP_SHAPES: [LoopShape; 3] = [LoopShape::Foreach, LoopShape::PreTest, LoopShape::PostTest];
 
 #[derive(Debug, Clone)]
 struct FunctionModel {
     span: Option<Span>,
     outcomes: BTreeMap<u32, (OutcomeKind, Line, Option<Span>)>,
-    loops: BTreeMap<u32, (LoopKind, Line)>,
+    loops: BTreeMap<u32, (MeasuredShape, Line, bool)>,
 }
 
 #[derive(Debug, Clone)]
@@ -104,8 +100,10 @@ fn function_model() -> impl Strategy<Value = FunctionModel> {
     let outcome = (outcome_kind(), line_and_span())
         .prop_map(|(kind, (line, span))| return (kind, line, span));
     let looped = (
-        prop::sample::select(LOOP_KINDS.to_vec()),
+        prop::sample::select(LOOP_SHAPES.to_vec())
+            .prop_map(|shape| return MeasuredShape::new(shape).unwrap()),
         (1_u32..300).prop_map(|line| return Line::new(line).unwrap()),
+        any::<bool>(),
     );
     return (
         prop::option::of((1_u32..300).prop_flat_map(span_at)),
@@ -252,6 +250,7 @@ impl Universe {
                         .map(|(id, (kind, line, span))| {
                             return Outcome::new(
                                 OutcomeId::new(*id),
+                                OpIndex::new(*id),
                                 *kind,
                                 *line,
                                 *span,
@@ -263,14 +262,15 @@ impl Universe {
                     let loops = function
                         .loops
                         .iter()
-                        .map(|(id, (kind, line))| {
-                            return Loop {
-                                id: LoopId::new(*id),
-                                kind: *kind,
-                                line: *line,
-                                zero: hits.draw(),
-                                second: hits.draw(),
-                            };
+                        .map(|(id, (kind, line, zero_possible))| {
+                            let zero = hits.draw();
+                            return Loop::new(
+                                LoopId::new(*id),
+                                *kind,
+                                *line,
+                                zero_possible.then_some(zero),
+                                hits.draw(),
+                            );
                         })
                         .collect();
                     let function = Function {

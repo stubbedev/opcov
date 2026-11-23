@@ -2,6 +2,7 @@ mod classify;
 mod key;
 mod model;
 mod opcode;
+mod plan;
 
 pub use classify::{Diagnostic, Successor, opcode_edge_kind};
 pub use key::{
@@ -14,3 +15,4 @@ pub use model::{
     OpIndex, SnapshotError,
 };
 pub use opcode::{Opcode, PhpVersion};
+pub use plan::{Branch, LoopSite, LoopTest, Origin, OutcomeSite, Plan};
