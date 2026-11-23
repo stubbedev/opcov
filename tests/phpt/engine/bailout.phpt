@@ -49,7 +49,7 @@ echo "not reached\n";
 ?>
 --EXPECTF--
 
-Fatal error: Allowed memory size of 67108864 bytes exhausted (tried to allocate %d bytes) in %sbailout.php on line 34
+Fatal error: Allowed memory size of 67108864 bytes exhausted%s(tried to allocate %d bytes) in %sbailout.php on line 34
 off reason: null, collecting: false
 debug info needs more than the 2 MiB left: true
 debug info probes: yes
