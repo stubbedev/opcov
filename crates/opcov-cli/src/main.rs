@@ -1,14 +1,35 @@
 #![forbid(unsafe_code)]
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "rustc's unreachable_pub, which the workspace denies, requires pub(crate) in private modules"
+)]
 
-use std::ffi::OsString;
+use std::env;
 use std::fmt;
 use std::fs::{self, File};
-use std::io::{self, BufReader, BufWriter, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{self, ExitCode};
+use std::process::ExitCode;
 
-use clap::{Args, Parser, Subcommand};
-use opcov_core::report::merge_streams;
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use opcov_core::report::{FileCoverage, PathBase, Report, SourcePath, merge_streams};
+use opcov_syntax::SourceFile;
+
+mod changes;
+mod convert;
+mod doctor;
+mod failure;
+mod gate;
+mod output;
+mod source;
+mod view;
+mod xml;
+
+use changes::{ChangeSet, parse_diff, parse_list};
+use convert::{Format, convert};
+use failure::{Failure, Severity, Verdict};
+use output::{read_report, write_atomically, write_stdout};
+use source::SourceError;
 
 #[derive(Debug, Parser)]
 #[command(name = "opcov", version, about)]
@@ -21,6 +42,12 @@ struct Cli {
 enum Command {
     #[command(about = "Merge opcov reports of parallel runs into one report")]
     Merge(MergeArgs),
+    #[command(about = "Convert an opcov report to Clover, Cobertura, lcov or HTML")]
+    Convert(ConvertArgs),
+    #[command(about = "Check the changed functions of a change set against a report")]
+    Gate(GateArgs),
+    #[command(about = "Diagnose a report: list outcomes that match no source construct")]
+    Doctor(DoctorArgs),
 }
 
 #[derive(Debug, Args)]
@@ -36,105 +63,83 @@ struct MergeArgs {
     output: PathBuf,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum Outcome {
-    Refused,
-    Failed,
+#[derive(Debug, Args)]
+struct ConvertArgs {
+    #[arg(value_name = "REPORT", help = "opcov report to convert")]
+    report: PathBuf,
+    #[arg(long, value_enum, help = "Format to write")]
+    format: Format,
+    #[arg(
+        short = 'o',
+        long = "output",
+        value_name = "OUT",
+        help = "File to write"
+    )]
+    output: PathBuf,
 }
 
-impl Outcome {
-    fn exit_code(self) -> ExitCode {
-        return ExitCode::from(match self {
-            Self::Refused => 1,
-            Self::Failed => 2,
-        });
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum OutputFormat {
+    Text,
+    Json,
 }
 
-#[derive(Debug)]
-struct Failure {
-    outcome: Outcome,
-    message: String,
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+struct ChangesArgs {
+    #[arg(
+        long,
+        value_name = "DIFF",
+        help = "Unified diff of the change (`git diff -U0`), or `-` for standard input"
+    )]
+    diff: Option<PathBuf>,
+    #[arg(
+        long,
+        value_name = "ENTRY",
+        num_args = 1..,
+        help = "Changed files as `path[:start-end,...]`, or `@listfile` with one entry per line (`@-` reads standard input)"
+    )]
+    files: Vec<String>,
 }
 
-impl Failure {
-    fn io(action: &str, path: &Path, error: &io::Error) -> Self {
-        return Self {
-            outcome: Outcome::Failed,
-            message: format!("cannot {action} {}: {error}", path.display()),
-        };
-    }
+#[derive(Debug, Args)]
+struct GateArgs {
+    #[arg(long, value_name = "REPORT", help = "opcov report to check")]
+    report: PathBuf,
+    #[command(flatten)]
+    changes: ChangesArgs,
+    #[arg(
+        long,
+        value_name = "N",
+        default_value_t = 1,
+        help = "Leading path components to strip from diff paths (1 removes git's `a/` and `b/`)"
+    )]
+    strip: usize,
+    #[arg(
+        long,
+        value_name = "DIR",
+        help = "Directory that changed paths are relative to [default: the current directory]"
+    )]
+    base: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text, help = "Output format")]
+    format: OutputFormat,
 }
 
-impl fmt::Display for Failure {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        return formatter.write_str(&self.message);
-    }
+#[derive(Debug, Args)]
+struct DoctorArgs {
+    #[arg(long, value_name = "REPORT", help = "opcov report to diagnose")]
+    report: PathBuf,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text, help = "Output format")]
+    format: OutputFormat,
 }
 
-fn temporary_path(target: &Path) -> Result<PathBuf, Failure> {
-    let Some(name) = target.file_name() else {
-        return Err(Failure {
-            outcome: Outcome::Failed,
-            message: format!("output path {} has no file name", target.display()),
-        });
-    };
-    let mut temporary = OsString::from(".");
-    temporary.push(name);
-    temporary.push(format!(".{}.tmp", process::id()));
-    return Ok(target.with_file_name(temporary));
-}
-
-fn write_atomically(
-    target: &Path,
-    write: impl FnOnce(BufWriter<File>) -> Result<BufWriter<File>, Failure>,
-) -> Result<(), Failure> {
-    let temporary = temporary_path(target)?;
-    let file = File::options()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .map_err(|error| return Failure::io("create", &temporary, &error))?;
-    let written = write(BufWriter::new(file))
-        .and_then(|buffered| {
-            let file = buffered
-                .into_inner()
-                .map_err(|error| return Failure::io("write", &temporary, error.error()))?;
-            return file
-                .sync_all()
-                .map_err(|error| return Failure::io("sync", &temporary, &error));
-        })
-        .and_then(|()| {
-            return fs::rename(&temporary, target).map_err(|error| {
-                return Failure::io(
-                    &format!("rename {} to", temporary.display()),
-                    target,
-                    &error,
-                );
-            });
-        });
-    let Err(failure) = written else {
-        return Ok(());
-    };
-    return Err(match fs::remove_file(&temporary) {
-        Ok(()) => failure,
-        Err(cleanup) => Failure {
-            message: format!(
-                "{failure}; also cannot remove {}: {cleanup}",
-                temporary.display()
-            ),
-            ..failure
-        },
-    });
-}
-
-fn merge(args: &MergeArgs) -> Result<(), Failure> {
+fn merge(args: &MergeArgs) -> Result<Verdict, Failure> {
     let names: Vec<_> = args
         .inputs
         .iter()
         .map(|path| return path.display())
         .collect();
-    return write_atomically(&args.output, |out| {
+    write_atomically(&args.output, |out| {
         return merge_streams(
             &args.inputs,
             |path| return File::open(path).map(BufReader::new),
@@ -142,15 +147,133 @@ fn merge(args: &MergeArgs) -> Result<(), Failure> {
         )
         .map_err(|error| {
             return Failure {
-                outcome: if error.is_refusal() {
-                    Outcome::Refused
+                severity: if error.is_refusal() {
+                    Severity::Refused
                 } else {
-                    Outcome::Failed
+                    Severity::Failed
                 },
                 message: error.describe(&names).to_string(),
             };
         });
+    })?;
+    return Ok(Verdict::Clean);
+}
+
+fn convert_report(args: &ConvertArgs) -> Result<Verdict, Failure> {
+    let report = read_report(&args.report)?;
+    write_atomically(&args.output, |out| {
+        return convert(&report, args.format, out).map_err(|error| {
+            return Failure::failed(format!(
+                "cannot convert {} to {:?}: {error}",
+                args.report.display(),
+                args.format
+            ));
+        });
+    })?;
+    return Ok(Verdict::Clean);
+}
+
+fn read_input(path: &Path) -> Result<Vec<u8>, Failure> {
+    if path == Path::new("-") {
+        let mut buffer = Vec::new();
+        io::stdin()
+            .lock()
+            .read_to_end(&mut buffer)
+            .map_err(|error| return Failure::io("read", Path::new("standard input"), &error))?;
+        return Ok(buffer);
+    }
+    return fs::read(path).map_err(|error| return Failure::io("read", path, &error));
+}
+
+fn describe(path: &Path) -> String {
+    if path == Path::new("-") {
+        return "standard input".to_owned();
+    }
+    return path.display().to_string();
+}
+
+fn read_changes(args: &GateArgs) -> Result<ChangeSet, Failure> {
+    let invalid = |error: changes::ChangeError| return Failure::failed(error.to_string());
+    if let Some(diff) = &args.changes.diff {
+        let input = read_input(diff)?;
+        return parse_diff(&describe(diff), &input, args.strip).map_err(invalid);
+    }
+    let mut set = ChangeSet::default();
+    for entry in &args.changes.files {
+        let parsed = match entry.strip_prefix('@') {
+            Some(list) => {
+                let path = Path::new(list);
+                let bytes = read_input(path)?;
+                let text = String::from_utf8(bytes).map_err(|error| {
+                    return Failure::failed(format!(
+                        "file list {} is not UTF-8: {error}",
+                        describe(path)
+                    ));
+                })?;
+                parse_list(&describe(path), &text)
+            }
+            None => parse_list("argument", entry),
+        };
+        set.merge(parsed.map_err(invalid)?);
+    }
+    return Ok(set);
+}
+
+fn source_failure(error: &SourceError) -> Failure {
+    return Failure::failed(error.to_string());
+}
+
+fn loader(
+    paths: &PathBase,
+) -> impl FnMut(&SourcePath, &FileCoverage) -> Result<SourceFile, SourceError> {
+    return move |path, file| {
+        let source = source::read_verified(paths, path, file)?;
+        return source::parse(path, &source);
+    };
+}
+
+fn emit_result<T>(
+    format: OutputFormat,
+    result: &T,
+    text: fn(&mut dyn Write, &T) -> io::Result<()>,
+    json: fn(&mut dyn Write, &T) -> io::Result<()>,
+) -> Result<(), Failure> {
+    return write_stdout(|out| {
+        return match format {
+            OutputFormat::Text => text(out, result),
+            OutputFormat::Json => json(out, result),
+        };
     });
+}
+
+fn gate_report(args: &GateArgs) -> Result<Verdict, Failure> {
+    let report: Report = read_report(&args.report)?;
+    let changes = read_changes(args)?;
+    let base = match &args.base {
+        Some(base) => base.clone(),
+        None => env::current_dir().map_err(|error| {
+            return Failure::io("resolve", Path::new("the current directory"), &error);
+        })?,
+    };
+    let paths = &report.header().paths;
+    let result = gate::evaluate(&report, &changes, &base, loader(paths))
+        .map_err(|error| return source_failure(&error))?;
+    emit_result(args.format, &result, gate::render_text, gate::render_json)?;
+    return Ok(result.verdict());
+}
+
+fn doctor_report(args: &DoctorArgs) -> Result<Verdict, Failure> {
+    let report = read_report(&args.report)?;
+    let paths = &report.header().paths;
+    let diagnosis =
+        doctor::diagnose(&report, loader(paths)).map_err(|error| return source_failure(&error))?;
+    emit_result(
+        args.format,
+        &diagnosis,
+        doctor::render_text,
+        doctor::render_json,
+    )?;
+    return Ok(diagnosis.verdict());
 }
 
 fn emit(handle: &mut impl Write, message: &dyn fmt::Display) -> io::Result<()> {
@@ -159,7 +282,7 @@ fn emit(handle: &mut impl Write, message: &dyn fmt::Display) -> io::Result<()> {
 
 fn conclude(code: ExitCode, written: io::Result<()>) -> ExitCode {
     return written.map_or_else(
-        |_unwritable| return Outcome::Failed.exit_code(),
+        |_unwritable| return Severity::Failed.exit_code(),
         |()| return code,
     );
 }
@@ -171,19 +294,22 @@ fn main() -> ExitCode {
             let rendered = error.render();
             if error.use_stderr() {
                 let written = emit(&mut io::stderr().lock(), &rendered);
-                return conclude(Outcome::Failed.exit_code(), written);
+                return conclude(Severity::Failed.exit_code(), written);
             }
             return conclude(ExitCode::SUCCESS, emit(&mut io::stdout().lock(), &rendered));
         }
     };
     let result = match &cli.command {
         Command::Merge(args) => merge(args),
+        Command::Convert(args) => convert_report(args),
+        Command::Gate(args) => gate_report(args),
+        Command::Doctor(args) => doctor_report(args),
     };
     return match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(verdict) => verdict.exit_code(),
         Err(failure) => {
             let written = emit(&mut io::stderr().lock(), &failure);
-            conclude(failure.outcome.exit_code(), written)
+            conclude(failure.severity.exit_code(), written)
         }
     };
 }

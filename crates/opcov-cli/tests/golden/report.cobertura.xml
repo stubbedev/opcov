@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE coverage SYSTEM "http://cobertura.sourceforge.net/xml/coverage-04.dtd">
+<coverage line-rate="0.8888" branch-rate="0.625" lines-covered="8" lines-valid="9" branches-covered="5" branches-valid="8" complexity="0" version="0.1.0" timestamp="0">
+  <sources>
+    <source>/srv/app</source>
+  </sources>
+  <packages>
+    <package name="app/Foo.php" line-rate="0.8888" branch-rate="0.625" complexity="0">
+      <classes>
+        <class name="app/Foo.php" filename="app/Foo.php" line-rate="1" branch-rate="1" complexity="0">
+          <methods>
+            <method name="App\helper" signature="" line-rate="1" branch-rate="1" complexity="0">
+              <lines>
+                <line number="28" hits="1" branch="false"/>
+              </lines>
+            </method>
+            <method name="{fn}@app/Foo.php:27-27" signature="" line-rate="1" branch-rate="1" complexity="0">
+              <lines>
+                <line number="27" hits="1" branch="false"/>
+              </lines>
+            </method>
+          </methods>
+          <lines>
+            <line number="27" hits="1" branch="false"/>
+            <line number="28" hits="1" branch="false"/>
+          </lines>
+        </class>
+        <class name="App\Foo" filename="app/Foo.php" line-rate="0.8571" branch-rate="0.625" complexity="0">
+          <methods>
+            <method name="bar" signature="" line-rate="1" branch-rate="0.625" complexity="0">
+              <lines>
+                <line number="9" hits="2" branch="true" condition-coverage="100% (2/2)"/>
+                <line number="10" hits="2" branch="true" condition-coverage="100% (2/2)"/>
+                <line number="11" hits="1" branch="false"/>
+                <line number="13" hits="1" branch="true" condition-coverage="25% (1/4)"/>
+                <line number="14" hits="1" branch="false"/>
+                <line number="16" hits="1" branch="false"/>
+              </lines>
+            </method>
+            <method name="baz" signature="" line-rate="0" branch-rate="1" complexity="0">
+              <lines>
+                <line number="21" hits="0" branch="false"/>
+              </lines>
+            </method>
+          </methods>
+          <lines>
+            <line number="9" hits="2" branch="true" condition-coverage="100% (2/2)"/>
+            <line number="10" hits="2" branch="true" condition-coverage="100% (2/2)"/>
+            <line number="11" hits="1" branch="false"/>
+            <line number="13" hits="1" branch="true" condition-coverage="25% (1/4)"/>
+            <line number="14" hits="1" branch="false"/>
+            <line number="16" hits="1" branch="false"/>
+            <line number="21" hits="0" branch="false"/>
+          </lines>
+        </class>
+      </classes>
+    </package>
+  </packages>
+</coverage>

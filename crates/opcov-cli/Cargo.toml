@@ -14,6 +14,13 @@ path = "src/main.rs"
 [dependencies]
 clap.workspace = true
 opcov-core.workspace = true
+opcov-syntax.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+roxmltree = "0.21.2"
 
 [lints]
 workspace = true

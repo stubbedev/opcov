@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<coverage clover="0.1.0" generated="0">
+  <project timestamp="0">
+    <metrics packages="1" files="1" classes="1" complexity="0" methods="4" coveredmethods="3" conditionals="8" coveredconditionals="5" statements="9" coveredstatements="8" elements="21" coveredelements="16"/>
+    <package name="App">
+      <metrics files="1" classes="1" complexity="0" methods="4" coveredmethods="3" conditionals="8" coveredconditionals="5" statements="9" coveredstatements="8" elements="21" coveredelements="16"/>
+      <file name="/srv/app/app/Foo.php" path="/srv/app/app/Foo.php">
+        <metrics classes="1" complexity="0" methods="4" coveredmethods="3" conditionals="8" coveredconditionals="5" statements="9" coveredstatements="8" elements="21" coveredelements="16"/>
+        <class name="App\Foo" namespace="App">
+          <metrics complexity="0" methods="2" coveredmethods="1" conditionals="8" coveredconditionals="5" statements="7" coveredstatements="6" elements="17" coveredelements="12"/>
+        </class>
+        <line num="7" type="method" name="bar" complexity="0" count="2"/>
+        <line num="9" type="cond" count="2" truecount="2" falsecount="0"/>
+        <line num="10" type="cond" count="2" truecount="2" falsecount="0"/>
+        <line num="11" type="stmt" count="1"/>
+        <line num="13" type="cond" count="1" truecount="1" falsecount="3"/>
+        <line num="14" type="stmt" count="1"/>
+        <line num="16" type="stmt" count="1"/>
+        <line num="19" type="method" name="baz" complexity="0" count="0"/>
+        <line num="21" type="stmt" count="0"/>
+        <line num="25" type="method" name="App\helper" complexity="0" count="1"/>
+        <line num="27" type="method" name="{fn}@app/Foo.php:27-27" complexity="0" count="1"/>
+        <line num="28" type="stmt" count="1"/>
+      </file>
+    </package>
+  </project>
+</coverage>
