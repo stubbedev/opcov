@@ -17,7 +17,7 @@ use crate::{
     code::{Code, Explained},
     conflicts::Conflicts,
     guard::{COLLECTION, Disabled},
-    select::Pattern,
+    select::{Directories, Pattern},
     threads,
 };
 
@@ -143,10 +143,14 @@ impl fmt::Display for Described<'_> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct FileId(usize);
+pub(crate) struct FileId(u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct UnitId(usize);
+pub(crate) struct UnitId(u32);
+
+fn slot_of(id: u32) -> usize {
+    return usize::try_from(id).unwrap_or(usize::MAX);
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Handler(*const c_void);
@@ -237,29 +241,41 @@ pub(crate) struct FinallyEntry {
 
 #[derive(Debug, Clone)]
 pub(crate) struct Probe {
-    pub(crate) op: usize,
-    pub(crate) line: Option<Line>,
     pub(crate) handler: Handler,
-    pub(crate) armed: Roles,
-    pub(crate) watchers: u16,
+    pub(crate) op: u32,
+    pub(crate) line: Option<Line>,
     pub(crate) source: Option<u32>,
-    pub(crate) entries: Box<[u32]>,
-    pub(crate) finally: Option<FinallyEntry>,
+    pub(crate) watchers: u16,
+    pub(crate) armed: Roles,
 }
 
 impl Probe {
-    pub(crate) fn new(op: usize, handler: Handler) -> Self {
+    pub(crate) fn new(op: u32, handler: Handler) -> Self {
         return Self {
+            handler,
             op,
             line: None,
-            handler,
-            armed: Roles::default(),
-            watchers: 0,
             source: None,
-            entries: Box::default(),
-            finally: None,
+            watchers: 0,
+            armed: Roles::default(),
         };
     }
+
+    pub(crate) fn offset(&self) -> usize {
+        return slot_of(self.op);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LoopEntry {
+    pub(crate) probe: u32,
+    pub(crate) looped: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FinallyProbe {
+    pub(crate) probe: u32,
+    pub(crate) entry: FinallyEntry,
 }
 
 #[derive(Debug)]
@@ -268,19 +284,45 @@ pub(crate) struct Unit {
     pub(crate) last: usize,
     pub(crate) file: FileId,
     pub(crate) function: FunctionId,
-    pub(crate) index: Box<[u32]>,
-    pub(crate) probes: Vec<Probe>,
-    pub(crate) sources: Vec<SourceProbe>,
+    pub(crate) probes: Box<[Probe]>,
+    pub(crate) sources: Box<[SourceProbe]>,
     pub(crate) owners: Box<[Option<Owner>]>,
-    pub(crate) seen: Vec<bool>,
-    pub(crate) loops: Vec<LoopState>,
+    pub(crate) entries: Box<[LoopEntry]>,
+    pub(crate) finals: Box<[FinallyProbe]>,
+    pub(crate) seen: Box<[bool]>,
+    pub(crate) loops: Box<[LoopState]>,
     pub(crate) pending: usize,
 }
 
 impl Unit {
     pub(crate) fn probe_at(&self, op: usize) -> Option<usize> {
-        let number = usize::try_from(*self.index.get(op)?).ok()?;
-        return number.checked_sub(1);
+        let op = u32::try_from(op).ok()?;
+        return self
+            .probes
+            .binary_search_by_key(&op, |probe| return probe.op)
+            .ok();
+    }
+
+    pub(crate) fn loop_entries(&self, probe: u32) -> impl Iterator<Item = u32> {
+        let first = self
+            .entries
+            .partition_point(|entry| return entry.probe < probe);
+        return self
+            .entries
+            .get(first..)
+            .unwrap_or_default()
+            .iter()
+            .take_while(move |entry| return entry.probe == probe)
+            .map(|entry| return entry.looped);
+    }
+
+    pub(crate) fn finally_entry(&self, probe: u32) -> Option<FinallyEntry> {
+        return self
+            .finals
+            .binary_search_by_key(&probe, |found| return found.probe)
+            .ok()
+            .and_then(|position| return self.finals.get(position))
+            .map(|found| return found.entry);
     }
 
     pub(crate) unsafe fn arm(&mut self, probe: usize, role: Role, label: Handler) {
@@ -291,7 +333,7 @@ impl Unit {
         if let Some(opcodes) = self.opcodes {
             // SAFETY: the unit's op array is alive (`opcodes` is cleared by its destructor) and the
             // probe's opcode index is below `last`.
-            unsafe { label.install(opcodes.wrapping_add(slot.op)) };
+            unsafe { label.install(opcodes.wrapping_add(slot.offset())) };
         }
     }
 
@@ -304,7 +346,7 @@ impl Unit {
             && let Some(opcodes) = self.opcodes
         {
             // SAFETY: as in `arm`.
-            unsafe { slot.handler.install(opcodes.wrapping_add(slot.op)) };
+            unsafe { slot.handler.install(opcodes.wrapping_add(slot.offset())) };
         }
     }
 }
@@ -324,15 +366,18 @@ impl Reserved {
         return match raw.addr() {
             0 => Self::Unknown,
             Self::NO_PROBES => Self::NoProbes,
-            value => Self::Unit(UnitId(value.saturating_sub(Self::FIRST_UNIT))),
+            value => value
+                .checked_sub(Self::FIRST_UNIT)
+                .and_then(|id| return u32::try_from(id).ok())
+                .map_or(Self::NoProbes, |id| return Self::Unit(UnitId(id))),
         };
     }
 
-    const fn encode(self) -> *mut c_void {
+    fn encode(self) -> *mut c_void {
         return ptr::without_provenance_mut(match self {
             Self::Unknown => 0,
             Self::NoProbes => Self::NO_PROBES,
-            Self::Unit(UnitId(id)) => id.saturating_add(Self::FIRST_UNIT),
+            Self::Unit(UnitId(id)) => slot_of(id).saturating_add(Self::FIRST_UNIT),
         });
     }
 
@@ -356,38 +401,37 @@ impl Reserved {
 #[derive(Debug, Default)]
 pub(crate) struct Units {
     slots: Vec<Option<Unit>>,
-    free: Vec<usize>,
+    free: Vec<UnitId>,
     by_opcodes: HashMap<usize, UnitId>,
 }
 
 impl Units {
     pub(crate) fn get(&self, id: UnitId) -> Option<&Unit> {
-        return self.slots.get(id.0).and_then(Option::as_ref);
+        return self.slots.get(slot_of(id.0)).and_then(Option::as_ref);
     }
 
     pub(crate) fn get_mut(&mut self, id: UnitId) -> Option<&mut Unit> {
-        return self.slots.get_mut(id.0).and_then(Option::as_mut);
+        return self.slots.get_mut(slot_of(id.0)).and_then(Option::as_mut);
     }
 
     pub(crate) fn find(&self, opcodes: *const zend_op) -> Option<UnitId> {
         return self.by_opcodes.get(&opcodes.addr()).copied();
     }
 
-    pub(crate) fn insert(&mut self, unit: Unit) -> UnitId {
+    pub(crate) fn insert(&mut self, unit: Unit) -> Option<UnitId> {
         let key = unit.opcodes.map(<*mut zend_op>::addr);
         let id = if let Some(free) = self.free.pop() {
-            if let Some(slot) = self.slots.get_mut(free) {
-                *slot = Some(unit);
-            }
-            UnitId(free)
+            *self.slots.get_mut(slot_of(free.0))? = Some(unit);
+            free
         } else {
+            let id = UnitId(u32::try_from(self.slots.len()).ok()?);
             self.slots.push(Some(unit));
-            UnitId(self.slots.len().saturating_sub(1))
+            id
         };
         if let Some(key) = key {
             self.by_opcodes.insert(key, id);
         }
-        return id;
+        return Some(id);
     }
 
     pub(crate) fn live(&self) -> impl Iterator<Item = &Unit> {
@@ -411,9 +455,9 @@ impl Units {
     }
 
     fn release(&mut self, id: UnitId) {
-        if let Some(slot) = self.slots.get_mut(id.0) {
+        if let Some(slot) = self.slots.get_mut(slot_of(id.0)) {
             *slot = None;
-            self.free.push(id.0);
+            self.free.push(id);
         }
     }
 
@@ -487,7 +531,7 @@ pub(crate) struct FileRecord {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct FunctionId(usize);
+pub(crate) struct FunctionId(u32);
 
 #[derive(Debug)]
 pub(crate) struct FunctionRecord {
@@ -512,11 +556,11 @@ pub(crate) struct Files {
 }
 
 impl Files {
-    pub(crate) fn intern(&mut self, path: &str) -> FileId {
+    pub(crate) fn intern(&mut self, path: &str) -> Option<FileId> {
         if let Some(&id) = self.by_path.get(path) {
-            return id;
+            return Some(id);
         }
-        let id = FileId(self.records.len());
+        let id = FileId(u32::try_from(self.records.len()).ok()?);
         self.records.push(FileRecord {
             path: path.to_owned(),
             source: None,
@@ -524,15 +568,15 @@ impl Files {
             functions: BTreeMap::new(),
         });
         self.by_path.insert(path.to_owned(), id);
-        return id;
+        return Some(id);
     }
 
     pub(crate) fn get(&self, id: FileId) -> Option<&FileRecord> {
-        return self.records.get(id.0);
+        return self.records.get(slot_of(id.0));
     }
 
     pub(crate) fn get_mut(&mut self, id: FileId) -> Option<&mut FileRecord> {
-        return self.records.get_mut(id.0);
+        return self.records.get_mut(slot_of(id.0));
     }
 
     pub(crate) fn find(&self, path: &str) -> Option<FileId> {
@@ -543,12 +587,12 @@ impl Files {
         return self
             .records
             .iter()
-            .enumerate()
-            .map(|(index, record)| return (FileId(index), record));
+            .zip(0..)
+            .map(|(record, index)| return (FileId(index), record));
     }
 
     pub(crate) fn function(&self, id: FunctionId) -> Option<&FunctionRecord> {
-        return self.functions.get(id.0);
+        return self.functions.get(slot_of(id.0));
     }
 
     pub(crate) fn find_function(&self, file: FileId, key: &FunctionKey) -> Option<FunctionId> {
@@ -556,8 +600,8 @@ impl Files {
     }
 
     pub(crate) fn add_function(&mut self, record: FunctionRecord) -> Option<FunctionId> {
-        let id = FunctionId(self.functions.len());
-        let file = self.records.get_mut(record.file.0)?;
+        let id = FunctionId(u32::try_from(self.functions.len()).ok()?);
+        let file = self.records.get_mut(slot_of(record.file.0))?;
         file.functions.insert(record.key.clone(), id);
         self.functions.push(record);
         return Some(id);
@@ -600,9 +644,12 @@ impl Attribution {
         let Some(test) = self.tests.get_mut(position) else {
             return;
         };
+        let merge = !test.covered.is_empty();
         test.covered.extend_from_slice(covered);
-        test.covered.sort_unstable();
-        test.covered.dedup();
+        if merge {
+            test.covered.sort_unstable();
+            test.covered.dedup();
+        }
     }
 
     pub(crate) fn tests(&self) -> &[AttributedTest] {
@@ -623,6 +670,7 @@ pub(crate) struct Request {
     pub(crate) settings: Option<Settings>,
     pub(crate) pattern: Option<Pattern>,
     pub(crate) decisions: BTreeMap<String, Verdict>,
+    pub(crate) directories: Directories,
     pub(crate) problem: Option<OffReason>,
 }
 
@@ -784,7 +832,7 @@ impl Engine {
                 }
                 probe.armed = Roles::default();
                 // SAFETY: the unit is alive, so its opcodes are; `op` is below `last`.
-                unsafe { probe.handler.install(opcodes.wrapping_add(probe.op)) };
+                unsafe { probe.handler.install(opcodes.wrapping_add(probe.offset())) };
             }
         }
     }

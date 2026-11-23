@@ -24,8 +24,8 @@ use crate::{
     accepts_no_arguments,
     conflicts::{Conflict, Conflicts, Environment},
     engine::{
-        Covered, Engine, FileId, FiredList, Hit, OffReason, Probe, Role, Roles, Unit, Verdict,
-        with_engine,
+        Covered, Engine, FileId, FiredList, FunctionId, Hit, OffReason, Probe, Role, Roles, Unit,
+        Verdict, with_engine,
     },
     guard::{COLLECTION, Caught, EntryPoint, guard},
     info, ini,
@@ -217,53 +217,51 @@ impl Engine {
     }
 
     fn file_hits(&self) -> Vec<FileHits<'_>> {
-        let mut by_file: BTreeMap<&str, FileHits<'_>> = BTreeMap::new();
+        let mut by_file: BTreeMap<FileId, (Vec<u32>, BTreeMap<FunctionId, FunctionHits>)> =
+            BTreeMap::new();
         for &covered in &self.scratch.covered {
             let Some(file) = self.covered_file(covered) else {
                 continue;
             };
-            let path = self.path(file);
-            let entry = by_file.entry(path).or_insert_with(|| {
-                return FileHits {
-                    path,
-                    lines: Vec::new(),
-                    functions: BTreeMap::new(),
-                };
-            });
-            let (function, hit) = match covered {
-                Covered::Line(_, line) => {
-                    entry.lines.push(line.get());
-                    continue;
-                }
+            let (lines, functions) = by_file.entry(file).or_default();
+            match covered {
+                Covered::Line(_, line) => lines.push(line.get()),
                 Covered::Outcome(function, number) => {
-                    (function, Covered::Outcome(function, number))
+                    functions.entry(function).or_default().outcomes.push(number);
                 }
-                Covered::Zero(function, number) => (function, Covered::Zero(function, number)),
-                Covered::Second(function, number) => (function, Covered::Second(function, number)),
-            };
-            let Some(record) = self.files.function(function) else {
-                continue;
-            };
-            let hits = entry.functions.entry(&record.key).or_default();
-            match hit {
-                Covered::Outcome(_, number) => hits.outcomes.push(number),
-                Covered::Zero(_, number) => hits.loops.entry(number).or_default().0 = true,
-                Covered::Second(_, number) => hits.loops.entry(number).or_default().1 = true,
-                Covered::Line(..) => {}
+                Covered::Zero(function, number) => {
+                    let hits = functions.entry(function).or_default();
+                    hits.loops.entry(number).or_default().0 = true;
+                }
+                Covered::Second(function, number) => {
+                    let hits = functions.entry(function).or_default();
+                    hits.loops.entry(number).or_default().1 = true;
+                }
             }
         }
-        return by_file
-            .into_values()
-            .map(|mut hits| {
-                hits.lines.sort_unstable();
-                hits.lines.dedup();
-                for function in hits.functions.values_mut() {
-                    function.outcomes.sort_unstable();
-                    function.outcomes.dedup();
-                }
-                return hits;
+        let mut files: Vec<FileHits<'_>> = by_file
+            .into_iter()
+            .map(|(file, (mut lines, functions))| {
+                lines.sort_unstable();
+                lines.dedup();
+                let functions = functions
+                    .into_iter()
+                    .filter_map(|(function, mut hits)| {
+                        let record = self.files.function(function)?;
+                        hits.outcomes.sort_unstable();
+                        hits.outcomes.dedup();
+                        return Some((&record.key, hits));
+                    })
+                    .collect();
+                return FileHits {
+                    path: self.path(file),
+                    lines,
+                    functions,
+                };
             })
             .collect();
+        files.sort_unstable_by(|left, right| return left.path.cmp(right.path));
+        return files;
     }
 }
 
@@ -714,7 +712,7 @@ fn role_names(roles: Roles) -> Vec<&'static str> {
 }
 
 impl Engine {
-    fn probe_detail(&self, unit: &Unit, number: usize, probe: &Probe) -> Value {
+    fn probe_detail(&self, unit: &Unit, number: u32, probe: &Probe) -> Value {
         let function = self
             .files
             .function(unit.function)
@@ -723,9 +721,14 @@ impl Engine {
             .sources
             .iter()
             .flat_map(|source| return source.successors.iter())
-            .filter(|successor| return usize::try_from(successor.probe).ok() == Some(number))
+            .filter(|successor| return successor.probe == number)
             .map(|successor| return OutcomeId::new(successor.outcome).to_string())
             .collect();
+        let loop_entries: Vec<String> = unit
+            .loop_entries(number)
+            .map(|looped| return LoopId::new(looped).to_string())
+            .collect();
+        let finally = unit.finally_entry(number);
         let mut roles = Roles::default();
         if probe.line.is_some() {
             roles.insert(Role::Line);
@@ -736,10 +739,10 @@ impl Engine {
         if !watched_by.is_empty() {
             roles.insert(Role::Watch);
         }
-        if !probe.entries.is_empty() {
+        if !loop_entries.is_empty() {
             roles.insert(Role::LoopEntry);
         }
-        if probe.finally.is_some() {
+        if finally.is_some() {
             roles.insert(Role::FinallyEntry);
         }
         let source_outcomes: Vec<String> = probe
@@ -761,8 +764,8 @@ impl Engine {
             "watchers": probe.watchers,
             "source_outcomes": source_outcomes,
             "watched_outcomes": watched_by,
-            "loop_entries": probe.entries.iter().map(|&looped| return LoopId::new(looped).to_string()).collect::<Vec<_>>(),
-            "finally_outcome": probe.finally.map(|entry| return OutcomeId::new(entry.outcome).to_string()),
+            "loop_entries": loop_entries,
+            "finally_outcome": finally.map(|entry| return OutcomeId::new(entry.outcome).to_string()),
         });
     }
 
@@ -803,10 +806,8 @@ impl Engine {
         let probes: Vec<Value> = units
             .iter()
             .flat_map(|unit| {
-                return unit
-                    .probes
-                    .iter()
-                    .enumerate()
+                return (0..)
+                    .zip(unit.probes.iter())
                     .map(move |(number, probe)| return self.probe_detail(unit, number, probe));
             })
             .collect();

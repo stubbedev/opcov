@@ -773,6 +773,16 @@ impl Function {
     pub fn block(&self, id: BlockId) -> Option<&Block> {
         return id.index().and_then(|index| return self.blocks.get(index));
     }
+
+    #[must_use]
+    pub fn edges_between(&self, from: BlockId, to: BlockId) -> &[Edge] {
+        let first = self
+            .edges
+            .partition_point(|edge| return (edge.from, edge.to) < (from, to));
+        let rest = self.edges.get(first..).unwrap_or_default();
+        let count = rest.partition_point(|edge| return (edge.from, edge.to) == (from, to));
+        return rest.get(..count).unwrap_or_default();
+    }
 }
 
 fn validate_blocks(blocks: &[Block]) -> Result<(), CfgError> {

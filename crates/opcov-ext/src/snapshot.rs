@@ -1,15 +1,15 @@
 use core::{fmt, slice};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use opcov_core::cfg::{
     Analysis, BlockFlags, BlockId, BlockInput, ClassRef, FilePath, FunctionFlags, FunctionInput,
     FunctionKey, KeyError, Line, LineSpan, LoopInput, Op, Opcode, PhpVersion, SnapshotError,
 };
 use opcov_sys::{
-    PHP_VERSION_ID, ZEND_ACC_ANON_CLASS, ZEND_ACC_CLOSURE, ZEND_BB_CATCH, ZEND_BB_FINALLY,
+    OPCOV_ENGINE_VERSION_ID, ZEND_ACC_ANON_CLASS, ZEND_ACC_CLOSURE, ZEND_BB_CATCH, ZEND_BB_FINALLY,
     ZEND_BB_FINALLY_END, ZEND_BB_LOOP_HEADER, ZEND_BB_REACHABLE, ZEND_BB_RECV_ENTRY, ZEND_BB_START,
     opcov_arena_create_caught, opcov_arena_destroy, opcov_build_cfg, zend_arena, zend_basic_block,
-    zend_cfg, zend_op, zend_op_array,
+    zend_cfg, zend_class_entry, zend_op, zend_op_array, zend_string,
 };
 
 use crate::{
@@ -19,11 +19,9 @@ use crate::{
     zend,
 };
 
-pub(crate) const PHP: PhpVersion = match PHP_VERSION_ID / 100 {
-    804 => PhpVersion::Php84,
-    805 => PhpVersion::Php85,
-    806 => PhpVersion::Php86,
-    _ => panic!("opcov-sys only builds against PHP 8.4, 8.5 and 8.6"),
+pub(crate) const PHP: PhpVersion = match PhpVersion::from_version_id(OPCOV_ENGINE_VERSION_ID) {
+    Some(version) => version,
+    None => panic!("opcov-sys reported an engine version that opcov-core does not model"),
 };
 
 const ARENA_SIZE: usize = 64 * 1024;
@@ -91,23 +89,54 @@ fn line_span(start: u32, end: u32) -> Result<LineSpan, SnapshotFailure> {
     return LineSpan::new(start, end).ok_or(SnapshotFailure::InvertedSpan { start, end });
 }
 
-unsafe fn class_ref(
-    op_array: &zend_op_array,
-    ordinals: &Ordinals,
-) -> Result<Option<ClassRef>, SnapshotFailure> {
-    let scope = op_array.scope;
-    if scope.is_null() {
-        return Ok(None);
+#[derive(Debug, Default)]
+pub(crate) struct Names {
+    file: Option<(usize, FilePath)>,
+    classes: HashMap<usize, ClassRef>,
+}
+
+impl Names {
+    unsafe fn file(&mut self, name: *const zend_string) -> Result<FilePath, SnapshotFailure> {
+        if let Some((cached, file)) = &self.file
+            && *cached == name.addr()
+        {
+            return Ok(file.clone());
+        }
+        // SAFETY: the caller passes a compiled op array's file name, a live zend_string.
+        let file: FilePath = unsafe { zend::text(name) }
+            .ok_or(SnapshotFailure::NotUtf8 { what: "file name" })?
+            .parse()
+            .map_err(SnapshotFailure::Key)?;
+        self.file = Some((name.addr(), file.clone()));
+        return Ok(file);
     }
-    // SAFETY: a compiled op array's scope is a live class entry.
+
+    unsafe fn class(
+        &mut self,
+        scope: *const zend_class_entry,
+        ordinals: &Ordinals,
+    ) -> Result<ClassRef, SnapshotFailure> {
+        if let Some(class) = self.classes.get(&scope.addr()) {
+            return Ok(class.clone());
+        }
+        // SAFETY: forwarded from the caller.
+        let class = unsafe { class_ref(scope, ordinals)? };
+        self.classes.insert(scope.addr(), class.clone());
+        return Ok(class);
+    }
+}
+
+unsafe fn class_ref(
+    scope: *const zend_class_entry,
+    ordinals: &Ordinals,
+) -> Result<ClassRef, SnapshotFailure> {
+    // SAFETY: the caller passes a compiled op array's scope, a live class entry.
     let class = unsafe { &*scope };
     if class.ce_flags & ZEND_ACC_ANON_CLASS == 0 {
         // SAFETY: a class entry's name is a live zend_string.
         let name = unsafe { zend::text(class.name) }
             .ok_or(SnapshotFailure::NotUtf8 { what: "class name" })?;
-        return Ok(Some(ClassRef::Named(
-            name.parse().map_err(SnapshotFailure::Key)?,
-        )));
+        return Ok(ClassRef::Named(name.parse().map_err(SnapshotFailure::Key)?));
     }
     // SAFETY: an anonymous class is a user class, whose `info.user` arm is the active one.
     let user = unsafe { class.info.user };
@@ -115,42 +144,57 @@ unsafe fn class_ref(
     let file = unsafe { zend::text(user.filename) }.ok_or(SnapshotFailure::NotUtf8 {
         what: "class file name",
     })?;
-    return Ok(Some(ClassRef::Anonymous {
+    return Ok(ClassRef::Anonymous {
         file: file.parse().map_err(SnapshotFailure::Key)?,
         lines: line_span(user.line_start, user.line_end)?,
         ordinal: ordinals.class(scope).ok_or(SnapshotFailure::Unranked {
             what: "anonymous class",
         })?,
-    }));
+    });
 }
 
-unsafe fn function_key(
-    op_array: &zend_op_array,
-    file: &FilePath,
+#[derive(Debug)]
+pub(crate) struct Named {
+    pub(crate) file: FilePath,
+    pub(crate) key: FunctionKey,
+}
+
+pub(crate) unsafe fn name(
+    op_array: *const zend_op_array,
+    names: &mut Names,
     ordinals: &Ordinals,
-) -> Result<FunctionKey, SnapshotFailure> {
-    if op_array.function_name.is_null() {
-        return Ok(FunctionKey::Main { file: file.clone() });
-    }
-    if op_array.fn_flags & ZEND_ACC_CLOSURE != 0 {
-        return Ok(FunctionKey::Closure {
+) -> Result<Named, SnapshotFailure> {
+    // SAFETY: the caller passes a live, compiled op array.
+    let array = unsafe { &*op_array };
+    // SAFETY: a compiled op array's file name is a live zend_string.
+    let file = unsafe { names.file(array.filename)? };
+    let key = if array.function_name.is_null() {
+        FunctionKey::Main { file: file.clone() }
+    } else if array.fn_flags & ZEND_ACC_CLOSURE != 0 {
+        FunctionKey::Closure {
             file: file.clone(),
-            lines: line_span(op_array.line_start, op_array.line_end)?,
+            lines: line_span(array.line_start, array.line_end)?,
             ordinal: ordinals
                 .closure(op_array)
                 .ok_or(SnapshotFailure::Unranked { what: "closure" })?,
-        });
-    }
-    // SAFETY: checked non-null above; a compiled op array's function name is a live zend_string.
-    let name = unsafe { zend::text(op_array.function_name) }.ok_or(SnapshotFailure::NotUtf8 {
-        what: "function name",
-    })?;
-    // SAFETY: forwarded from the caller.
-    let text = unsafe { class_ref(op_array, ordinals)? }.map_or_else(
-        || return name.to_owned(),
-        |class| return format!("{class}::{name}"),
-    );
-    return text.parse().map_err(SnapshotFailure::Key);
+        }
+    } else {
+        // SAFETY: checked non-null above; a compiled op array's function name is a live
+        // zend_string.
+        let name = unsafe { zend::text(array.function_name) }.ok_or(SnapshotFailure::NotUtf8 {
+            what: "function name",
+        })?;
+        if array.scope.is_null() {
+            FunctionKey::Function {
+                name: name.parse().map_err(SnapshotFailure::Key)?,
+            }
+        } else {
+            // SAFETY: a compiled op array's scope is a live class entry.
+            let class = unsafe { names.class(array.scope, ordinals)? };
+            FunctionKey::member(class, name).map_err(SnapshotFailure::Key)?
+        }
+    };
+    return Ok(Named { file, key });
 }
 
 fn line(raw: u32, op: usize) -> Result<Line, SnapshotFailure> {
@@ -319,17 +363,10 @@ fn line_blocks(raw: &[RawBlock]) -> Vec<LineBlock> {
 
 pub(crate) unsafe fn take(
     op_array: *const zend_op_array,
-    ordinals: &Ordinals,
+    named: Named,
 ) -> Result<Snapshot, SnapshotFailure> {
     // SAFETY: the caller passes a live, compiled op array.
     let array = unsafe { &*op_array };
-    // SAFETY: a compiled op array's file name is a live zend_string.
-    let file: FilePath = unsafe { zend::text(array.filename) }
-        .ok_or(SnapshotFailure::NotUtf8 { what: "file name" })?
-        .parse()
-        .map_err(SnapshotFailure::Key)?;
-    // SAFETY: forwarded from the caller.
-    let key = unsafe { function_key(array, &file, ordinals)? };
     let op_count = count(array.last, "opcode count")?;
     let opcodes = if op_count == 0 {
         &[][..]
@@ -341,8 +378,8 @@ pub(crate) unsafe fn take(
     // SAFETY: forwarded from the caller.
     let raw = unsafe { raw_cfg(op_array)? };
     let input = FunctionInput {
-        key,
-        file,
+        key: named.key,
+        file: named.file,
         line_start: line(array.line_start, 0)?,
         line_end: line(array.line_end, 0)?,
         flags: FunctionFlags::from_zend_fn_flags(array.fn_flags),

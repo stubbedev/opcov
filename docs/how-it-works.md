@@ -91,6 +91,9 @@ sequenceDiagram
 - **Selection** is decided once per resolved file name and cached for the
   process. An unselected file is tagged "no probes" in the reserved slot and
   keeps its real handlers and jump tables: it runs exactly as without opcov.
+  Resolving a name canonicalizes its directory once per process and then
+  costs one `lstat` per file (a symlinked file is resolved in full); on a
+  case-insensitive file system (macOS) every name is canonicalized in full.
 - **Jump tables.** Selected files are compiled with
   `ZEND_COMPILE_NO_JUMPTABLES`, so a `switch` becomes comparisons and jumps that
   probes can see ([configuration.md](configuration.md#jump-tables)). The
@@ -107,12 +110,21 @@ sequenceDiagram
   owned model of `opcov-core` (`opcov_core::cfg::Function`) and frees the arena.
   The engine's CFG already understands every jump opcode, `try`/`catch`/
   `finally`, generators and unreachable blocks. A function whose snapshot
-  fails turns collection off with `snapshot-failed`.
+  fails turns collection off with `snapshot-failed`. The snapshot is kept for
+  `\opcov\get_debug_info()`; the per-opcode working copies used to place
+  probes are dropped once the unit is built.
 - **Plan.** `opcov_core::cfg::Plan` classifies every edge, numbers the
   outcomes (`o0`, `o1`, ... by site and successor) and loops (`l0`, ... by
   header), in one place shared by the extension, the report and
   `opcov-syntax`.
-- **Probes** are placed: the label is written into each probed opcode.
+- **Probes** are placed: the label is written into each probed opcode. A
+  unit keeps its probes sorted by opcode (32 bytes each) and finds the probe
+  of a firing opcode by binary search; the rarer loop-entry and finally
+  roles live in small side tables of the unit.
+
+Every step is linear in the size of the function: edges, outcomes and loops
+are looked up through sorted indexes, never by scanning the whole function per
+item. [scale.md](scale.md#engine) has the measurements.
 
 `eval()`'d code goes through `zend_compile_string` the same way and is measured
 when the file that called `eval()` is selected.
@@ -227,6 +239,13 @@ found through the op array's reserved slot.
 - Closures created from the same declaration, trait methods copied into
   several classes and op arrays that OPcache serves again in the same process
   share their opcodes, and therefore share one unit and its probes.
+- PHP compiles the arguments of an unqualified call to a frameless function
+  inside a namespace twice, once for the `JMP_FRAMELESS` fast path and once
+  for the namespaced call, so a closure among them has two op arrays with
+  identical code. opcov recognizes such twins (same parent, identical
+  opcodes, a `JMP_FRAMELESS` in the parent), gives them one key and ordinal,
+  and both units record into that one function, so the report shows the union
+  of their hits.
 - When the engine destroys an op array (`op_array_dtor`), its unit loses its
   opcodes. A unit with no pending hits is freed at once; one with hits not yet
   reported lives until they are re-armed (`reset()`, `start()` for strays,

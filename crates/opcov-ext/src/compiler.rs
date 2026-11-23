@@ -2,7 +2,7 @@ use core::{
     ffi::{c_char, c_int},
     ptr, slice,
 };
-use std::{fs, sync::OnceLock};
+use std::{fs, ops::Range, sync::OnceLock};
 
 use opcov_core::{
     cfg::{FunctionFlag, FunctionKey, Plan},
@@ -24,7 +24,7 @@ use crate::{
     ordinals::Ordinals,
     probes,
     select::decide,
-    snapshot::{self, PHP, Snapshot},
+    snapshot::{self, Named, Names, PHP, Snapshot, SnapshotFailure},
     threads, zend,
 };
 
@@ -352,20 +352,22 @@ impl Engine {
         let Ok(last) = usize::try_from(last) else {
             return;
         };
-        let key = snapshot.analysis.function.key().clone();
-        let abstract_function = snapshot
-            .analysis
-            .function
-            .flags()
-            .contains(FunctionFlag::Abstract);
-        let plan = Plan::of(&snapshot.analysis.function);
-        let zero_possible = branches::zero_possible(&plan, &snapshot.analysis.function, opcodes);
+        let Snapshot {
+            analysis,
+            instrs,
+            blocks,
+        } = snapshot;
+        let cfg = &analysis.function;
+        let key = cfg.key().clone();
+        let abstract_function = cfg.flags().contains(FunctionFlag::Abstract);
+        let plan = Plan::of(cfg);
+        let zero_possible = branches::zero_possible(&plan, cfg, opcodes);
         let declarations_only =
-            matches!(key, FunctionKey::Main { .. }) && lines::declarations_only(&snapshot.instrs);
+            matches!(key, FunctionKey::Main { .. }) && lines::declarations_only(&instrs);
         let placement = if declarations_only {
             lines::Placement::default()
         } else {
-            lines::place(PHP, &snapshot.instrs, &snapshot.blocks)
+            lines::place(PHP, &instrs, &blocks)
         };
         // SAFETY: the op array is live; the layout only reads its opcodes and try/catch table.
         let built = unsafe {
@@ -373,11 +375,11 @@ impl Engine {
                 op_array,
                 opcodes,
                 last,
-                function: &snapshot.analysis.function,
+                function: cfg,
                 plan: &plan,
                 zero_possible: &zero_possible,
                 lines: &placement.probes,
-                instrs: &snapshot.instrs,
+                instrs: &instrs,
             }
             .build()
         };
@@ -387,7 +389,7 @@ impl Engine {
             None => self.files.add_function(FunctionRecord {
                 file,
                 key,
-                analysis: snapshot.analysis,
+                analysis,
                 plan,
                 zero_possible,
             }),
@@ -408,11 +410,12 @@ impl Engine {
             last,
             file,
             function,
-            index: built.index,
             probes: built.probes,
             sources: built.sources,
             owners: built.owners,
-            seen: vec![false; outcomes],
+            entries: built.entries,
+            finals: built.finals,
+            seen: vec![false; outcomes].into_boxed_slice(),
             loops: built.loops,
             pending: 0,
         };
@@ -431,13 +434,60 @@ impl Engine {
             .counters
             .probes_installed
             .saturating_add(u64::try_from(unit.probes.len()).unwrap_or(u64::MAX));
-        let id = self.units.insert(unit);
+        let reserved = self
+            .units
+            .insert(unit)
+            .map_or(Reserved::NoProbes, Reserved::Unit);
         // SAFETY: as above.
-        unsafe { Reserved::Unit(id).write(op_array, self.slot) };
+        unsafe { reserved.write(op_array, self.slot) };
     }
 }
 
-unsafe fn process(op_array: *mut zend_op_array, ordinals: &Ordinals) {
+struct Window {
+    range: Range<usize>,
+    ordinals: Option<Ordinals>,
+    names: Names,
+    verdict: Option<(usize, Verdict)>,
+}
+
+impl Window {
+    fn new(range: Range<usize>) -> Self {
+        return Self {
+            range,
+            ordinals: None,
+            names: Names::default(),
+            verdict: None,
+        };
+    }
+
+    unsafe fn name(&mut self, op_array: *const zend_op_array) -> Result<Named, SnapshotFailure> {
+        let range = self.range.clone();
+        let ordinals = self.ordinals.get_or_insert_with(|| {
+            return with_engine(|engine| {
+                let window = engine.scratch.op_arrays.get(range).unwrap_or_default();
+                // SAFETY: the window's op arrays were gathered by this compilation and are live.
+                return unsafe { Ordinals::rank(window) };
+            })
+            .unwrap_or_default();
+        });
+        // SAFETY: forwarded from the caller.
+        return unsafe { snapshot::name(op_array, &mut self.names, ordinals) };
+    }
+
+    fn verdict(&mut self, name: *const zend_string) -> Verdict {
+        if let Some((cached, verdict)) = &self.verdict
+            && *cached == name.addr()
+        {
+            return verdict.clone();
+        }
+        // SAFETY: the caller passes a compiled op array's file name, a live zend_string.
+        let verdict = decide(unsafe { zend::bytes(name) }.unwrap_or_default());
+        self.verdict = Some((name.addr(), verdict.clone()));
+        return verdict;
+    }
+}
+
+unsafe fn process(op_array: *mut zend_op_array, window: &mut Window) {
     let Some(slot) = with_engine(|engine| return engine.slot) else {
         return;
     };
@@ -446,9 +496,7 @@ unsafe fn process(op_array: *mut zend_op_array, ordinals: &Ordinals) {
         return;
     }
     // SAFETY: as above.
-    let name = unsafe { zend::bytes((*op_array).filename) }.unwrap_or_default();
-    let verdict = decide(name);
-    let Verdict::Measure(file) = verdict else {
+    let Verdict::Measure(file) = window.verdict(unsafe { (*op_array).filename }) else {
         // SAFETY: as above.
         unsafe { Reserved::NoProbes.write(op_array, slot) };
         return;
@@ -462,7 +510,9 @@ unsafe fn process(op_array: *mut zend_op_array, ordinals: &Ordinals) {
         return;
     }
     // SAFETY: as above.
-    let taken = unsafe { snapshot::take(op_array, ordinals) };
+    let taken = unsafe { window.name(op_array) }
+        // SAFETY: as above.
+        .and_then(|named| return unsafe { snapshot::take(op_array, named) });
     with_engine(|engine| match taken {
         // SAFETY: as above.
         Ok(snapshot) => unsafe { engine.install_unit(op_array, file, snapshot) },
@@ -489,27 +539,24 @@ unsafe fn instrument(roots: impl FnOnce(&mut Vec<*mut zend_op_array>, usize)) ->
         roots(&mut engine.scratch.op_arrays, slot);
         // SAFETY: the gathered op arrays are live.
         if unsafe { engine.reset_window(start) } {
-            let window = engine.scratch.op_arrays.get(start..).unwrap_or_default();
-            // SAFETY: as above.
-            let ordinals = unsafe { Ordinals::rank(window) };
-            return Some((start, engine.scratch.op_arrays.len(), ordinals));
+            return Some(Window::new(start..engine.scratch.op_arrays.len()));
         }
         engine.scratch.op_arrays.truncate(start);
         return None;
     })
     .flatten();
-    let Some((start, end, ordinals)) = started else {
+    let Some(mut window) = started else {
         return false;
     };
-    for position in start..end {
+    for position in window.range.clone() {
         let next =
             with_engine(|engine| return engine.scratch.op_arrays.get(position).copied()).flatten();
         if let Some(op_array) = next {
             // SAFETY: gathered op arrays are live.
-            unsafe { process(op_array, &ordinals) };
+            unsafe { process(op_array, &mut window) };
         }
     }
-    with_engine(|engine| engine.scratch.op_arrays.truncate(start));
+    with_engine(|engine| engine.scratch.op_arrays.truncate(window.range.start));
     return true;
 }
 

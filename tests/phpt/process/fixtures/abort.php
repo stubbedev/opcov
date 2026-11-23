@@ -6,7 +6,8 @@ function abort(string $how): void
         exit(3);
     }
     if ($how === 'fatal') {
-        $blob = str_repeat('x', 256 * 1024 * 1024);
+        $how .= '!';
+        function abort(): void {}
     }
     echo "not reached\n";
 }

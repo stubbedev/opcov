@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, ops::Range};
+use std::ops::Range;
 
 use opcov_core::cfg::{Line, Opcode, PhpVersion};
 use opcov_sys::{IS_CONST, IS_CV, IS_TMP_VAR, IS_VAR};
@@ -64,7 +64,7 @@ pub(crate) struct ProbeSite {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct Placement {
     pub(crate) probes: Vec<ProbeSite>,
-    pub(crate) lines: BTreeSet<Line>,
+    pub(crate) lines: Vec<Line>,
 }
 
 pub(crate) const fn is_ignored(opcode: Opcode) -> bool {
@@ -263,7 +263,9 @@ pub(crate) fn place(version: PhpVersion, instrs: &[Instr], blocks: &[LineBlock])
                 }
                 continue;
             }
-            placement.lines.insert(op.line);
+            if placement.lines.last() != Some(&op.line) {
+                placement.lines.push(op.line);
+            }
             last_line = Some(op.line);
             let new_line = block_entry || Some(op.line) != probed_line;
             if new_line {
@@ -290,6 +292,8 @@ pub(crate) fn place(version: PhpVersion, instrs: &[Instr], blocks: &[LineBlock])
             }
         }
     }
+    placement.lines.sort_unstable();
+    placement.lines.dedup();
     return placement;
 }
 

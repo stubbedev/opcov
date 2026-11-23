@@ -3,7 +3,12 @@ mod plan {
     use std::fs;
     use std::path::Path;
 
-    use opcov_core::cfg::{Analysis, LoopShape, LoopTest, Origin, Plan};
+    use std::collections::BTreeSet;
+
+    use opcov_core::cfg::{
+        Analysis, BlockFlag, BlockFlags, BlockId, BlockInput, FunctionFlags, FunctionInput, Line,
+        LoopInput, LoopShape, LoopTest, Op, Opcode, Origin, Plan,
+    };
     use opcov_core::kind::EdgeKind;
 
     fn plan(name: &str) -> Plan {
@@ -96,6 +101,80 @@ mod plan {
                     assert_eq!(outcome_kind(*back), EdgeKind::LoopBack, "{name}");
                 }
             }
+        }
+    }
+
+    fn block(start: bool, ops: &[Opcode], successors: &[u32]) -> BlockInput {
+        let flags = BlockFlags::empty().with(BlockFlag::Reachable);
+        return BlockInput {
+            flags: if start {
+                flags.with(BlockFlag::Start)
+            } else {
+                flags
+            },
+            ops: ops
+                .iter()
+                .map(|&opcode| {
+                    return Op {
+                        opcode,
+                        line: Line::new(3).unwrap(),
+                    };
+                })
+                .collect(),
+            successors: successors.iter().copied().map(BlockId::new).collect(),
+        };
+    }
+
+    #[test]
+    fn planning_many_loops_in_one_function_stays_linear() {
+        let count: u32 = 20_000;
+        let mut blocks = Vec::new();
+        let mut loops = Vec::new();
+        for index in 0..count {
+            let entry = index * 3;
+            blocks.push(block(index == 0, &[Opcode::Jmp], &[entry + 2]));
+            blocks.push(block(false, &[Opcode::PreDec], &[entry + 2]));
+            blocks.push(block(
+                false,
+                &[Opcode::IsSmaller, Opcode::Jmpnz],
+                &[entry + 1, entry + 3],
+            ));
+            loops.push(LoopInput {
+                header: BlockId::new(entry + 2),
+                body_blocks: BTreeSet::from([BlockId::new(entry + 1)]),
+            });
+        }
+        blocks.push(block(false, &[Opcode::Return], &[]));
+        let analysis = Analysis::try_from(FunctionInput {
+            key: "f".parse().unwrap(),
+            file: "/app/f.php".parse().unwrap(),
+            line_start: Line::new(2).unwrap(),
+            line_end: Line::new(9).unwrap(),
+            flags: FunctionFlags::empty(),
+            blocks,
+            loops,
+        })
+        .unwrap();
+        let plan = Plan::of(&analysis.function);
+        assert_eq!(plan.loops().len(), 20_000, "every loop is planned");
+        for (index, planned) in (0..).zip(plan.loops()) {
+            let LoopTest::PreTest {
+                test,
+                back,
+                exit,
+                entries,
+            } = &planned.test
+            else {
+                panic!("loop {index} is not a pre-test loop: {:?}", planned.test);
+            };
+            assert_eq!(test.get(), index * 3 + 2, "loop {index}: its test block");
+            assert_eq!(
+                entries,
+                &[BlockId::new(index * 3)],
+                "loop {index}: its entry jump"
+            );
+            assert_eq!(plan.outcome(*back).unwrap().kind, EdgeKind::LoopBack);
+            assert_eq!(plan.outcome(*exit).unwrap().kind, EdgeKind::LoopExit);
         }
     }
 }

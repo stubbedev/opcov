@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use opcov_core::{
     cfg::{BlockId, Branch, Function, LoopShape, LoopTest, Opcode, Origin, Plan},
@@ -11,7 +11,10 @@ use opcov_sys::{
 };
 
 use crate::{
-    engine::{Engine, FinallyEntry, FiredRef, Handler, Hit, Probe, Role, Unit, UnitId},
+    engine::{
+        Engine, FinallyEntry, FinallyProbe, FiredRef, Handler, Hit, LoopEntry, Probe, Role, Unit,
+        UnitId,
+    },
     lines::{Instr, ProbeSite},
 };
 
@@ -172,37 +175,48 @@ pub(crate) fn zero_possible(
         .collect();
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Slots {
-    by_op: BTreeMap<usize, Probe>,
+    index: Vec<u32>,
+    probes: Vec<Probe>,
+    opcodes: *mut zend_op,
 }
 
 impl Slots {
-    fn at(&mut self, op: usize, opcodes: *mut zend_op) -> &mut Probe {
-        return self.by_op.entry(op).or_insert_with(|| {
-            // SAFETY: the caller only passes opcode indexes below the op array's `last`; the
-            // handler is the real one the reset installed.
-            return Probe::new(op, unsafe { Handler::of(opcodes.wrapping_add(op)) });
-        });
+    fn new(last: usize, opcodes: *mut zend_op) -> Self {
+        return Self {
+            index: vec![0; last],
+            probes: Vec::new(),
+            opcodes,
+        };
     }
 
-    fn into_index(self, last: usize) -> (Box<[u32]>, Vec<Probe>) {
-        let mut index = vec![0_u32; last].into_boxed_slice();
-        let mut probes = Vec::with_capacity(self.by_op.len());
-        for (op, probe) in self.by_op {
-            if let (Some(entry), Ok(number)) = (
-                index.get_mut(op),
-                u32::try_from(probes.len().saturating_add(1)),
-            ) {
+    fn at(&mut self, op: usize) -> Option<&mut Probe> {
+        let entry = self.index.get_mut(op)?;
+        if *entry == 0 {
+            let number = u32::try_from(self.probes.len().checked_add(1)?).ok()?;
+            // SAFETY: `op` indexes `index`, which has one entry per opcode of the op array; the
+            // handler is the real one the reset installed.
+            let handler = unsafe { Handler::of(self.opcodes.wrapping_add(op)) };
+            self.probes
+                .push(Probe::new(u32::try_from(op).ok()?, handler));
+            *entry = number;
+        }
+        return self.probes.get_mut(position(entry.checked_sub(1)?));
+    }
+
+    fn finish(mut self) -> (ProbeIndex, Vec<Probe>) {
+        self.probes.sort_unstable_by_key(|probe| return probe.op);
+        for (number, probe) in (1..).zip(&self.probes) {
+            if let Some(entry) = self.index.get_mut(probe.offset()) {
                 *entry = number;
-                probes.push(probe);
             }
         }
-        return (index, probes);
+        return (ProbeIndex(self.index), self.probes);
     }
 }
 
-struct ProbeIndex(Box<[u32]>);
+struct ProbeIndex(Vec<u32>);
 
 impl ProbeIndex {
     fn of(&self, op: usize) -> Option<u32> {
@@ -214,19 +228,22 @@ impl ProbeIndex {
     }
 }
 
+type Target = (u32, usize, Branch);
+
 struct Draft {
     site: usize,
     decision: Decision,
-    successors: Vec<(u32, usize, Branch)>,
+    successors: Vec<Target>,
     producer: Option<(usize, u8)>,
 }
 
 pub(crate) struct Built {
-    pub(crate) index: Box<[u32]>,
-    pub(crate) probes: Vec<Probe>,
-    pub(crate) sources: Vec<SourceProbe>,
+    pub(crate) probes: Box<[Probe]>,
+    pub(crate) sources: Box<[SourceProbe]>,
     pub(crate) owners: Box<[Option<Owner>]>,
-    pub(crate) loops: Vec<LoopState>,
+    pub(crate) entries: Box<[LoopEntry]>,
+    pub(crate) finals: Box<[FinallyProbe]>,
+    pub(crate) loops: Box<[LoopState]>,
 }
 
 pub(crate) struct Layout<'a> {
@@ -334,20 +351,23 @@ impl Layout<'_> {
     }
 
     unsafe fn drafts(&self, slots: &mut Slots) -> (Vec<Draft>, Vec<(u32, usize)>) {
-        let mut grouped: BTreeMap<BlockId, Vec<(u32, usize, Branch)>> = BTreeMap::new();
+        let mut grouped: Vec<(BlockId, Vec<Target>)> = Vec::new();
         let mut finals = Vec::new();
         for outcome in self.plan.outcomes() {
             let number = outcome.id.get();
             match outcome.origin {
                 Origin::Edge { from, to, branch } => {
-                    if let Some(start) = self
+                    let Some(start) = self
                         .block_start(to)
                         .filter(|&start| return start < self.last)
-                    {
-                        grouped
-                            .entry(from)
-                            .or_default()
-                            .push((number, start, branch));
+                    else {
+                        continue;
+                    };
+                    match grouped.last_mut() {
+                        Some((last, successors)) if *last == from => {
+                            successors.push((number, start, branch));
+                        }
+                        Some(_) | None => grouped.push((from, vec![(number, start, branch)])),
                     }
                 }
                 Origin::FinallyEntry { block } => {
@@ -355,7 +375,7 @@ impl Layout<'_> {
                         .block_start(block)
                         .filter(|&start| return start < self.last)
                     {
-                        slots.at(start, self.opcodes);
+                        slots.at(start);
                         finals.push((number, start));
                     }
                 }
@@ -369,9 +389,9 @@ impl Layout<'_> {
             let Some(instr) = self.instrs.get(site).filter(|_| return site < self.last) else {
                 continue;
             };
-            slots.at(site, self.opcodes);
+            slots.at(site);
             for &(_, target, _) in &successors {
-                slots.at(target, self.opcodes);
+                slots.at(target);
             }
             drafts.push(Draft {
                 site,
@@ -399,7 +419,7 @@ impl Layout<'_> {
                     .get(end)
                     .is_some_and(|instr| return Decision::of(instr.opcode) == Decision::Always);
                 if jumps {
-                    slots.at(end, self.opcodes);
+                    slots.at(end);
                     entry_ops.push((end, number));
                 }
             }
@@ -450,9 +470,9 @@ impl Layout<'_> {
         &self,
         finals: Vec<(u32, usize)>,
         index: &ProbeIndex,
-        probes: &mut [Probe],
         owners: &mut [Option<Owner>],
-    ) {
+    ) -> Box<[FinallyProbe]> {
+        let mut attached = Vec::with_capacity(finals.len());
         for (outcome, start) in finals {
             let (Some(probe), Ok(finally_op)) = (index.of(start), u32::try_from(start)) else {
                 continue;
@@ -462,11 +482,14 @@ impl Layout<'_> {
             if fast_call == u32::MAX {
                 continue;
             }
-            if let Some(slot) = get_mut(probes, probe) {
-                slot.finally = Some(FinallyEntry { outcome, fast_call });
-            }
+            attached.push(FinallyProbe {
+                probe,
+                entry: FinallyEntry { outcome, fast_call },
+            });
             set_owner(owners, outcome, Owner::Finally(probe));
         }
+        attached.sort_unstable_by_key(|found| return found.probe);
+        return attached.into_boxed_slice();
     }
 
     fn loops(
@@ -474,9 +497,8 @@ impl Layout<'_> {
         index: &ProbeIndex,
         entry_ops: &[(usize, u32)],
         owners: &[Option<Owner>],
-        probes: &mut [Probe],
         sources: &mut [SourceProbe],
-    ) -> Vec<LoopState> {
+    ) -> Box<[LoopState]> {
         let mut loops = Vec::with_capacity(self.plan.loops().len());
         for (number, planned) in (0_u32..).zip(self.plan.loops()) {
             let roles = loop_role(&planned.test, number, owners);
@@ -494,11 +516,6 @@ impl Layout<'_> {
                 .filter(|&&(_, looped)| return looped == number)
                 .filter_map(|&(op, _)| return index.of(op))
                 .collect();
-            for &entry in &entries {
-                if let Some(slot) = get_mut(probes, entry) {
-                    slot.entries = slot.entries.iter().copied().chain([number]).collect();
-                }
-            }
             loops.push(LoopState {
                 shape: planned.test.shape(),
                 zero_possible: self
@@ -512,19 +529,20 @@ impl Layout<'_> {
                 source: tested_by,
             });
         }
-        return loops;
+        return loops.into_boxed_slice();
     }
 
     pub(crate) unsafe fn build(&self) -> Built {
-        let mut slots = Slots::default();
-        for site in self.lines.iter().filter(|site| return site.op < self.last) {
-            slots.at(site.op, self.opcodes).line = Some(site.line);
+        let mut slots = Slots::new(self.last, self.opcodes);
+        for site in self.lines {
+            if let Some(slot) = slots.at(site.op) {
+                slot.line = Some(site.line);
+            }
         }
         // SAFETY: forwarded from the caller.
         let (drafts, finals) = unsafe { self.drafts(&mut slots) };
         let entry_ops = self.entries(&mut slots);
-        let (index, mut probes) = slots.into_index(self.last);
-        let index = ProbeIndex(index);
+        let (index, mut probes) = slots.finish();
         let mut owners = vec![None; self.plan.outcomes().len()];
         let mut sources = Vec::with_capacity(drafts.len());
         for draft in drafts {
@@ -543,13 +561,22 @@ impl Layout<'_> {
             sources.push(source);
         }
         // SAFETY: forwarded from the caller.
-        unsafe { self.attach_finals(finals, &index, &mut probes, &mut owners) };
-        let loops = self.loops(&index, &entry_ops, &owners, &mut probes, &mut sources);
+        let finals = unsafe { self.attach_finals(finals, &index, &mut owners) };
+        let loops = self.loops(&index, &entry_ops, &owners, &mut sources);
+        let mut entries: Vec<LoopEntry> = entry_ops
+            .iter()
+            .filter_map(|&(op, looped)| {
+                return index.of(op).map(|probe| return LoopEntry { probe, looped });
+            })
+            .collect();
+        entries.sort_unstable_by_key(|entry| return (entry.probe, entry.looped));
+        entries.dedup();
         return Built {
-            index: index.0,
-            probes,
-            sources,
+            probes: probes.into_boxed_slice(),
+            sources: sources.into_boxed_slice(),
             owners: owners.into_boxed_slice(),
+            entries: entries.into_boxed_slice(),
+            finals,
             loops,
         };
     }
@@ -717,28 +744,24 @@ impl Unit {
     }
 
     pub(crate) unsafe fn arm_everything(&mut self, label: Handler) {
-        let lines: Vec<usize> = (0..self.probes.len())
-            .filter(|&probe| {
-                return self
-                    .probes
-                    .get(probe)
-                    .is_some_and(|slot| return slot.line.is_some() || slot.finally.is_some());
-            })
-            .collect();
-        for probe in lines {
-            let roles: Vec<Role> = self.probes.get(probe).map_or_else(Vec::new, |slot| {
-                let mut roles = Vec::new();
-                if slot.line.is_some() {
-                    roles.push(Role::Line);
-                }
-                if slot.finally.is_some() {
-                    roles.push(Role::FinallyEntry);
-                }
-                return roles;
-            });
-            for role in roles {
+        for probe in 0..self.probes.len() {
+            if self
+                .probes
+                .get(probe)
+                .is_some_and(|slot| return slot.line.is_some())
+            {
                 // SAFETY: forwarded from the caller.
-                unsafe { self.arm(probe, role, label) };
+                unsafe { self.arm(probe, Role::Line, label) };
+            }
+        }
+        for index in 0..self.finals.len() {
+            if let Some(probe) = self
+                .finals
+                .get(index)
+                .map(|found| return position(found.probe))
+            {
+                // SAFETY: forwarded from the caller.
+                unsafe { self.arm(probe, Role::FinallyEntry, label) };
             }
         }
         let count = u32::try_from(self.sources.len()).unwrap_or(u32::MAX);
@@ -891,7 +914,7 @@ impl Engine {
             };
             if let Some(opcodes) = *opcodes {
                 // SAFETY: the unit is alive, so its opcodes are; the probe lies below `last`.
-                unsafe { installed.install(opcodes.wrapping_add(slot.op)) };
+                unsafe { installed.install(opcodes.wrapping_add(slot.offset())) };
             }
         }
     }
@@ -1116,12 +1139,15 @@ impl Engine {
         let Some(label) = self.label else {
             return After::Restored;
         };
-        let Some((armed, op, source, finally)) = self
+        let Some((armed, op, source)) = self
             .units
             .get(id)
             .and_then(|unit| return unit.probes.get(probe))
-            .map(|slot| return (slot.armed, slot.op, slot.source, slot.finally))
+            .map(|slot| return (slot.armed, slot.offset(), slot.source))
         else {
+            return After::Restored;
+        };
+        let Ok(number) = u32::try_from(probe) else {
             return After::Restored;
         };
         let watched = armed.contains(Role::Watch) && self.resolve_watch(recording, id, frame, op);
@@ -1133,22 +1159,20 @@ impl Engine {
         {
             // SAFETY: the unit is alive while its probes fire.
             unsafe { unit.disarm(probe, Role::Line) };
-            if let Ok(number) = u32::try_from(probe) {
-                self.emit(recording, id, Hit::Line(number));
-            }
+            self.emit(recording, id, Hit::Line(number));
         }
-        if armed.contains(Role::LoopEntry) {
-            let loops = self
-                .units
-                .get(id)
-                .and_then(|unit| return unit.probes.get(probe))
-                .map_or_else(Box::default, |slot| return slot.entries.clone());
-            for looped in loops {
+        if armed.contains(Role::LoopEntry)
+            && let Some(unit) = self.units.get(id)
+        {
+            for looped in unit.loop_entries(number) {
                 self.activations.enter(frame.key(), id, looped);
             }
         }
         if armed.contains(Role::FinallyEntry)
-            && let Some(entry) = finally
+            && let Some(entry) = self
+                .units
+                .get(id)
+                .and_then(|unit| return unit.finally_entry(number))
         {
             // SAFETY: the frame is the one the VM is executing; the variable is the finally's
             // fast-call slot of this op array.

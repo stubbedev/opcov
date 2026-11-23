@@ -1,5 +1,5 @@
 --TEST--
-Every unsupported OPcache setup under the CLI is refused before any probe is installed, with a message that names the setting, the value to use and the troubleshooting entry; several conflicts are all listed
+Every unsupported OPcache setup under the CLI except the JIT (refused-jit.phpt) is refused before any probe is installed, with a message that names the setting, the value to use and the troubleshooting entry; several conflicts are all listed
 --SKIPIF--
 <?php
 require __DIR__ . '/../support/coverage.inc';
@@ -21,13 +21,10 @@ $base = ['opcache.enable_cli' => '1', 'opcache.protect_memory' => '0', 'opcache.
 $cases = [
     'optimizer at its default level' => ['opcache.optimization_level' => '0x7FFEBFFF'],
     'optimizer with one pass' => ['opcache.optimization_level' => '1'],
-    'tracing JIT' => ['opcache.jit' => 'tracing', 'opcache.jit_buffer_size' => '16M'],
-    'function JIT' => ['opcache.jit' => 'function', 'opcache.jit_buffer_size' => '16M'],
-    'numeric JIT mode' => ['opcache.jit' => '1255', 'opcache.jit_buffer_size' => '16M'],
     'protected memory' => ['opcache.protect_memory' => '1'],
     'file cache' => ['opcache.file_cache' => $cache],
     'preload' => ['opcache.preload' => __DIR__ . '/fixtures/preload.php'],
-    'optimizer and JIT' => ['opcache.optimization_level' => '0x7FFEBFFF', 'opcache.jit' => 'on', 'opcache.jit_buffer_size' => '16M'],
+    'optimizer and protected memory' => ['opcache.optimization_level' => '0x7FFEBFFF', 'opcache.protect_memory' => '1'],
 ];
 foreach ($cases as $name => $settings) {
     echo "== $name\n";
@@ -60,18 +57,6 @@ start() refused
 opcov cannot collect coverage: opcache.optimization_level=1 lets the OPcache optimizer remove and merge code, so lines and outcomes disappear from the report; set opcache.optimization_level=0 [opcache-optimizer]
 start() refused
 {"off_code":"opcache-optimizer","conflicts":["opcache-optimizer"],"probes_installed":0}
-== tracing JIT
-opcov cannot collect coverage: opcache.jit=tracing with opcache.jit_buffer_size=16M turns the JIT on, and JIT-compiled code never reads the opcode handlers that probes replace; set opcache.jit=disable [opcache-jit]
-start() refused
-{"off_code":"opcache-jit","conflicts":["opcache-jit"],"probes_installed":0}
-== function JIT
-opcov cannot collect coverage: opcache.jit=function with opcache.jit_buffer_size=16M turns the JIT on, and JIT-compiled code never reads the opcode handlers that probes replace; set opcache.jit=disable [opcache-jit]
-start() refused
-{"off_code":"opcache-jit","conflicts":["opcache-jit"],"probes_installed":0}
-== numeric JIT mode
-opcov cannot collect coverage: opcache.jit=1255 with opcache.jit_buffer_size=16M turns the JIT on, and JIT-compiled code never reads the opcode handlers that probes replace; set opcache.jit=disable [opcache-jit]
-start() refused
-{"off_code":"opcache-jit","conflicts":["opcache-jit"],"probes_installed":0}
 == protected memory
 opcov cannot collect coverage: opcache.protect_memory=1 makes the compiled code read-only, so probes cannot be installed; set opcache.protect_memory=0 [opcache-protect-memory]
 start() refused
@@ -84,7 +69,7 @@ start() refused
 opcov cannot collect coverage: opcache.preload=%spreload.php compiles code before opcov installs its hooks, so preloaded code gets no probes; set opcache.preload= (empty) [opcache-preload]
 start() refused
 {"off_code":"opcache-preload","conflicts":["opcache-preload"],"probes_installed":0}
-== optimizer and JIT
-opcov cannot collect coverage: opcache.jit=1 with opcache.jit_buffer_size=16M turns the JIT on, and JIT-compiled code never reads the opcode handlers that probes replace; set opcache.jit=disable [opcache-jit]; opcache.optimization_level=0x7FFEBFFF lets the OPcache optimizer remove and merge code, so lines and outcomes disappear from the report; set opcache.optimization_level=0 [opcache-optimizer]
+== optimizer and protected memory
+opcov cannot collect coverage: opcache.protect_memory=1 makes the compiled code read-only, so probes cannot be installed; set opcache.protect_memory=0 [opcache-protect-memory]; opcache.optimization_level=0x7FFEBFFF lets the OPcache optimizer remove and merge code, so lines and outcomes disappear from the report; set opcache.optimization_level=0 [opcache-optimizer]
 start() refused
-{"off_code":"opcache-jit","conflicts":["opcache-jit","opcache-optimizer"],"probes_installed":0}
+{"off_code":"opcache-protect-memory","conflicts":["opcache-protect-memory","opcache-optimizer"],"probes_installed":0}

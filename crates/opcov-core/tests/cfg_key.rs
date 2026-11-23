@@ -88,4 +88,20 @@ mod key {
             }
         }
     }
+
+    proptest! {
+        #[test]
+        fn a_member_key_equals_the_parsed_member_text(
+            class in qualified_name(),
+            member in identifier(),
+            hook in prop::bool::ANY,
+            kind in prop::sample::select(vec!["get", "set"]),
+        ) {
+            let name = if hook { format!("${member}::{kind}") } else { member };
+            let class_ref: ClassRef = class.parse().unwrap();
+            let built = FunctionKey::member(class_ref, &name).unwrap();
+            let parsed: FunctionKey = format!("{class}::{name}").parse().unwrap();
+            prop_assert_eq!(built, parsed);
+        }
+    }
 }

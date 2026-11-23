@@ -6,6 +6,99 @@ size, with measured numbers.
 
 ## Engine
 
+### Corpus and method
+
+Shallow clones (23 November 2026) of symfony/symfony, laravel/framework,
+drupal/core, doctrine/orm, doctrine/dbal and sebastianbergmann/phpunit under
+`target/measure-cache/scale/` (not committed): **34,607 PHP files, 4,965,369
+lines**, after leaving out the 21 files that do not compile together in one
+process (parse-error fixtures, scripts that redeclare a function).
+
+Every file is compiled, none is executed: a copy of the corpus has ` return;`
+inserted after the opening tag and any `declare`/`namespace` header (on the
+same line, so line numbers are unchanged), and a driver `include`s every file
+of the copy in one process. Each file thus goes through `zend_compile_file`
+and opcov's compile hook exactly as in a test run, its classes and functions
+stay in the tables (and their units in opcov) until the end, and only the
+main script's statements after `return` become unreachable. The three modes
+are PHP without opcov, opcov loaded with `collect_paths` naming an empty
+directory (every file unselected), and `collect_paths` naming the corpus
+(every file selected). PHP 8.5.13 NTS without OPcache, release build, an
+Intel i5-10400F (no SHA extensions) shared with other work; times are the
+minimum of five interleaved runs.
+
+### Results
+
+| | without opcov | unselected, before | unselected, after | selected, before | selected, after |
+|---|---|---|---|---|---|
+| compile, wall | 3.46 s | 4.32 s | 4.06 s | 7.17 s | **6.55 s** |
+| compile, user CPU | 2.98 s | 3.33 s | 3.34 s | 5.92 s | 5.62 s |
+| compile, system CPU | 0.44 s | 0.97 s | 0.70 s | 1.23 s | 0.90 s |
+| peak RSS | 619 MiB | 628 MiB | 631 MiB | 1,256 MiB | **1,049 MiB** |
+
+Selecting every file installs 1,803,495 probes in 198,796 units for 241,290
+functions (783,099 basic blocks, 5,911,170 opcodes). opcov's own heap at the
+end of the run went from 618 MB to 427 MB: units (probes, sources, loop and
+finally tables) 218 → 131 MB, function records with their CFG snapshots and
+plans 285 → 196 MB. That is about 75 bytes per probe of unit state and 240
+bytes per probe overall.
+
+Cost per file is linear in its size: the added time per byte falls as files
+grow (a fixed cost per file dominates small files) and no size class grows
+faster than linearly. In the same run, the median file took 2.1 times its
+plain compile time selected (2.6 before), the 99th percentile 4.0 (4.9).
+
+What was changed, each measured on the corpus before and after:
+
+- **Plan building** no longer scans every edge per edge or every outcome per
+  loop: edges and outcomes are found through their sorted order and loop
+  entries through one index of incoming edges. A function with 20,000 loops
+  plans in 0.47 s instead of 57 s in a debug build
+  (`cfg_plan::planning_many_loops_in_one_function_stays_linear`); match and
+  switch arms are ranked by binary search.
+- **Probes** shrank from 64 to 32 bytes; loop-entry and finally roles moved to
+  per-unit side tables, and the per-opcode probe index (4 bytes per opcode)
+  was replaced by a binary search over the probes, which are sorted by opcode.
+- **Function keys and paths** share their strings (`FilePath`, `Identifier`
+  and `QualifiedName` are reference-counted); a compile parses the file path
+  once and each class name once instead of once per function, and builds
+  method keys directly instead of formatting and re-parsing them.
+- **Placement and layout** use vectors indexed by opcode instead of B-tree
+  maps; executable lines are collected into a sorted vector.
+- **Selection** resolves a file name with a per-process cache of canonical
+  directories and one `lstat` (system CPU of an unselected compile down from
+  0.97 s to 0.70 s); the verdict is looked up once per compilation instead
+  of once per function, and closures and anonymous classes are ranked only
+  when a compilation has a selected function.
+
+The largest remaining item is the SHA-256 of every selected file's bytes
+(written to the report so that merged reports can detect a changed file):
+about 1.2 s of the 3.1 s added for 194 MB of source, because this CPU has no
+SHA extensions. CPUs with them (AMD Zen, Intel Ice Lake and later) hash about
+ten times faster through the same `sha2` crate.
+
+### Per-test cost
+
+A generated suite of 1,000 files with 100 functions each (1.3 million lines,
+2,100,000 probes installed) and 20,000 tests, each calling 50 random functions
+and ending with `stop($test)` and `reset()`: every test fires and re-arms about
+900 probes, 18,165,446 in total.
+
+| | without opcov | before | after |
+|---|---|---|---|
+| test loop, CPU | 0.96 s | 6.82 s | 6.85 s |
+| `stop()` + `reset()`, median per test | | 192 µs | 175 µs |
+| `stop()` + `reset()`, 99th percentile | | 327 µs | 307 µs |
+| peak RSS | 184 MiB | 948 MiB | 798 MiB |
+
+`stop()` and `reset()` depend only on the probes that fired; the 2.1 million
+installed probes do not enter either. `stop()` groups the hits by file and
+function id and sorts by path and key once per file instead of comparing
+paths per hit, and a test's first attribution is stored without re-sorting.
+Attribution keeps one sorted list of 12-byte items per test (16 before).
+This benchmark re-fires every probe in every test, the worst case; in a real
+suite most probes fire once per test that reaches them.
+
 ## Reports and CLI
 
 ### What bounds memory

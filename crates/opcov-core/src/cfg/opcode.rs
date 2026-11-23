@@ -1,17 +1,69 @@
-use serde::{Deserialize, Serialize};
+use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PhpVersion {
-    #[serde(rename = "8.4")]
     Php84,
-    #[serde(rename = "8.5")]
     Php85,
-    #[serde(rename = "8.6")]
     Php86,
 }
 
 impl PhpVersion {
     pub const ALL: [Self; 3] = [Self::Php84, Self::Php85, Self::Php86];
+    pub const NEWEST: Self = Self::Php86;
+
+    #[must_use]
+    pub const fn version_id(self) -> u32 {
+        return match self {
+            Self::Php84 => 80400,
+            Self::Php85 => 80500,
+            Self::Php86 => 80600,
+        };
+    }
+
+    #[must_use]
+    pub const fn from_version_id(version_id: u32) -> Option<Self> {
+        let mut rest: &[Self] = &Self::ALL;
+        while let [version, tail @ ..] = rest {
+            if version.version_id() / 100 == version_id / 100 {
+                return Some(*version);
+            }
+            rest = tail;
+        }
+        return None;
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        return match self {
+            Self::Php84 => "8.4",
+            Self::Php85 => "8.5",
+            Self::Php86 => "8.6",
+        };
+    }
+}
+
+impl fmt::Display for PhpVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        return f.write_str(self.as_str());
+    }
+}
+
+impl Serialize for PhpVersion {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        return serializer.serialize_str(self.as_str());
+    }
+}
+
+impl<'de> Deserialize<'de> for PhpVersion {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        return Self::ALL
+            .into_iter()
+            .find(|version| return version.as_str() == text)
+            .ok_or_else(|| return de::Error::custom(format!("unsupported PHP version {text:?}")));
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -1,8 +1,10 @@
+use core::slice;
 use std::collections::HashMap;
 
-use opcov_sys::{ZEND_ACC_ANON_CLASS, ZEND_ACC_CLOSURE, zend_class_entry, zend_op_array};
+use opcov_core::cfg::Opcode;
+use opcov_sys::{ZEND_ACC_ANON_CLASS, ZEND_ACC_CLOSURE, zend_class_entry, zend_op, zend_op_array};
 
-use crate::zend;
+use crate::{snapshot::PHP, zend};
 
 type Group = (Vec<u8>, u32, u32);
 
@@ -27,11 +29,109 @@ unsafe fn declaration_counter(class: &zend_class_entry) -> Option<u32> {
     return u32::from_str_radix(digits, 16).ok();
 }
 
+unsafe fn opcodes<'a>(array: &zend_op_array) -> &'a [zend_op] {
+    let Ok(count) = usize::try_from(array.last) else {
+        return &[];
+    };
+    if array.opcodes.is_null() || count == 0 {
+        return &[];
+    }
+    // SAFETY: the caller passes a live, compiled op array, which owns `last` opcodes.
+    return unsafe { slice::from_raw_parts(array.opcodes, count) };
+}
+
+unsafe fn nested<'a>(array: &zend_op_array) -> &'a [*mut zend_op_array] {
+    let Ok(count) = usize::try_from(array.num_dynamic_func_defs) else {
+        return &[];
+    };
+    if array.dynamic_func_defs.is_null() || count == 0 {
+        return &[];
+    }
+    // SAFETY: the caller passes a live op array, which owns `num_dynamic_func_defs` entries.
+    return unsafe { slice::from_raw_parts(array.dynamic_func_defs, count) };
+}
+
+fn same_op(left: &zend_op, right: &zend_op) -> bool {
+    // SAFETY: every member of an operand union is a plain u32, so reading `num` reads the bits.
+    let operands = |op: &zend_op| return unsafe { (op.op1.num, op.op2.num, op.result.num) };
+    return (
+        left.opcode,
+        left.op1_type,
+        left.op2_type,
+        left.result_type,
+        left.extended_value,
+        left.lineno,
+    ) == (
+        right.opcode,
+        right.op1_type,
+        right.op2_type,
+        right.result_type,
+        right.extended_value,
+        right.lineno,
+    ) && operands(left) == operands(right);
+}
+
+unsafe fn same_closure(left: *const zend_op_array, right: *const zend_op_array) -> bool {
+    // SAFETY: the caller passes live, compiled op arrays.
+    let (left, right) = unsafe { (&*left, &*right) };
+    if (left.line_start, left.line_end, left.last, left.last_literal)
+        != (
+            right.line_start,
+            right.line_end,
+            right.last,
+            right.last_literal,
+        )
+        || left.fn_flags & right.fn_flags & ZEND_ACC_CLOSURE == 0
+    {
+        return false;
+    }
+    // SAFETY: as above.
+    let (left, right) = unsafe { (opcodes(left), opcodes(right)) };
+    return left
+        .iter()
+        .zip(right)
+        .all(|(left, right)| return same_op(left, right));
+}
+
+unsafe fn frameless_twins(op_arrays: &[*mut zend_op_array]) -> HashMap<usize, usize> {
+    let mut twins = HashMap::new();
+    for &parent in op_arrays {
+        // SAFETY: the caller passes live, compiled op arrays.
+        let array = unsafe { &*parent };
+        // SAFETY: as above.
+        let frameless = unsafe { opcodes(array) }
+            .iter()
+            .any(|op| return Opcode::decode(PHP, op.opcode) == Opcode::JmpFrameless);
+        if !frameless {
+            continue;
+        }
+        // SAFETY: as above.
+        let children = unsafe { nested(array) };
+        for (position, &child) in children.iter().enumerate() {
+            let earlier = children.get(..position).unwrap_or_default();
+            // SAFETY: a parent's dynamic function definitions are live, compiled op arrays.
+            let original = earlier
+                .iter()
+                .find(|&&candidate| return unsafe { same_closure(candidate, child) });
+            if let Some(&original) = original {
+                let canonical = twins
+                    .get(&original.addr())
+                    .copied()
+                    .unwrap_or_else(|| return original.addr());
+                twins.insert(child.addr(), canonical);
+            }
+        }
+    }
+    return twins;
+}
+
 impl Ordinals {
     pub(crate) unsafe fn rank(op_arrays: &[*mut zend_op_array]) -> Self {
         let mut ordinals = Self::default();
         let mut next_closure: HashMap<Group, u32> = HashMap::new();
         let mut anonymous: Vec<(u32, usize, Group)> = Vec::new();
+        // SAFETY: forwarded from the caller.
+        let twins = unsafe { frameless_twins(op_arrays) };
         for &op_array in op_arrays {
             // SAFETY: the caller passes live, compiled op arrays.
             let array = unsafe { &*op_array };
@@ -40,8 +140,16 @@ impl Ordinals {
             if array.fn_flags & ZEND_ACC_CLOSURE != 0
                 && !ordinals.closures.contains_key(&op_array.addr())
             {
-                let group = (file.to_vec(), array.line_start, array.line_end);
-                let ordinal = assign(&mut next_closure, group);
+                let twin = twins
+                    .get(&op_array.addr())
+                    .and_then(|original| return ordinals.closures.get(original))
+                    .copied();
+                let ordinal = twin.unwrap_or_else(|| {
+                    return assign(
+                        &mut next_closure,
+                        (file.to_vec(), array.line_start, array.line_end),
+                    );
+                });
                 ordinals.closures.insert(op_array.addr(), ordinal);
             }
             let scope = array.scope;

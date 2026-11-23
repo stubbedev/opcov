@@ -260,29 +260,38 @@ fn lone_jump_target(candidate: &Node<'_>) -> Option<BlockId> {
     };
 }
 
-fn rank(bodies: &BTreeSet<BlockId>, target: BlockId) -> Option<u32> {
+#[derive(Debug)]
+struct Bodies(Vec<BlockId>);
+
+impl FromIterator<BlockId> for Bodies {
+    fn from_iter<I: IntoIterator<Item = BlockId>>(blocks: I) -> Self {
+        let mut sorted: Vec<BlockId> = blocks.into_iter().collect();
+        sorted.sort_unstable();
+        sorted.dedup();
+        return Self(sorted);
+    }
+}
+
+fn rank(bodies: &Bodies, target: BlockId) -> Option<u32> {
     return bodies
-        .iter()
-        .position(|&body| return body == target)
+        .0
+        .binary_search(&target)
+        .ok()
         .and_then(|position| return u32::try_from(position).ok());
 }
 
-fn arm_role(bodies: &BTreeSet<BlockId>, target: BlockId) -> Option<Successor> {
+fn arm_role(bodies: &Bodies, target: BlockId) -> Option<Successor> {
     return rank(bodies, target).map(Successor::Arm);
 }
 
-fn match_default_role(
-    nodes: &[Node<'_>],
-    bodies: &BTreeSet<BlockId>,
-    target: BlockId,
-) -> Option<Successor> {
+fn match_default_role(nodes: &[Node<'_>], bodies: &Bodies, target: BlockId) -> Option<Successor> {
     if terminator_of(nodes, target) == Some(Opcode::MatchError) {
         return Some(Successor::Default);
     }
     return arm_role(bodies, target);
 }
 
-fn match_bodies(nodes: &[Node<'_>], arms: &[BlockId], default: BlockId) -> BTreeSet<BlockId> {
+fn match_bodies(nodes: &[Node<'_>], arms: &[BlockId], default: BlockId) -> Bodies {
     let default_arm =
         (terminator_of(nodes, default) != Some(Opcode::MatchError)).then_some(default);
     return arms.iter().copied().chain(default_arm).collect();
@@ -301,7 +310,7 @@ fn match_roles(nodes: &[Node<'_>], successors: &[BlockId]) -> Option<Vec<Success
 fn switch_roles(successors: &[BlockId]) -> Option<Vec<Successor>> {
     let (_, with_default) = successors.split_last()?;
     let (_, cases) = with_default.split_last()?;
-    let bodies: BTreeSet<BlockId> = cases.iter().copied().collect();
+    let bodies: Bodies = cases.iter().copied().collect();
     return cases
         .iter()
         .map(|&case| return arm_role(&bodies, case))

@@ -99,13 +99,7 @@ fn branch(function: &Function, edge: &Edge, opcode: Opcode) -> Branch {
     if is_jump(opcode) || Some(edge.to) != next_block(edge.from) {
         return Branch::Target;
     }
-    let both_fall_through = function
-        .edges()
-        .iter()
-        .filter(|other| return other.from == edge.from && other.to == edge.to)
-        .nth(1)
-        .is_some();
-    if !both_fall_through {
+    if function.edges_between(edge.from, edge.to).len() < 2 {
         return Branch::Fallthrough;
     }
     let fallthrough_kind =
@@ -114,6 +108,30 @@ fn branch(function: &Function, edge: &Edge, opcode: Opcode) -> Branch {
         return Branch::Fallthrough;
     }
     return Branch::Target;
+}
+
+struct Incoming<'f>(Vec<&'f Edge>);
+
+impl<'f> Incoming<'f> {
+    fn of(function: &'f Function) -> Self {
+        if function.loops().is_empty() {
+            return Self(Vec::new());
+        }
+        let mut edges: Vec<&Edge> = function.edges().iter().collect();
+        edges.sort_by_key(|edge| return (edge.to, edge.from, edge.kind));
+        return Self(edges);
+    }
+
+    fn into(&self, to: BlockId) -> impl Iterator<Item = &'f Edge> {
+        let first = self.0.partition_point(|edge| return edge.to < to);
+        return self
+            .0
+            .get(first..)
+            .unwrap_or_default()
+            .iter()
+            .copied()
+            .take_while(move |edge| return edge.to == to);
+    }
 }
 
 struct Draft {
@@ -190,12 +208,13 @@ impl Plan {
             outcomes,
             loops: Vec::new(),
         };
+        let incoming = Incoming::of(function);
         plan.loops = (0..)
             .zip(
                 function
                     .loops()
                     .iter()
-                    .filter_map(|cfg_loop| return plan.loop_site(function, cfg_loop)),
+                    .filter_map(|cfg_loop| return plan.loop_site(function, &incoming, cfg_loop)),
             )
             .map(|(number, (header, line, test))| {
                 return LoopSite {
@@ -226,14 +245,27 @@ impl Plan {
             .and_then(|index| return self.outcomes.get(index));
     }
 
+    fn outcomes_from(&self, function: &Function, from: BlockId) -> &[OutcomeSite] {
+        let Some(site) = function.block(from).map(Block::op_end) else {
+            return &[];
+        };
+        let first = self
+            .outcomes
+            .partition_point(|outcome| return outcome.site < site);
+        let rest = self.outcomes.get(first..).unwrap_or_default();
+        let count = rest.partition_point(|outcome| return outcome.site == site);
+        return rest.get(..count).unwrap_or_default();
+    }
+
     fn edge_outcome(
         &self,
+        function: &Function,
         from: BlockId,
         kind: EdgeKind,
         to: Option<BlockId>,
     ) -> Option<OutcomeId> {
         return self
-            .outcomes
+            .outcomes_from(function, from)
             .iter()
             .find(|outcome| {
                 return outcome.kind == kind
@@ -246,8 +278,8 @@ impl Plan {
             .map(|outcome| return outcome.id);
     }
 
-    fn leaves(&self, from: BlockId, members: &BTreeSet<BlockId>) -> bool {
-        return self.outcomes.iter().any(|outcome| {
+    fn leaves(&self, function: &Function, from: BlockId, members: &BTreeSet<BlockId>) -> bool {
+        return self.outcomes_from(function, from).iter().any(|outcome| {
             return outcome.kind == EdgeKind::LoopExit
                 && matches!(
                     outcome.origin,
@@ -256,19 +288,24 @@ impl Plan {
         });
     }
 
-    fn back_edge_test(&self, members: &BTreeSet<BlockId>) -> Option<BlockId> {
-        let mut tests = self.outcomes.iter().filter_map(|outcome| {
-            return match outcome.origin {
-                Origin::Edge { from, to, .. }
-                    if outcome.kind == EdgeKind::LoopBack
-                        && members.contains(&from)
-                        && members.contains(&to)
-                        && self.leaves(from, members) =>
-                {
-                    Some(from)
-                }
-                Origin::Edge { .. } | Origin::FinallyEntry { .. } => None,
-            };
+    fn back_edge_test(&self, function: &Function, members: &BTreeSet<BlockId>) -> Option<BlockId> {
+        let mut tests = members.iter().flat_map(|&member| {
+            return self
+                .outcomes_from(function, member)
+                .iter()
+                .filter_map(move |outcome| {
+                    return match outcome.origin {
+                        Origin::Edge { from, to, .. }
+                            if outcome.kind == EdgeKind::LoopBack
+                                && from == member
+                                && members.contains(&to)
+                                && self.leaves(function, from, members) =>
+                        {
+                            Some(from)
+                        }
+                        Origin::Edge { .. } | Origin::FinallyEntry { .. } => None,
+                    };
+                });
         });
         let test = tests.next()?;
         return tests.all(|other| return other == test).then_some(test);
@@ -277,6 +314,7 @@ impl Plan {
     fn loop_site(
         &self,
         function: &Function,
+        incoming: &Incoming<'_>,
         cfg_loop: &super::model::Loop,
     ) -> Option<(BlockId, Line, LoopTest)> {
         let header = cfg_loop.header();
@@ -284,37 +322,35 @@ impl Plan {
         let members: BTreeSet<BlockId> = cfg_loop.members().collect();
         let test = match cfg_loop.kind() {
             LoopShape::Foreach => {
-                let reset = function
-                    .edges()
-                    .iter()
-                    .find(|edge| return edge.to == header && edge.kind == EdgeKind::LoopEnter)?
+                let reset = incoming
+                    .into(header)
+                    .find(|edge| return edge.kind == EdgeKind::LoopEnter)?
                     .from;
                 LoopTest::Foreach {
-                    skip: self.edge_outcome(reset, EdgeKind::LoopSkip, None)?,
-                    back: self.edge_outcome(header, EdgeKind::LoopBack, None)?,
-                    exit: self.edge_outcome(header, EdgeKind::LoopExit, None)?,
+                    skip: self.edge_outcome(function, reset, EdgeKind::LoopSkip, None)?,
+                    back: self.edge_outcome(function, header, EdgeKind::LoopBack, None)?,
+                    exit: self.edge_outcome(function, header, EdgeKind::LoopExit, None)?,
                 }
             }
             LoopShape::PreTest => {
-                let test = self.back_edge_test(&members)?;
-                let entries = function
-                    .edges()
-                    .iter()
-                    .filter(|edge| return edge.to == header && !members.contains(&edge.from))
+                let test = self.back_edge_test(function, &members)?;
+                let entries = incoming
+                    .into(header)
+                    .filter(|edge| return !members.contains(&edge.from))
                     .map(|edge| return edge.from)
                     .collect();
                 LoopTest::PreTest {
                     test,
-                    back: self.edge_outcome(test, EdgeKind::LoopBack, None)?,
-                    exit: self.edge_outcome(test, EdgeKind::LoopExit, None)?,
+                    back: self.edge_outcome(function, test, EdgeKind::LoopBack, None)?,
+                    exit: self.edge_outcome(function, test, EdgeKind::LoopExit, None)?,
                     entries,
                 }
             }
             LoopShape::PostTest => {
-                let test = self.back_edge_test(&members)?;
+                let test = self.back_edge_test(function, &members)?;
                 LoopTest::PostTest {
                     test,
-                    back: self.edge_outcome(test, EdgeKind::LoopBack, Some(header))?,
+                    back: self.edge_outcome(function, test, EdgeKind::LoopBack, Some(header))?,
                 }
             }
             LoopShape::Unstructured => return None,

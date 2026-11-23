@@ -1,5 +1,11 @@
 --TEST--
 A fatal error raised inside opcov's own code (memory exhaustion while get_debug_info() builds its array) is caught at the engine call, every Rust frame returns normally, and the bailout resumes from the entry point: opcov's state stays usable in shutdown functions, and the report is still written
+--SKIPIF--
+<?php
+if (getenv('USE_ZEND_ALLOC') === '0') {
+    die('skip memory_limit is not enforced without the Zend allocator (USE_ZEND_ALLOC=0), so the memory exhaustion under test cannot happen');
+}
+?>
 --INI--
 opcov.enabled=1
 opcov.collect_paths={PWD}/fixtures

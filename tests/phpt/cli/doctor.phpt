@@ -38,7 +38,7 @@ $opcache = '';
 foreach (opcov_opcache_ini() as $name => $value) {
     $opcache .= "$name=$value\n";
 }
-echo $summary($doctor("extension={$match[1]}\n{$opcache}opcache.enable_cli=1\nopcache.jit=tracing\nopcache.jit_buffer_size=16M\n"));
+echo $summary($doctor("extension={$match[1]}\n{$opcache}opcache.enable_cli=1\nopcache.protect_memory=1\n"));
 unlink($scan . '/opcov.ini');
 rmdir($scan);
 ?>
@@ -62,7 +62,7 @@ rmdir($scan);
     "loaded": true,
     "self_test": "not_run",
     "findings": [
-        "opcache-jit: set opcache.jit=disable",
+        "opcache-protect-memory: set opcache.protect_memory=0",
         "opcache-optimizer: set opcache.optimization_level=0"
     ]
 }

@@ -1,9 +1,9 @@
 --TEST--
-A fatal error (memory exhaustion) inside a measured branch while collecting: the engine bails out past the probes, yet shutdown functions find opcov consistent, stop() attributes the hits made up to the error and write_report() writes the report
+A fatal error (redeclaring a function at run time, which does not depend on the Zend allocator) inside a measured branch while collecting: the engine bails out past the probes, yet shutdown functions find opcov consistent, stop() attributes the hits made up to the error and write_report() writes the report
 --INI--
 opcov.enabled=1
 opcov.collect_paths={PWD}/fixtures
-memory_limit=32M
+fatal_error_backtraces=0
 --FILE--
 <?php
 require __DIR__ . '/fixtures/report.inc';
@@ -14,7 +14,7 @@ register_shutdown_function(static fn () => opcov_finish_interrupted($file, 'Inte
 abort('fatal');
 ?>
 --EXPECTF--
-Fatal error: Allowed memory size of 33554432 bytes exhausted (tried to allocate %d bytes) in %sabort.php on line 9
+Fatal error: Cannot redeclare %s in %sabort.php on line 10
 collecting at shutdown: true
 tests: ["Interrupted::test"]
 lines: 4,8,9

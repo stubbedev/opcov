@@ -46,6 +46,11 @@ function opcov_opcache_ini(): ?array
     return $extension === false || $extension === '' ? null : ['zend_extension' => $extension];
 }
 
+function opcov_jit_built(array $opcache): bool
+{
+    return opcov_child('<?php echo ini_get("opcache.jit") === false ? "no" : "yes";', $opcache) === 'yes';
+}
+
 function opcov_refusal(): string
 {
     try {

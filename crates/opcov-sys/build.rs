@@ -1,3 +1,4 @@
+use opcov_core::cfg::PhpVersion;
 use std::{
     env,
     ffi::OsString,
@@ -7,6 +8,7 @@ use std::{
 };
 
 const PHP_CONFIG_ENV: &str = "PHP_CONFIG";
+const ALLOW_UNRELEASED_ENV: &str = "OPCOV_ALLOW_UNRELEASED_PHP";
 const DEFAULT_PHP_CONFIG: &str = "php-config";
 const SHIM_DIR: &str = "shim";
 const SHIM_SOURCE: &str = "shim/shim.c";
@@ -127,36 +129,27 @@ impl bindgen::callbacks::ParseCallbacks for MacroTypes {
     }
 }
 
-#[derive(Clone, Copy)]
-enum PhpMinor {
-    Php84,
-    Php85,
-    Php86,
+fn supported_versions() -> String {
+    return PhpVersion::ALL.map(PhpVersion::as_str).join(", ");
 }
 
-impl PhpMinor {
-    const ALL: [Self; 3] = [Self::Php84, Self::Php85, Self::Php86];
+#[derive(Clone, Copy)]
+enum Target {
+    Released(PhpVersion),
+    Unreleased { version_id: u32 },
+}
 
-    const fn from_vernum(vernum: u32) -> Option<Self> {
-        return match vernum / 100 {
-            804 => Some(Self::Php84),
-            805 => Some(Self::Php85),
-            806 => Some(Self::Php86),
-            _ => None,
-        };
-    }
-
-    const fn cfg_value(self) -> &'static str {
+impl Target {
+    const fn engine(self) -> PhpVersion {
         return match self {
-            Self::Php84 => "8.4",
-            Self::Php85 => "8.5",
-            Self::Php86 => "8.6",
+            Self::Released(version) => version,
+            Self::Unreleased { .. } => PhpVersion::NEWEST,
         };
     }
 }
 
 struct Php {
-    minor: PhpMinor,
+    target: Target,
     zts: bool,
     include_dirs: Vec<PathBuf>,
     config_header: PathBuf,
@@ -185,6 +178,9 @@ enum Error {
         command: OsString,
         version: String,
     },
+    AllowUnreleased {
+        value: OsString,
+    },
     NoIncludes {
         command: OsString,
     },
@@ -205,8 +201,9 @@ impl fmt::Display for Error {
         return match self {
             Self::Spawn { command, source } => write!(
                 f,
-                "cannot run {} ({source}): install PHP 8.4, 8.5 or 8.6 with its development headers, or set {PHP_CONFIG_ENV} to the path of its php-config",
-                command.display()
+                "cannot run {} ({source}): install PHP {} with its development headers, or set {PHP_CONFIG_ENV} to the path of its php-config",
+                command.display(),
+                supported_versions()
             ),
             Self::Failed {
                 command,
@@ -233,9 +230,15 @@ impl fmt::Display for Error {
             ),
             Self::Unsupported { command, version } => write!(
                 f,
-                "{} reports PHP {version}, which opcov does not support; supported: {}; set {PHP_CONFIG_ENV} to the php-config of a supported PHP",
+                "{} reports PHP {version}, which opcov does not support; supported: {}; set {PHP_CONFIG_ENV} to the php-config of a supported PHP, or {ALLOW_UNRELEASED_ENV}=1 to build against an unreleased PHP newer than {}",
                 command.display(),
-                PhpMinor::ALL.map(PhpMinor::cfg_value).join(", ")
+                supported_versions(),
+                PhpVersion::NEWEST
+            ),
+            Self::AllowUnreleased { value } => write!(
+                f,
+                "{ALLOW_UNRELEASED_ENV} must be 1 or unset, got {}",
+                value.display()
             ),
             Self::NoIncludes { command } => {
                 write!(
@@ -321,12 +324,15 @@ fn discover() -> Result<Php, Error> {
             output: vernum_output.clone(),
         };
     })?;
-    let minor = PhpMinor::from_vernum(vernum).ok_or_else(|| {
-        return Error::Unsupported {
-            command: command.clone(),
-            version: version.clone(),
-        };
-    })?;
+    let target = match PhpVersion::from_version_id(vernum) {
+        Some(released) => Target::Released(released),
+        None if vernum > PhpVersion::NEWEST.version_id() && allow_unreleased()? => {
+            Target::Unreleased { version_id: vernum }
+        }
+        None => {
+            return Err(Error::Unsupported { command, version });
+        }
+    };
     let include_dirs: Vec<PathBuf> = query(&command, "--includes")?
         .split_whitespace()
         .filter_map(|flag| return flag.strip_prefix("-I").map(PathBuf::from))
@@ -339,20 +345,35 @@ fn discover() -> Result<Php, Error> {
         .join("php_config.h");
     let zts = detect_zts(&config_header)?;
     return Ok(Php {
-        minor,
+        target,
         zts,
         include_dirs,
         config_header,
     });
 }
 
+fn allow_unreleased() -> Result<bool, Error> {
+    println!("cargo::rerun-if-env-changed={ALLOW_UNRELEASED_ENV}");
+    return match env::var_os(ALLOW_UNRELEASED_ENV) {
+        None => Ok(false),
+        Some(value) if value == "1" => Ok(true),
+        Some(value) => Err(Error::AllowUnreleased { value }),
+    };
+}
+
 fn emit_cfgs(php: &Php) {
-    let versions = PhpMinor::ALL
-        .map(|minor| return format!("\"{}\"", minor.cfg_value()))
+    let versions = PhpVersion::ALL
+        .map(|version| return format!("\"{version}\""))
         .join(", ");
     println!("cargo::rustc-check-cfg=cfg(php_zts)");
     println!("cargo::rustc-check-cfg=cfg(php_version, values({versions}))");
-    println!("cargo::rustc-cfg=php_version=\"{}\"", php.minor.cfg_value());
+    println!("cargo::rustc-cfg=php_version=\"{}\"", php.target.engine());
+    if let Target::Unreleased { version_id } = php.target {
+        println!(
+            "cargo::warning=building against unreleased PHP {version_id} with the engine model of PHP {} ({ALLOW_UNRELEASED_ENV}=1)",
+            PhpVersion::NEWEST
+        );
+    }
     if php.zts {
         println!("cargo::rustc-cfg=php_zts");
     }
@@ -386,6 +407,10 @@ fn generate_bindings(php: &Php, out_dir: &Path) -> Result<(), Error> {
         .blocklist_type(OPCODE_HANDLER_TYPE)
         .raw_line(format!(
             "pub type {OPCODE_HANDLER_TYPE} = *const ::core::ffi::c_void;"
+        ))
+        .raw_line(format!(
+            "pub const OPCOV_ENGINE_VERSION_ID: u32 = {};",
+            php.target.engine().version_id()
         ))
         .generate_cstr(true)
         .derive_default(true)

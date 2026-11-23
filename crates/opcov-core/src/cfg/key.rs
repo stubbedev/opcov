@@ -1,5 +1,6 @@
 use std::fmt;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
@@ -78,9 +79,15 @@ impl fmt::Display for KeyError {
 
 impl std::error::Error for KeyError {}
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
 #[serde(try_from = "String")]
-pub struct FilePath(String);
+pub struct FilePath(Arc<str>);
+
+impl Serialize for FilePath {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        return serializer.serialize_str(&self.0);
+    }
+}
 
 impl FilePath {
     #[must_use]
@@ -93,13 +100,7 @@ impl TryFrom<String> for FilePath {
     type Error = KeyError;
 
     fn try_from(path: String) -> Result<Self, Self::Error> {
-        if path.is_empty() {
-            return Err(KeyError::new(&path, KeyErrorReason::EmptyFilePath));
-        }
-        if path.contains('\0') {
-            return Err(KeyError::new(&path, KeyErrorReason::NulInFilePath));
-        }
-        return Ok(Self(path));
+        return path.parse();
     }
 }
 
@@ -107,7 +108,13 @@ impl FromStr for FilePath {
     type Err = KeyError;
 
     fn from_str(path: &str) -> Result<Self, Self::Err> {
-        return Self::try_from(path.to_owned());
+        if path.is_empty() {
+            return Err(KeyError::new(path, KeyErrorReason::EmptyFilePath));
+        }
+        if path.contains('\0') {
+            return Err(KeyError::new(path, KeyErrorReason::NulInFilePath));
+        }
+        return Ok(Self(Arc::from(path)));
     }
 }
 
@@ -127,9 +134,15 @@ fn is_identifier(name: &str) -> bool {
         && chars.all(|c| return c == '_' || c.is_ascii_alphanumeric() || !c.is_ascii());
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
 #[serde(try_from = "String")]
-pub struct Identifier(String);
+pub struct Identifier(Arc<str>);
+
+impl Serialize for Identifier {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        return serializer.serialize_str(&self.0);
+    }
+}
 
 impl Identifier {
     #[must_use]
@@ -145,7 +158,7 @@ impl FromStr for Identifier {
         if !is_identifier(name) {
             return Err(KeyError::new(name, KeyErrorReason::InvalidIdentifier));
         }
-        return Ok(Self(name.to_owned()));
+        return Ok(Self(Arc::from(name)));
     }
 }
 
@@ -163,9 +176,15 @@ impl fmt::Display for Identifier {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
 #[serde(try_from = "String")]
-pub struct QualifiedName(String);
+pub struct QualifiedName(Arc<str>);
+
+impl Serialize for QualifiedName {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        return serializer.serialize_str(&self.0);
+    }
+}
 
 impl QualifiedName {
     #[must_use]
@@ -181,7 +200,7 @@ impl FromStr for QualifiedName {
         if !name.split(NAMESPACE_SEPARATOR).all(is_identifier) {
             return Err(KeyError::new(name, KeyErrorReason::InvalidQualifiedName));
         }
-        return Ok(Self(name.to_owned()));
+        return Ok(Self(Arc::from(name)));
     }
 }
 
@@ -412,6 +431,27 @@ pub enum FunctionKey {
 }
 
 impl FunctionKey {
+    #[expect(
+        clippy::missing_errors_doc,
+        reason = "error conditions are carried by the precise error types, and the source has no comments"
+    )]
+    pub fn member(class: ClassRef, name: &str) -> Result<Self, KeyError> {
+        let hook = name
+            .rsplit_once(MEMBER_SEPARATOR)
+            .and_then(|(property, hook)| return hook_member(property, hook));
+        if let Some((property, hook)) = hook {
+            return Ok(Self::PropertyHook {
+                class,
+                property,
+                hook,
+            });
+        }
+        return Ok(Self::Method {
+            class,
+            method: name.parse()?,
+        });
+    }
+
     #[must_use]
     pub const fn file(&self) -> Option<&FilePath> {
         return match self {
@@ -448,13 +488,18 @@ impl FunctionKey {
     }
 }
 
-fn parse_hook(owner: &str, member: &str) -> Option<Result<FunctionKey, KeyError>> {
-    let hook = HookKind::parse(member)?;
-    let (class, property) = owner.rsplit_once(MEMBER_SEPARATOR)?;
+fn hook_member(property: &str, hook: &str) -> Option<(Identifier, HookKind)> {
+    let hook = HookKind::parse(hook)?;
     let property = property
         .strip_prefix(PROPERTY_SIGIL)?
         .parse::<Identifier>()
         .ok()?;
+    return Some((property, hook));
+}
+
+fn parse_hook(owner: &str, member: &str) -> Option<Result<FunctionKey, KeyError>> {
+    let (class, property) = owner.rsplit_once(MEMBER_SEPARATOR)?;
+    let (property, hook) = hook_member(property, member)?;
     return Some(class.parse().map(|class| {
         return FunctionKey::PropertyHook {
             class,

@@ -1,7 +1,7 @@
 use core::ptr::{self, NonNull};
 use std::{
-    collections::BTreeMap,
-    fs,
+    collections::{BTreeMap, HashMap},
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -89,6 +89,7 @@ pub(crate) fn configure() -> Request {
         settings: None,
         pattern: None,
         decisions: BTreeMap::new(),
+        directories: Directories::default(),
         problem: None,
     };
     let settings = [ini::COLLECT_PATHS, ini::EXCLUDE_PATHS, ini::EXCLUDE_PATTERN].map(ini::string);
@@ -145,27 +146,62 @@ enum Classified {
     Unresolvable,
 }
 
-fn resolve(path: &str) -> Option<(PathBuf, String)> {
-    let resolved = fs::canonicalize(path).ok()?;
-    let text = resolved.to_str()?.to_owned();
-    return Some((resolved, text));
+#[derive(Debug, Default)]
+pub(crate) struct Directories(HashMap<PathBuf, PathBuf>);
+
+impl Directories {
+    fn split(path: &str) -> Option<(&str, &str)> {
+        let (parent, name) = path.rsplit_once('/')?;
+        let usable = CASE == CaseSensitivity::Sensitive
+            && path.starts_with('/')
+            && !matches!(name, "" | "." | "..");
+        return usable.then_some((if parent.is_empty() { "/" } else { parent }, name));
+    }
+
+    fn canonicalize(&mut self, path: &str) -> io::Result<PathBuf> {
+        let Some((parent, name)) = Self::split(path) else {
+            return fs::canonicalize(path);
+        };
+        let candidate = if let Some(known) = self.0.get(Path::new(parent)) {
+            known.join(name)
+        } else {
+            let known = fs::canonicalize(parent)?;
+            let joined = known.join(name);
+            self.0.insert(PathBuf::from(parent), known);
+            joined
+        };
+        if fs::symlink_metadata(&candidate)?.file_type().is_symlink() {
+            return fs::canonicalize(&candidate);
+        }
+        return Ok(candidate);
+    }
+
+    fn resolve(&mut self, path: &str) -> Option<(PathBuf, String)> {
+        let resolved = self.canonicalize(path).ok()?;
+        let text = resolved.to_str()?.to_owned();
+        return Some((resolved, text));
+    }
 }
 
-fn classify(reported: &str) -> Classified {
+fn classify(reported: &str, directories: &mut Directories) -> Classified {
     if let Some(host) = eval_host(reported) {
-        return resolve(host).map_or(Classified::Unresolvable, |(host, _)| {
-            return Classified::Eval {
-                host,
-                report: reported.to_owned(),
-            };
-        });
+        return directories
+            .resolve(host)
+            .map_or(Classified::Unresolvable, |(host, _)| {
+                return Classified::Eval {
+                    host,
+                    report: reported.to_owned(),
+                };
+            });
     }
     if stream_scheme(reported).is_some() {
         return Classified::StreamWrapper;
     }
-    return resolve(reported).map_or(Classified::Unresolvable, |(path, report)| {
-        return Classified::Resolved { path, report };
-    });
+    return directories
+        .resolve(reported)
+        .map_or(Classified::Unresolvable, |(path, report)| {
+            return Classified::Resolved { path, report };
+        });
 }
 
 pub(crate) fn decide(reported: &[u8]) -> Verdict {
@@ -186,7 +222,15 @@ pub(crate) fn decide(reported: &[u8]) -> Verdict {
         Some(Err(verdict)) => return verdict,
         Some(Ok(pattern)) => pattern,
     };
-    let classified = classify(name);
+    let Some(classified) = with_engine(|engine| {
+        return engine
+            .request
+            .as_mut()
+            .map(|request| return classify(name, &mut request.directories));
+    })
+    .flatten() else {
+        return Verdict::Off;
+    };
     let subject = match &classified {
         Classified::Resolved { path, .. } | Classified::Eval { host: path, .. } => {
             Some(path.as_path())
@@ -221,9 +265,10 @@ pub(crate) fn decide(reported: &[u8]) -> Verdict {
         let verdict = match selection.decide(compiled, excluded) {
             Decision::Skipped(reason) => Verdict::Skip(reason),
             Decision::Selected => match &classified {
-                Classified::Resolved { report, .. } | Classified::Eval { report, .. } => {
-                    Verdict::Measure(engine.files.intern(report))
-                }
+                Classified::Resolved { report, .. } | Classified::Eval { report, .. } => engine
+                    .files
+                    .intern(report)
+                    .map_or(Verdict::Off, Verdict::Measure),
                 Classified::StreamWrapper | Classified::Unresolvable => Verdict::Off,
             },
         };
@@ -233,4 +278,76 @@ pub(crate) fn decide(reported: &[u8]) -> Verdict {
         return verdict;
     })
     .unwrap_or(Verdict::Off);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::symlink;
+
+    use super::*;
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let root =
+                std::env::temp_dir().join(format!("opcov-select-{name}-{}", std::process::id()));
+            fs::create_dir_all(root.join("real/src")).unwrap();
+            fs::write(root.join("real/src/a.php"), "<?php\n").unwrap();
+            symlink(root.join("real"), root.join("link")).unwrap();
+            symlink(root.join("real/src/a.php"), root.join("real/src/alias.php")).unwrap();
+            return Self(fs::canonicalize(root).unwrap());
+        }
+
+        fn path(&self, relative: &str) -> String {
+            return self.0.join(relative).to_str().unwrap().to_owned();
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    #[test]
+    fn resolution_matches_canonicalize_through_directory_links_and_dot_dot() {
+        let scratch = Scratch::new("links");
+        let mut directories = Directories::default();
+        for relative in [
+            "link/src/a.php",
+            "real/src/../src/a.php",
+            "link/src/alias.php",
+            "real/src/a.php",
+        ] {
+            let path = scratch.path(relative);
+            assert_eq!(
+                directories.canonicalize(&path).unwrap(),
+                fs::canonicalize(&path).unwrap(),
+                "{relative}"
+            );
+        }
+        assert_eq!(
+            directories
+                .canonicalize(&scratch.path("link/src/alias.php"))
+                .unwrap(),
+            scratch.0.join("real/src/a.php"),
+            "a symlinked file resolves to its target"
+        );
+    }
+
+    #[test]
+    fn a_missing_file_does_not_resolve_even_in_a_known_directory() {
+        let scratch = Scratch::new("missing");
+        let mut directories = Directories::default();
+        directories
+            .canonicalize(&scratch.path("real/src/a.php"))
+            .unwrap();
+        for missing in ["real/src/gone.php", "absent/a.php"] {
+            let error = directories
+                .canonicalize(&scratch.path(missing))
+                .unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::NotFound, "{missing}");
+        }
+    }
 }
