@@ -6,6 +6,16 @@
   }: let
     zts = php: php.override {ztsSupport = true;};
     clang = php: php.override {stdenv = pkgs.clangStdenv;};
+    debug = configureFlags: php:
+      (php.override {
+        packageOverrides = _: prev: {
+          extensions = lib.mapAttrs (_: extension: extension.overrideAttrs {doCheck = false;}) prev.extensions;
+        };
+      }).overrideAttrs (prev: {
+        configureFlags = prev.configureFlags ++ ["--enable-debug"] ++ configureFlags;
+        dontStrip = true;
+        separateDebugInfo = false;
+      });
   in {
     _module.args = {
       phpZts = zts;
@@ -29,6 +39,8 @@
         php84-call-vm = clang pkgs.php84;
         php85-tailcall-vm = clang pkgs.php85;
       };
+      phpDebug = debug [] pkgs.php85;
+      phpAsan = debug ["--enable-address-sanitizer" "--enable-undefined-sanitizer"] (clang (pkgs.php85.override {valgrindSupport = false;}));
     };
   };
 }

@@ -45,20 +45,23 @@
       fileset = lib.fileset.unions [../Cargo.toml ../justfile ../LICENSE ../tests/phpt ../crates/opcov-core/tests/golden];
     };
 
-    phpt = name: php: let
-      release = extension php [];
-      selftest = extension php ["engine-selftest"];
+    phptWith = env: name: php: let
+      release = (extension php []).overrideAttrs env;
+      selftest = (extension php ["engine-selftest"]).overrideAttrs env;
     in
-      pkgs.runCommand "opcov-phpt-${name}" (phptEnv php // {
-        OPCOV_CLI = lib.getExe opcov.cli;
-        nativeBuildInputs = [pkgs.just];
-      }) ''
+      pkgs.runCommand "opcov-phpt-${name}" (phptEnv php
+        // {
+          OPCOV_CLI = lib.getExe opcov.cli;
+          nativeBuildInputs = [pkgs.just];
+        }) ''
         cp -r --no-preserve=mode ${suite} source
         cd source
         just phpt-run ${selftest}/lib/php/extensions/opcov.so tests/phpt
         just phpt-run ${release}/lib/php/extensions/opcov.so tests/phpt/smoke
         touch "$out"
       '';
+
+    phpt = phptWith {};
 
     glibcBaseline = "2.34";
 
@@ -188,9 +191,11 @@
         })
         phpOfficialImages;
       rustupToolchain = lib.head (builtins.match "[0-9.]+-(nightly-[0-9]{4}-[0-9]{2}-[0-9]{2})" opcov.rustToolchain.version);
-      phptForPhpSrc = src: {
-        nts = phpt "php-src-nts" (phpFromSource src);
-        zts = phpt "php-src-zts" (phpZts (phpFromSource src));
+      phptForPhpSrc = src: let
+        phptUnreleased = phptWith {OPCOV_ALLOW_UNRELEASED_PHP = "1";};
+      in {
+        nts = phptUnreleased "php-src-nts" (phpFromSource src);
+        zts = phptUnreleased "php-src-zts" (phpZts (phpFromSource src));
       };
     };
 

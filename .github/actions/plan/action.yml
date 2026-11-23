@@ -1,0 +1,29 @@
+name: "plan"
+description: "Evaluate the workspace version, the rustup toolchain and the release image matrix from the flake"
+
+outputs:
+  version:
+    description: "The workspace version from Cargo.toml"
+    value: ${{ steps.plan.outputs.version }}
+  rust-toolchain:
+    description: "The flake's nightly as a rustup toolchain name"
+    value: ${{ steps.plan.outputs.rust-toolchain }}
+  images:
+    description: "The release image matrix as JSON: attr, tag, debian and alpine per PHP build"
+    value: ${{ steps.plan.outputs.images }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Evaluate the flake
+      id: plan
+      shell: bash
+      run: |
+        version="$(nix eval --raw .#opcov-cli.version)"
+        rust_toolchain="$(nix eval --raw .#legacyPackages.x86_64-linux.rustupToolchain)"
+        images="$(nix eval --json .#legacyPackages.x86_64-linux.releaseImages)"
+        {
+          echo "version=$version"
+          echo "rust-toolchain=$rust_toolchain"
+          echo "images=$images"
+        } >> "$GITHUB_OUTPUT"

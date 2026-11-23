@@ -36,3 +36,33 @@ jobs:
       - uses: ./.github/actions/setup-nix
       - name: Check the opcov/phpunit package
         run: nix develop -c just php-check
+
+  miri:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+      - name: Run opcov-core's tests under Miri
+        run: nix develop -c just miri
+
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      rust-toolchain: ${{ steps.plan.outputs.rust-toolchain }}
+      images: ${{ steps.plan.outputs.images }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+      - uses: ./.github/actions/plan
+        id: plan
+
+  musl:
+    needs: plan
+    uses: ./.github/workflows/musl.yml
+    with:
+      images: ${{ needs.plan.outputs.images }}
+      rust-toolchain: ${{ needs.plan.outputs.rust-toolchain }}

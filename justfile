@@ -36,6 +36,17 @@ test:
 build:
     cargo build --locked
 
+# Run opcov-core's tests under Miri with four proptest cases per property; the schema tests are skipped, since the third-party JSON Schema validator they drive is too slow under Miri.
+miri:
+    MIRIFLAGS=-Zmiri-disable-isolation PROPTEST_CASES=4 cargo miri test --package opcov-core --locked -- --skip schema::
+
+# Fuzz the opcov-core target `target` for `seconds` seconds from the checked-in seed corpus, which stays untouched; crashing inputs land in crates/opcov-core/fuzz/artifacts.
+[script]
+fuzz target seconds:
+    corpus="$(mktemp -d)"
+    trap 'rm -r "$corpus"' EXIT
+    cargo fuzz run --fuzz-dir crates/opcov-core/fuzz --target-dir "${CARGO_TARGET_DIR:-{{ justfile_directory() }}/target}/fuzz" "{{ target }}" "$corpus" "crates/opcov-core/fuzz/corpus/{{ target }}" -- -max_total_time={{ seconds }} -rss_limit_mb=2048
+
 # Build the extension with its engine self-test and the opcov CLI, and run the whole .phpt suite against php-config's PHP.
 [script]
 phpt:
@@ -92,4 +103,3 @@ php-check:
     mago lint
     mago fmt --check
     php vendor/bin/phpunit
-

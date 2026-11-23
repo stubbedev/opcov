@@ -1,0 +1,46 @@
+name: "sanitizers"
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sanitizers-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  asan-ubsan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+      - name: Run the .phpt suite with an AddressSanitizer build of the extension in an ASan and UBSan debug PHP 8.5
+        run: nix develop .#php85-asan -c just phpt
+
+  debug-valgrind:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+      - name: Run the .phpt suite in a debug PHP 8.5, where ZEND_DEBUG assertions and leak reports fail a test
+        run: nix develop .#php85-debug -c just phpt
+      - name: Run the .phpt suite under Valgrind's memcheck, where any leak fails a test
+        env:
+          TEST_PHP_ARGS: -m --show-mem
+        run: nix develop .#php85-debug -c just phpt

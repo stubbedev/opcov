@@ -10,6 +10,7 @@
   rustToolchain = (rust-overlay.lib.mkRustBin {} pkgs).selectLatestNightlyWith (toolchain:
     toolchain.default.override {
       extensions = [
+        "miri"
         "rust-analyzer"
         "rust-src"
         "rustc-codegen-cranelift-preview"
@@ -32,13 +33,21 @@
     PHP_RUN_TESTS = "${lib.getDev php.unwrapped}/lib/build/run-tests.php";
   };
 
+  extensionPath = extension: "${extension}/lib/php/extensions/${extension.extensionName}.so";
+
   phptEnv = php:
     phpEnv php
     // {
-      OPCOV_PCNTL_EXTENSION = "${php.extensions.pcntl}/lib/php/extensions/pcntl.so";
+      OPCOV_PCNTL_EXTENSION = extensionPath php.extensions.pcntl;
+    }
+    // lib.optionalAttrs (php.extensions ? opcache) {
+      OPCOV_OPCACHE_EXTENSION = extensionPath php.extensions.opcache;
     }
     // lib.optionalAttrs (!php.extensions.pcov.meta.broken) {
-      OPCOV_PCOV_EXTENSION = "${php.extensions.pcov}/lib/php/extensions/pcov.so";
+      OPCOV_PCOV_EXTENSION = extensionPath php.extensions.pcov;
+    }
+    // lib.optionalAttrs (!php.extensions.xdebug.meta.broken) {
+      OPCOV_XDEBUG_EXTENSION = extensionPath php.extensions.xdebug;
     };
 
   sources = lib.fileset.unions [

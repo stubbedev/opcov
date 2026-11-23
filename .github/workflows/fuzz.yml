@@ -1,0 +1,56 @@
+name: "fuzz"
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  targets:
+    runs-on: ubuntu-24.04
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+      - name: List the fuzz targets
+        id: targets
+        run: |
+          targets="$(nix shell --inputs-from . nixpkgs#taplo --command taplo get -f crates/opcov-core/fuzz/Cargo.toml -o json bin | jq -c 'map(.name)')"
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    needs: targets
+    name: fuzz ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.targets.outputs.targets) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+      - name: Fuzz ${{ matrix.target }} for five minutes
+        env:
+          TARGET: ${{ matrix.target }}
+        run: nix develop -c just fuzz "$TARGET" 300
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: crates/opcov-core/fuzz/artifacts/

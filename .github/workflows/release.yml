@@ -27,22 +27,18 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-nix
-      - name: Check the tag against Cargo.toml and CHANGELOG.md, and plan the matrices
+      - uses: ./.github/actions/plan
         id: plan
+      - name: Check the tag against Cargo.toml and CHANGELOG.md
         env:
           TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.plan.outputs.version }}
         run: |
-          version="$(nix eval --raw .#opcov-cli.version)"
-          if [ "$TAG" != "v$version" ]; then
-            echo "::error::tag $TAG does not match the workspace version $version in Cargo.toml"
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::error::tag $TAG does not match the workspace version $VERSION in Cargo.toml"
             exit 1
           fi
-          nix shell --inputs-from . nixpkgs#just --command just changelog "$version" > /dev/null
-          {
-            echo "version=$version"
-            echo "rust-toolchain=$(nix eval --raw .#legacyPackages.x86_64-linux.rustupToolchain)"
-            echo "images=$(nix eval --json .#legacyPackages.x86_64-linux.releaseImages)"
-          } >> "$GITHUB_OUTPUT"
+          nix shell --inputs-from . nixpkgs#just --command just changelog "$VERSION" > /dev/null
 
   nix:
     needs: plan
@@ -94,35 +90,10 @@ jobs:
 
   musl:
     needs: plan
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
-        image: ${{ fromJSON(needs.plan.outputs.images) }}
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Build, test and package the extension in ${{ matrix.image.alpine }}
-        env:
-          PHP_IMAGE: ${{ matrix.image.alpine }}
-          RUST_TOOLCHAIN: ${{ needs.plan.outputs.rust-toolchain }}
-        run: |
-          docker build --file docker/musl.Dockerfile \
-            --build-arg "PHP_IMAGE=$PHP_IMAGE" \
-            --build-arg "RUST_TOOLCHAIN=$RUST_TOOLCHAIN" \
-            --output type=local,dest=dist .
-      - name: Name the artifact
-        id: artifact
-        env:
-          PHP_IMAGE: ${{ matrix.image.alpine }}
-        run: echo "name=dist-musl-${{ runner.arch }}-${PHP_IMAGE//[:.]/-}" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ steps.artifact.outputs.name }}
-          path: dist/
-          if-no-files-found: error
+    uses: ./.github/workflows/musl.yml
+    with:
+      images: ${{ needs.plan.outputs.images }}
+      rust-toolchain: ${{ needs.plan.outputs.rust-toolchain }}
 
   images:
     needs: [plan, nix, musl]

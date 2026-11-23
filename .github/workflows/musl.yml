@@ -1,0 +1,53 @@
+name: "musl"
+
+on:
+  workflow_call:
+    inputs:
+      images:
+        description: "The release image matrix as JSON, from the plan action"
+        required: true
+        type: string
+      rust-toolchain:
+        description: "The rustup toolchain to build with, from the plan action"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: ${{ matrix.image.alpine }} on ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        image: ${{ fromJSON(inputs.images) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build, test and package the extension in ${{ matrix.image.alpine }}
+        env:
+          PHP_IMAGE: ${{ matrix.image.alpine }}
+          RUST_TOOLCHAIN: ${{ inputs.rust-toolchain }}
+        run: |
+          docker build --file docker/musl.Dockerfile \
+            --build-arg "PHP_IMAGE=$PHP_IMAGE" \
+            --build-arg "RUST_TOOLCHAIN=$RUST_TOOLCHAIN" \
+            --output type=local,dest=dist .
+      - name: Name the artifact
+        id: artifact
+        env:
+          PHP_IMAGE: ${{ matrix.image.alpine }}
+        run: echo "name=dist-musl-${{ runner.arch }}-${PHP_IMAGE//[:.]/-}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: dist/
+          if-no-files-found: error

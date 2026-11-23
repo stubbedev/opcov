@@ -29,14 +29,20 @@ rust-analyzer and rust-src, chosen by rust-overlay and pinned through
 `flake.lock`, so Dependabot moves it forward. There is no stable fallback and
 no MSRV; `Cargo.toml` declares no `rust-version`.
 
-Every dev tool comes from the flake: the toolchain with rust-analyzer, clippy
-and rustfmt, treefmt, cargo-nextest, cargo-shear, cargo-deny, bacon, sccache,
-just, jq, git, gh, mago, Composer, libclang and PHP with its headers. Enter it
+Every dev tool comes from the flake: the toolchain with rust-analyzer, clippy,
+rustfmt and Miri, treefmt, cargo-nextest, cargo-shear, cargo-deny, cargo-fuzz,
+bacon, sccache, just, jq, git, gh, mago, Composer, libclang and PHP with its
+headers. Enter it
 with `direnv allow` or `nix develop`.
 
 The default shell has PHP 8.5 NTS. Every PHP build of the matrix has its own
 shell, with `PHP_CONFIG`, php-src's `run-tests.php` (`PHP_RUN_TESTS`) and the
-pcntl and PCOV extensions the `.phpt` suite uses, all derived from that PHP:
+extensions the `.phpt` suite loads, all derived from that PHP:
+`OPCOV_PCNTL_EXTENSION` (pcntl), `OPCOV_OPCACHE_EXTENSION` (OPcache, set only
+for PHP 8.4, where it is a separate `opcache.so`; 8.5 and later build it in),
+and `OPCOV_PCOV_EXTENSION` and `OPCOV_XDEBUG_EXTENSION` wherever nixpkgs does
+not mark PCOV or Xdebug broken for that PHP. Tests that need an unset variable
+skip:
 
 ```sh
 nix develop .#php84 -c just phpt
@@ -45,7 +51,9 @@ nix develop .#php86-zts -c just phpt
 
 The shells are `php84`, `php84-zts`, `php85`, `php85-zts`, `php86`,
 `php86-zts`, and on Linux `php84-call-vm` (clang-built, CALL VM) and
-`php85-tailcall-vm` (clang-built, TAILCALL VM).
+`php85-tailcall-vm` (clang-built, TAILCALL VM). On x86_64 Linux, two more
+shells hold instrumented PHP 8.5 builds for the sanitizer jobs
+([below](#against-a-debug-php-src)): `php85-debug` and `php85-asan`.
 
 ### Fast iteration
 
@@ -108,8 +116,38 @@ the outcome spike. Release builds never contain them.
 
 A debug build of PHP enables the engine's `ZEND_DEBUG` assertions and reports
 leaked memory at shutdown, which catches misuse of engine structures that a
-release build tolerates. No Nix output builds one; build it from a php-src
-checkout of a supported version (8.4, 8.5 or 8.6) with php-src's own build:
+release build tolerates. On x86_64 Linux the flake has two (`nix/php.nix`),
+both PHP 8.5 NTS built with `--enable-debug` and unstripped, with their
+extensions' own php-src test suites switched off:
+
+- `php85-debug` (`phpDebug`): GCC, with Valgrind support, and `valgrind` in
+  the shell.
+- `php85-asan` (`phpAsan`): clang, with `--enable-address-sanitizer
+  --enable-undefined-sanitizer` and without Valgrind support (php-src refuses
+  both together). The shell builds the extension and the CLI with
+  `-Zsanitizer=address` and `-Zbuild-std` for the host target (with LLVM for
+  every crate, since Cranelift has no sanitizers), compiles the C shim with the
+  sanitizer flags php-src's configure adds, defines `ZEND_TRACK_ARENA_ALLOC`
+  for the shim and bindgen as PHP's ASan build does (it changes the inline
+  arena functions the shim calls), and sets `USE_ZEND_ALLOC=0`,
+  `ZEND_DONT_UNLOAD_MODULES=1`,
+  `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1`,
+  `UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1` and
+  `TEST_PHP_ARGS=--asan` for `run-tests.php`.
+
+```sh
+nix develop .#php85-debug -c just phpt
+nix develop .#php85-debug -c env TEST_PHP_ARGS="-m --show-mem" just phpt
+nix develop .#php85-asan -c just phpt
+```
+
+The second line runs every test under Valgrind's memcheck (`run-tests.php -m`);
+a test that leaks writes a `.mem` file, is reported as leaked and fails the
+run. Each of these builds PHP and its extensions from source, which takes a
+long time and several GB of memory; CI runs them (see [CI](#ci)).
+
+To build a debug PHP outside Nix, for another version (8.4, 8.5 or 8.6) or ZTS,
+use a php-src checkout and php-src's own build:
 
 ```sh
 git clone --branch PHP-8.5 https://github.com/php/php-src
@@ -138,7 +176,9 @@ a capped scope (see [Running tests locally](#running-tests-locally)).
 
 `nix/php-src.nix` builds a php-src revision with nixpkgs' (non-debug) PHP
 recipe and runs the `.phpt` suite against it; the nightly workflow
-(`.github/workflows/php-src-nightly.yml`) uses it on php-src `master`.
+(`.github/workflows/php-src-nightly.yml`) uses it on php-src `master`. Its
+extension builds set `OPCOV_ALLOW_UNRELEASED_PHP=1` (`phptForPhpSrc` in
+`nix/package.nix`), so `opcov-sys` accepts the unreleased PHP on `master`.
 
 ## Test layers
 
@@ -148,6 +188,9 @@ recipe and runs the `.phpt` suite against it; the nightly workflow
 | Lints | `just lint`, `just fmt-check`, `just deny`, `just shear` | clippy at the levels below, treefmt, the dependency policy, unused dependencies |
 | `.phpt` | `just phpt` | the extension against a real PHP, through php-src's `run-tests.php`: builds the extension with `engine-selftest` and the CLI, then runs `tests/phpt`. `tests/phpt/golden/cfg.phpt` checks that the CFG snapshots the extension builds match the golden fixtures |
 | One `.phpt` area | `just phpt-run <extension> <paths>` | for example `just phpt-run target/debug/libopcov_ext.so tests/phpt/outcomes` |
+| Miri | `just miri` | `opcov-core`'s tests under Miri (`-Zmiri-disable-isolation`, four proptest cases per property), without the `schema::` tests, whose third-party JSON Schema validator is too slow under Miri |
+| Fuzzing | `just fuzz <target> <seconds>` | the `cargo fuzz` targets in `crates/opcov-core/fuzz` (`cfg_classify`, `report_parse`, `report_merge`) from their seed corpus, with a 2 GB RSS limit; crashing inputs land in `crates/opcov-core/fuzz/artifacts/` |
+| Sanitizers | `nix develop .#php85-asan -c just phpt`, `nix develop .#php85-debug -c just phpt` | the `.phpt` suite under ASan and UBSan, in a debug PHP, and under Valgrind ([Against a debug php-src](#against-a-debug-php-src)) |
 | PHP package | `just php-check` | builds the extension, runs `composer install` in `php/phpunit` and its fixture projects (PHPUnit 12, PHPUnit 13, Pest 4), then `mago analyze`, `mago lint`, `mago fmt --check` and the package's unit and integration tests with `OPCOV_EXTENSION` set to the built extension |
 | Parity | `tools/measure/parity` | opcov against PCOV and Xdebug ([parity.md](parity.md)) |
 | Benchmarks | `tools/measure/bench` | wall time, RSS and report size against the other drivers ([benchmarks.md](benchmarks.md)) |
@@ -180,18 +223,27 @@ need it.
 
 ### CI
 
-`.github/workflows/ci.yml` runs `nix flake check` on every pull request and
-push to `main`, on x86_64 Linux, aarch64 Linux and arm64 macOS, plus the
-`php-package` job (`nix develop -c just php-check`; Composer needs the
-network, which the Nix sandbox lacks). The flake checks run treefmt's check,
-`just lint`, `just shear`, `just test` (nextest's `ci` profile),
-`just deny bans licenses sources` and, for every PHP build including the clang
-CALL and TAILCALL builds on Linux, the whole `.phpt` suite against the
-self-test build and `tests/phpt/smoke` against the release build.
-`.github/actions/setup-nix` restores the Nix store from the Actions cache.
-`.github/workflows/security.yml` runs CodeQL, Grype and
-`just deny advisories`, also nightly. Dependabot keeps crates, workflows and
-flake inputs current.
+Every workflow is in `.github/workflows/`; `.github/actions/setup-nix`
+installs Nix and restores the job's Nix store from the Actions cache, and
+`.github/actions/plan` evaluates the workspace version, the flake's nightly as
+a rustup toolchain name and the release image matrix. The job names are
+stable, so any of them can be made a required check.
+
+| Workflow | Trigger | Job | What it runs |
+|---|---|---|---|
+| `ci.yml` | every pull request, push to `main` | `flake-check` | `nix flake check` on x86_64 Linux, aarch64 Linux and arm64 macOS: treefmt's check, `just lint`, `just shear`, `just test` (nextest's `ci` profile), `just deny bans licenses sources` and, for every PHP build including the clang CALL and TAILCALL builds on Linux, the whole `.phpt` suite against the self-test build and `tests/phpt/smoke` against the release build |
+| | | `php-package` | `nix develop -c just php-check` (Composer needs the network, which the Nix sandbox lacks) |
+| | | `miri` | `nix develop -c just miri` |
+| | | `plan`, `musl` | the musl build: `musl.yml` for every release image |
+| `musl.yml` | called by `ci.yml` and `release.yml` | `build` | for every PHP image of the release matrix, on x86_64 and aarch64: `docker/musl.Dockerfile` in the official Alpine PHP image builds the extension with the flake's nightly, runs the whole `.phpt` suite against the self-test build and packages the release build as the musl archive |
+| `sanitizers.yml` | push to `main`, nightly, manual | `asan-ubsan` | `nix develop .#php85-asan -c just phpt` on x86_64 Linux |
+| | | `debug-valgrind` | on x86_64 Linux, `just phpt` in `php85-debug`, where a `ZEND_DEBUG` assertion or a leak report fails its test, then again under Valgrind (`TEST_PHP_ARGS="-m --show-mem"`), where any leak fails |
+| `fuzz.yml` | nightly, manual | `targets`, `fuzz` | every target listed in `crates/opcov-core/fuzz/Cargo.toml`, 300 s each with `just fuzz`; on failure the crashing inputs are uploaded as `fuzz-artifacts-<target>` |
+| `php-src-nightly.yml` | nightly, manual | `phpt`, `report` | the `.phpt` suite against php-src `master`, NTS and ZTS; a failure opens or comments on an issue |
+| `security.yml` | every pull request, push to `main`, nightly | | CodeQL, Grype, `just deny advisories` and, on pull requests, dependency review |
+| `release.yml` | `v*` tags | | checks the tag against `Cargo.toml` and `CHANGELOG.md`, builds and tests every release archive with Nix (`nix build .#release`) and on musl (`musl.yml`), pushes the Docker images and creates the GitHub release, with provenance attestations |
+
+Dependabot keeps crates, workflows and flake inputs current.
 
 ### Nix outputs
 
