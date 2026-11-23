@@ -71,9 +71,30 @@ pub struct LoopSite {
     pub test: LoopTest,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct OpSpan {
+    pub start: OpIndex,
+    pub end: OpIndex,
+}
+
+impl OpSpan {
+    #[must_use]
+    pub fn contains(self, op: OpIndex) -> bool {
+        return self.start <= op && op < self.end;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FramelessCall {
+    fallback: OpSpan,
+    frameless: OpSpan,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Plan {
     outcomes: Vec<OutcomeSite>,
+    twins: Vec<OutcomeSite>,
+    fallbacks: Vec<OpSpan>,
     loops: Vec<LoopSite>,
 }
 
@@ -142,6 +163,23 @@ struct Draft {
 }
 
 impl Draft {
+    const fn shape(&self) -> (EdgeKind, Option<Branch>) {
+        return match self.origin {
+            Origin::Edge { branch, .. } => (self.kind, Some(branch)),
+            Origin::FinallyEntry { .. } => (self.kind, None),
+        };
+    }
+
+    const fn site(&self, id: OutcomeId) -> OutcomeSite {
+        return OutcomeSite {
+            id,
+            site: self.site,
+            kind: self.kind,
+            line: self.line,
+            origin: self.origin,
+        };
+    }
+
     const fn order(&self) -> (OpIndex, BlockId, EdgeKind) {
         let to = match self.origin {
             Origin::Edge { to, .. } => to,
@@ -182,6 +220,84 @@ fn finally_draft(block: &Block) -> Option<Draft> {
     });
 }
 
+fn edges_from(function: &Function, from: BlockId) -> &[Edge] {
+    let edges = function.edges();
+    let first = edges.partition_point(|edge| return edge.from < from);
+    let rest = edges.get(first..).unwrap_or_default();
+    return rest
+        .get(..rest.partition_point(|edge| return edge.from == from))
+        .unwrap_or_default();
+}
+
+fn frameless_call(function: &Function, jump: &Block) -> Option<FramelessCall> {
+    let fallback = function.block(next_block(jump.id())?)?;
+    let frameless = edges_from(function, jump.id())
+        .iter()
+        .find(|edge| return edge.to != fallback.id())
+        .and_then(|edge| return function.block(edge.to))?;
+    let end_jump = function.block(BlockId::new(frameless.id().get().checked_sub(1)?))?;
+    if end_jump.id() < fallback.id() || end_jump.terminator() != Some(Opcode::Jmp) {
+        return None;
+    }
+    let [after] = edges_from(function, end_jump.id()) else {
+        return None;
+    };
+    let end = function.block(after.to)?.op_start();
+    if end <= frameless.op_start() {
+        return None;
+    }
+    return Some(FramelessCall {
+        fallback: OpSpan {
+            start: fallback.op_start(),
+            end: frameless.op_start(),
+        },
+        frameless: OpSpan {
+            start: frameless.op_start(),
+            end,
+        },
+    });
+}
+
+fn frameless_calls(function: &Function) -> Vec<FramelessCall> {
+    return function
+        .blocks()
+        .iter()
+        .filter(|block| return block.terminator() == Some(Opcode::JmpFrameless))
+        .filter_map(|block| return frameless_call(function, block))
+        .collect();
+}
+
+fn within(drafts: &[Draft], span: OpSpan) -> core::ops::Range<usize> {
+    let start = drafts.partition_point(|draft| return draft.site < span.start);
+    let end = drafts.partition_point(|draft| return draft.site < span.end);
+    return start..end.max(start);
+}
+
+fn twin_drafts(drafts: &[Draft], calls: &[FramelessCall]) -> Vec<Option<usize>> {
+    let mut twin = vec![None; drafts.len()];
+    for call in calls {
+        let fallback = within(drafts, call.fallback);
+        let frameless = within(drafts, call.frameless);
+        let shapes = |range: core::ops::Range<usize>| {
+            return drafts
+                .get(range)
+                .unwrap_or_default()
+                .iter()
+                .map(Draft::shape)
+                .collect::<Vec<_>>();
+        };
+        if shapes(fallback.clone()) != shapes(frameless.clone()) {
+            continue;
+        }
+        for (copy, original) in fallback.zip(frameless) {
+            if let Some(slot) = twin.get_mut(copy) {
+                *slot = Some(original);
+            }
+        }
+    }
+    return twin;
+}
+
 impl Plan {
     #[must_use]
     pub fn of(function: &Function) -> Self {
@@ -192,20 +308,33 @@ impl Plan {
             .chain(function.blocks().iter().filter_map(finally_draft))
             .collect();
         drafts.sort_by_key(Draft::order);
-        let outcomes: Vec<OutcomeSite> = (0..)
-            .zip(drafts)
-            .map(|(number, draft)| {
-                return OutcomeSite {
-                    id: OutcomeId::new(number),
-                    site: draft.site,
-                    kind: draft.kind,
-                    line: draft.line,
-                    origin: draft.origin,
-                };
+        let calls = frameless_calls(function);
+        let twin = twin_drafts(&drafts, &calls);
+        let mut ids: Vec<Option<OutcomeId>> = vec![None; drafts.len()];
+        let mut outcomes = Vec::with_capacity(drafts.len());
+        for ((draft, slot), copy) in drafts.iter().zip(&mut ids).zip(&twin) {
+            if copy.is_some() {
+                continue;
+            }
+            let Ok(number) = u32::try_from(outcomes.len()) else {
+                break;
+            };
+            let id = OutcomeId::new(number);
+            *slot = Some(id);
+            outcomes.push(draft.site(id));
+        }
+        let twins = drafts
+            .iter()
+            .zip(&twin)
+            .filter_map(|(draft, copy)| {
+                let id = ids.get((*copy)?).copied().flatten()?;
+                return Some(draft.site(id));
             })
             .collect();
         let mut plan = Self {
             outcomes,
+            twins,
+            fallbacks: calls.iter().map(|call| return call.fallback).collect(),
             loops: Vec::new(),
         };
         let incoming = Incoming::of(function);
@@ -231,6 +360,16 @@ impl Plan {
     #[must_use]
     pub fn outcomes(&self) -> &[OutcomeSite] {
         return &self.outcomes;
+    }
+
+    #[must_use]
+    pub fn twins(&self) -> &[OutcomeSite] {
+        return &self.twins;
+    }
+
+    #[must_use]
+    pub fn fallbacks(&self) -> &[OpSpan] {
+        return &self.fallbacks;
     }
 
     #[must_use]

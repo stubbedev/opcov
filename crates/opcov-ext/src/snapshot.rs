@@ -1,5 +1,5 @@
 use core::{fmt, slice};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 
 use opcov_core::cfg::{
     Analysis, BlockFlags, BlockId, BlockInput, ClassRef, FilePath, FunctionFlags, FunctionInput,
@@ -8,11 +8,12 @@ use opcov_core::cfg::{
 use opcov_sys::{
     OPCOV_ENGINE_VERSION_ID, ZEND_ACC_ANON_CLASS, ZEND_ACC_CLOSURE, ZEND_BB_CATCH, ZEND_BB_FINALLY,
     ZEND_BB_FINALLY_END, ZEND_BB_LOOP_HEADER, ZEND_BB_REACHABLE, ZEND_BB_RECV_ENTRY, ZEND_BB_START,
-    opcov_arena_create_caught, opcov_arena_destroy, opcov_build_cfg, zend_arena, zend_basic_block,
-    zend_cfg, zend_class_entry, zend_op, zend_op_array, zend_string,
+    ZEND_MODULE_API_NO, opcov_arena_create_caught, opcov_arena_destroy, opcov_build_cfg,
+    zend_arena, zend_basic_block, zend_cfg, zend_class_entry, zend_op, zend_op_array, zend_string,
 };
 
 use crate::{
+    engine::Map,
     guard::caught,
     lines::{Instr, LineBlock, OperandType},
     ordinals::Ordinals,
@@ -23,6 +24,11 @@ pub(crate) const PHP: PhpVersion = match PhpVersion::from_version_id(OPCOV_ENGIN
     Some(version) => version,
     None => panic!("opcov-sys reported an engine version that opcov-core does not model"),
 };
+
+const _: () = assert!(
+    PHP.module_api() == ZEND_MODULE_API_NO,
+    "opcov-core's module API number for this PHP differs from the engine's headers"
+);
 
 const ARENA_SIZE: usize = 64 * 1024;
 const PROTECTED_ENTRY: u32 =
@@ -92,7 +98,7 @@ fn line_span(start: u32, end: u32) -> Result<LineSpan, SnapshotFailure> {
 #[derive(Debug, Default)]
 pub(crate) struct Names {
     file: Option<(usize, FilePath)>,
-    classes: HashMap<usize, ClassRef>,
+    classes: Map<usize, ClassRef>,
 }
 
 impl Names {

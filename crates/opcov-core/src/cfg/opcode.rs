@@ -35,6 +35,27 @@ impl PhpVersion {
     }
 
     #[must_use]
+    pub const fn module_api(self) -> u32 {
+        return match self {
+            Self::Php84 => 20_240_924,
+            Self::Php85 => 20_250_925,
+            Self::Php86 => 20_261_112,
+        };
+    }
+
+    #[must_use]
+    pub const fn from_module_api(module_api: u32) -> Option<Self> {
+        let mut rest: &[Self] = &Self::ALL;
+        while let [version, tail @ ..] = rest {
+            if version.module_api() == module_api {
+                return Some(*version);
+            }
+            rest = tail;
+        }
+        return None;
+    }
+
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         return match self {
             Self::Php84 => "8.4",
@@ -706,5 +727,17 @@ mod tests {
             .map(|v| return serde_json::to_string(v).unwrap())
             .collect();
         assert_eq!(names, ["\"8.4\"", "\"8.5\"", "\"8.6\""], "version names");
+    }
+
+    #[test]
+    fn every_version_is_found_by_its_module_api_and_no_other() {
+        for version in PhpVersion::ALL {
+            assert_eq!(
+                PhpVersion::from_module_api(version.module_api()),
+                Some(version),
+                "{version}"
+            );
+        }
+        assert_eq!(PhpVersion::from_module_api(20_230_831), None, "PHP 8.3");
     }
 }

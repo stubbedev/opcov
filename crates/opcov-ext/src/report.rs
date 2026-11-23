@@ -1,9 +1,15 @@
+use core::{
+    num::NonZeroUsize,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use std::{
     collections::BTreeMap,
     ffi::CStr,
-    fmt,
+    fmt, fs,
     io::{self, Write},
+    panic,
     path::Path,
+    thread,
 };
 
 use opcov_core::{
@@ -20,37 +26,23 @@ use opcov_sys::{ZTS, opcov_php_version, zend_vm_kind};
 use crate::{
     VERSION,
     engine::{
-        AttributedTest, Covered, Engine, FileId, FileRecord, Files, FunctionId, FunctionRecord,
-        Source,
+        AttributedTest, Content, Covered, Engine, FileId, FileRecord, Files, Fingerprint,
+        FunctionId, FunctionRecord, Source,
     },
 };
 
 #[derive(Debug)]
 pub(crate) enum ReportError {
     Model(ModelError),
-    Key {
-        path: SourcePath,
-        error: KeyError,
-    },
-    SourceChanged {
-        path: String,
-        first: Sha256,
-        then: Sha256,
-    },
-    SourceUnreadable {
-        path: String,
-        reason: String,
-    },
-    SourceUnknown {
-        path: String,
-    },
+    Key { path: SourcePath, error: KeyError },
+    SourceChanged { path: String },
+    SourceUnreadable { path: String, reason: String },
+    SourceModified { path: String },
+    SourceUnknown { path: String },
     VmKind(i32),
     PhpVersion,
     NotConfigured,
-    LoopWithoutTest {
-        function: FunctionKey,
-        id: LoopId,
-    },
+    LoopWithoutTest { function: FunctionKey, id: LoopId },
     Io(io::Error),
 }
 
@@ -61,13 +53,17 @@ impl fmt::Display for ReportError {
             Self::Key { path, error } => {
                 write!(f, "{path} cannot name the functions of its entry: {error}")
             }
-            Self::SourceChanged { path, first, then } => write!(
+            Self::SourceChanged { path } => write!(
                 f,
-                "{path} was compiled from different sources in this process (sha256 {first}, then {then}), so no single sha256 describes its coverage"
+                "{path} was compiled from different sources in this process, so no single sha256 describes its coverage"
             ),
             Self::SourceUnreadable { path, reason } => {
                 write!(f, "the source of {path} could not be hashed: {reason}")
             }
+            Self::SourceModified { path } => write!(
+                f,
+                "{path} changed on disk after PHP compiled it, so the sha256 of the compiled source cannot be computed; keep measured files unchanged until the report is written"
+            ),
             Self::SourceUnknown { path } => {
                 write!(f, "opcov recorded no source for the measured file {path}")
             }
@@ -249,21 +245,72 @@ fn generator() -> Result<Generator, ReportError> {
     });
 }
 
-fn hashed(record: &FileRecord) -> Result<Option<Sha256>, ReportError> {
+fn compiled(record: &FileRecord) -> Result<Option<Content>, ReportError> {
     let path = || return record.path.clone();
     return match &record.source {
-        Some(Source::Hashed(hash)) => Ok(Some(*hash)),
-        Some(Source::Changed { first, then }) => Err(ReportError::SourceChanged {
-            path: path(),
-            first: *first,
-            then: *then,
-        }),
+        Some(Source::Compiled(content)) => Ok(Some(*content)),
+        Some(Source::Changed) => Err(ReportError::SourceChanged { path: path() }),
         Some(Source::Unreadable(reason)) => Err(ReportError::SourceUnreadable {
             path: path(),
             reason: reason.clone(),
         }),
         None => Ok(None),
     };
+}
+
+fn digest_file(path: &str, compiled: Fingerprint) -> Result<Sha256, ReportError> {
+    let content = fs::read(path).map_err(|error| {
+        return ReportError::SourceUnreadable {
+            path: path.to_owned(),
+            reason: format!("cannot read it to write the report: {error}"),
+        };
+    })?;
+    if Fingerprint::of(&content) != compiled {
+        return Err(ReportError::SourceModified {
+            path: path.to_owned(),
+        });
+    }
+    return Ok(Sha256::digest(&content));
+}
+
+fn digest(planned: &Planned<'_>) -> Result<Sha256, ReportError> {
+    return match planned.content {
+        Content::Text(sha256) => Ok(sha256),
+        Content::File(fingerprint) => digest_file(&planned.record.path, fingerprint),
+    };
+}
+
+fn digests(planned: &[Planned<'_>]) -> Result<Vec<Sha256>, ReportError> {
+    let workers = thread::available_parallelism()
+        .map_or(1, NonZeroUsize::get)
+        .min(planned.len());
+    let next = AtomicUsize::new(0);
+    let mut done = thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                return scope.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(file) = planned.get(index) else {
+                            return done;
+                        };
+                        done.push((index, digest(file)));
+                    }
+                });
+            })
+            .collect();
+        return handles
+            .into_iter()
+            .flat_map(|handle| {
+                return handle
+                    .join()
+                    .unwrap_or_else(|payload| panic::resume_unwind(payload));
+            })
+            .collect::<Vec<_>>();
+    });
+    done.sort_unstable_by_key(|&(index, _)| return index);
+    return done.into_iter().map(|(_, digest)| return digest).collect();
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -355,7 +402,7 @@ struct Planned<'e> {
     slot: usize,
     record: &'e FileRecord,
     key_file: FilePath,
-    sha256: Sha256,
+    content: Content,
 }
 
 fn batch_lengths(sizes: impl IntoIterator<Item = usize>, budget: usize) -> Vec<usize> {
@@ -406,7 +453,7 @@ impl Engine {
     ) -> Result<Vec<Planned<'e>>, ReportError> {
         let mut planned = Vec::new();
         for (slot, (_, record)) in self.files.iter().enumerate() {
-            let Some(sha256) = hashed(record)? else {
+            let Some(content) = compiled(record)? else {
                 let hit = counts.get(slot).is_some_and(|&count| return count > 0);
                 if record.lines.is_empty() && !hit {
                     continue;
@@ -427,7 +474,7 @@ impl Engine {
                 slot,
                 record,
                 key_file,
-                sha256,
+                content,
             });
         }
         planned.sort_unstable_by(|left, right| return left.path.cmp(&right.path));
@@ -452,6 +499,7 @@ impl Engine {
         };
         let counts = attributed.counts();
         let planned = self.plan(&paths, &counts)?;
+        let sha256s = digests(&planned)?;
         let header = Header {
             generator: generator()?,
             settings,
@@ -463,18 +511,19 @@ impl Engine {
             .iter()
             .map(|file| return counts.get(file.slot).copied().unwrap_or_default());
         let mut rest = planned.as_slice();
+        let mut sha256s = sha256s.into_iter();
         for length in batch_lengths(sizes, BATCH_HITS) {
             let (batch, remaining) = rest.split_at(length.min(rest.len()));
             rest = remaining;
             let buckets = attributed.gather(batch, &counts);
-            for (file, hits) in batch.iter().zip(buckets) {
+            for ((file, hits), sha256) in batch.iter().zip(buckets).zip(sha256s.by_ref()) {
                 let Entry { lines, functions } =
                     entry(&self.files, file.record, &file.key_file, &hits)?;
                 drop(hits);
                 writer.entry(
                     &file.path,
                     &FileCoverage {
-                        sha256: file.sha256,
+                        sha256,
                         lines,
                         functions,
                     },

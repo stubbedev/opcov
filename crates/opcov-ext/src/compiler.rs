@@ -1,4 +1,5 @@
 use core::{
+    cell::OnceCell,
     ffi::{c_char, c_int},
     ptr, slice,
 };
@@ -18,11 +19,14 @@ use opcov_sys::{
 
 use crate::{
     branches::{self, Layout},
-    engine::{Engine, FileId, FunctionRecord, OffReason, Reserved, Unit, Verdict, with_engine},
+    engine::{
+        Content, Engine, FileId, Fingerprint, FunctionRecord, OffReason, Reserved, Unit, Verdict,
+        with_engine,
+    },
     guard::{self, COLLECTION, EntryPoint, guard},
     lines,
     ordinals::Ordinals,
-    probes,
+    probes::{self, Opcodes},
     select::decide,
     snapshot::{self, Named, Names, PHP, Snapshot, SnapshotFailure},
     threads, zend,
@@ -109,6 +113,12 @@ unsafe fn resolved_name(handle: *const zend_file_handle) -> JumpTables {
     let (opened, filename) = unsafe { ((*handle).opened_path, (*handle).filename) };
     // SAFETY: an opened path is null or a live zend_string.
     if let Some(name) = unsafe { zend::bytes(opened) } {
+        return JumpTables::of(&decide(name));
+    }
+    // SAFETY: the handle's file name is null or a live zend_string.
+    if let Some(name) = unsafe { zend::bytes(filename) }
+        && name.starts_with(b"/")
+    {
         return JumpTables::of(&decide(name));
     }
     // SAFETY: reads the engine's resolver hook by value.
@@ -323,17 +333,22 @@ unsafe fn gather_class(
 impl Engine {
     unsafe fn reset_window(&self, start: usize) -> bool {
         let pending = self.scratch.op_arrays.get(start..).unwrap_or_default();
-        return threads::with_handler_table(|| {
-            probes::unregister();
-            for &op_array in pending {
+        let unshared = || {
+            return pending.iter().copied().filter(|&op_array| {
                 // SAFETY: gathered op arrays are live.
-                let opcodes = unsafe { (*op_array).opcodes };
-                if self.units.find(opcodes).is_none() {
-                    // SAFETY: as above; the user handlers are unregistered right now.
-                    unsafe { probes::reset_handlers(op_array) };
-                }
+                return self.units.find(unsafe { (*op_array).opcodes }).is_none();
+            });
+        };
+        let mut present = Opcodes::default();
+        for op_array in unshared() {
+            // SAFETY: as above.
+            unsafe { probes::opcodes_of(op_array, &mut present) };
+        }
+        return probes::with_real_handlers(present, || {
+            for op_array in unshared() {
+                // SAFETY: as above; opcov's user handlers are removed for every opcode they hold.
+                unsafe { probes::reset_handlers(op_array) };
             }
-            probes::register();
         })
         .is_some();
     }
@@ -367,7 +382,7 @@ impl Engine {
         let placement = if declarations_only {
             lines::Placement::default()
         } else {
-            lines::place(PHP, &instrs, &blocks)
+            lines::place(PHP, &instrs, &blocks, plan.fallbacks())
         };
         // SAFETY: the op array is live; the layout only reads its opcodes and try/catch table.
         let built = unsafe {
@@ -392,6 +407,7 @@ impl Engine {
                 analysis,
                 plan,
                 zero_possible,
+                text: OnceCell::new(),
             }),
         };
         let Some(function) = function else {
@@ -410,9 +426,12 @@ impl Engine {
             last,
             file,
             function,
+            ops: built.ops,
+            cursor: 0,
             probes: built.probes,
             sources: built.sources,
             owners: built.owners,
+            twins: built.twins,
             entries: built.entries,
             finals: built.finals,
             seen: vec![false; outcomes].into_boxed_slice(),
@@ -566,18 +585,27 @@ enum Compiled {
     String(*const zend_string),
 }
 
-unsafe fn compiled_bytes<'a>(compiled: Compiled) -> Option<&'a [u8]> {
-    return match compiled {
-        // SAFETY: the caller passes the live source string of the compilation.
-        Compiled::String(source) => unsafe { zend::bytes(source) },
-        Compiled::File(handle) => {
-            // SAFETY: the caller passes the live handle of the compilation; after the scanner read
-            // the file, `buf` holds its `len` bytes until the handle is destroyed.
-            let (buf, len) = unsafe { ((*handle).buf, (*handle).len) };
-            // SAFETY: as above.
-            (!buf.is_null()).then(|| return unsafe { slice::from_raw_parts(buf.cast::<u8>(), len) })
+unsafe fn compiled_content(compiled: Compiled, path: &str) -> Result<Content, String> {
+    let handle = match compiled {
+        Compiled::String(source) => {
+            // SAFETY: the caller passes the live source string of the compilation.
+            return unsafe { zend::bytes(source) }
+                .map(|text| return Content::Text(Sha256::digest(text)))
+                .ok_or_else(|| return format!("the compiled source of {path} is missing"));
         }
+        Compiled::File(handle) => handle,
     };
+    // SAFETY: the caller passes the live handle of the compilation; after the scanner read the
+    // file, `buf` holds its `len` bytes until the handle is destroyed.
+    let (buf, len) = unsafe { ((*handle).buf, (*handle).len) };
+    if buf.is_null() {
+        return fs::read(path)
+            .map(|bytes| return Content::File(Fingerprint::of(&bytes)))
+            .map_err(|error| return format!("cannot read {path}: {error}"));
+    }
+    // SAFETY: as above.
+    let bytes = unsafe { slice::from_raw_parts(buf.cast::<u8>(), len) };
+    return Ok(Content::File(Fingerprint::of(bytes)));
 }
 
 unsafe fn record_source(main: *const zend_op_array, compiled: Compiled) {
@@ -595,17 +623,10 @@ unsafe fn record_source(main: *const zend_op_array, compiled: Compiled) {
     .flatten()
     .unwrap_or_default();
     // SAFETY: forwarded from the caller.
-    let hash = unsafe { compiled_bytes(compiled) }.map_or_else(
-        || {
-            return fs::read(&path)
-                .map(|bytes| return Sha256::digest(&bytes))
-                .map_err(|error| return format!("cannot read {path}: {error}"));
-        },
-        |bytes| return Ok(Sha256::digest(bytes)),
-    );
+    let content = unsafe { compiled_content(compiled, &path) };
     with_engine(|engine| {
         if let Some(record) = engine.files.get_mut(file) {
-            record.compiled_from(hash);
+            record.compiled_from(content);
         }
     });
 }

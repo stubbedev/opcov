@@ -177,4 +177,78 @@ mod plan {
             assert_eq!(plan.outcome(*exit).unwrap().kind, EdgeKind::LoopExit);
         }
     }
+
+    fn frameless_coalesce() -> Plan {
+        use Opcode as O;
+        let mut unreachable = block(false, &[O::VerifyReturnType, O::Return], &[]);
+        unreachable.flags = BlockFlags::empty();
+        let analysis = Analysis::try_from(FunctionInput {
+            key: "N\\f".parse().unwrap(),
+            file: "/app/f.php".parse().unwrap(),
+            line_start: Line::new(3).unwrap(),
+            line_end: Line::new(3).unwrap(),
+            flags: FunctionFlags::empty(),
+            blocks: vec![
+                block(true, &[O::Recv, O::JmpFrameless], &[4, 1]),
+                block(
+                    false,
+                    &[O::InitNsFcallByName, O::SendValEx, O::Coalesce],
+                    &[3, 2],
+                ),
+                block(false, &[O::QmAssign], &[3]),
+                block(false, &[O::SendValEx, O::DoFcallByName, O::Jmp], &[7]),
+                block(false, &[O::Coalesce], &[6, 5]),
+                block(false, &[O::QmAssign], &[6]),
+                block(false, &[O::FramelessIcall2], &[7]),
+                block(false, &[O::VerifyReturnType, O::Return], &[]),
+                unreachable,
+            ],
+            loops: Vec::new(),
+        })
+        .unwrap();
+        return Plan::of(&analysis.function);
+    }
+
+    #[test]
+    fn the_fallback_copy_of_a_frameless_call_records_into_the_frameless_outcomes() {
+        let plan = frameless_coalesce();
+        let planned: Vec<_> = plan
+            .outcomes()
+            .iter()
+            .map(|outcome| return (outcome.id.get(), outcome.site.get(), outcome.kind))
+            .collect();
+        assert_eq!(
+            planned,
+            [
+                (0, 1, EdgeKind::Engine),
+                (1, 1, EdgeKind::Engine),
+                (2, 9, EdgeKind::CoalesceFallback),
+                (3, 9, EdgeKind::CoalesceValue)
+            ],
+            "only the frameless copy's coalesce is an outcome"
+        );
+        let twins: Vec<_> = plan
+            .twins()
+            .iter()
+            .map(|twin| return (twin.id.get(), twin.site.get(), twin.kind))
+            .collect();
+        assert_eq!(
+            twins,
+            [
+                (2, 4, EdgeKind::CoalesceFallback),
+                (3, 4, EdgeKind::CoalesceValue)
+            ],
+            "the fallback copy's coalesce records the same outcomes"
+        );
+        let fallbacks: Vec<_> = plan
+            .fallbacks()
+            .iter()
+            .map(|span| return (span.start.get(), span.end.get()))
+            .collect();
+        assert_eq!(
+            fallbacks,
+            [(2, 9)],
+            "the fallback copy spans the namespaced call"
+        );
+    }
 }

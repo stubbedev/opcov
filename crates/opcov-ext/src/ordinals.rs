@@ -1,20 +1,19 @@
 use core::slice;
-use std::collections::HashMap;
 
 use opcov_core::cfg::Opcode;
 use opcov_sys::{ZEND_ACC_ANON_CLASS, ZEND_ACC_CLOSURE, zend_class_entry, zend_op, zend_op_array};
 
-use crate::{snapshot::PHP, zend};
+use crate::{engine::Map, snapshot::PHP, zend};
 
 type Group = (Vec<u8>, u32, u32);
 
 #[derive(Debug, Default)]
 pub(crate) struct Ordinals {
-    closures: HashMap<usize, u32>,
-    classes: HashMap<usize, u32>,
+    closures: Map<usize, u32>,
+    classes: Map<usize, u32>,
 }
 
-fn assign(next: &mut HashMap<Group, u32>, group: Group) -> u32 {
+fn assign(next: &mut Map<Group, u32>, group: Group) -> u32 {
     let slot = next.entry(group).or_insert(0);
     let ordinal = *slot;
     *slot = slot.saturating_add(1);
@@ -93,8 +92,8 @@ unsafe fn same_closure(left: *const zend_op_array, right: *const zend_op_array) 
         .all(|(left, right)| return same_op(left, right));
 }
 
-unsafe fn frameless_twins(op_arrays: &[*mut zend_op_array]) -> HashMap<usize, usize> {
-    let mut twins = HashMap::new();
+unsafe fn frameless_twins(op_arrays: &[*mut zend_op_array]) -> Map<usize, usize> {
+    let mut twins = Map::default();
     for &parent in op_arrays {
         // SAFETY: the caller passes live, compiled op arrays.
         let array = unsafe { &*parent };
@@ -128,7 +127,7 @@ unsafe fn frameless_twins(op_arrays: &[*mut zend_op_array]) -> HashMap<usize, us
 impl Ordinals {
     pub(crate) unsafe fn rank(op_arrays: &[*mut zend_op_array]) -> Self {
         let mut ordinals = Self::default();
-        let mut next_closure: HashMap<Group, u32> = HashMap::new();
+        let mut next_closure: Map<Group, u32> = Map::default();
         let mut anonymous: Vec<(u32, usize, Group)> = Vec::new();
         // SAFETY: forwarded from the caller.
         let twins = unsafe { frameless_twins(op_arrays) };
@@ -176,7 +175,7 @@ impl Ordinals {
             ));
         }
         anonymous.sort_unstable_by_key(|&(counter, _, _)| return counter);
-        let mut next_class: HashMap<Group, u32> = HashMap::new();
+        let mut next_class: Map<Group, u32> = Map::default();
         for (_, class, group) in anonymous {
             let ordinal = assign(&mut next_class, group);
             ordinals.classes.insert(class, ordinal);

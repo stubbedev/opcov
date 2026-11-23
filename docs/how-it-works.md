@@ -81,15 +81,29 @@ sequenceDiagram
     O->>O: decide selection from opened_path or zend_resolve_path
     O->>P: compile, with ZEND_COMPILE_NO_JUMPTABLES if selected
     P-->>O: op array (pass_two gave every opcode the probe label)
-    O->>O: hash the compiled bytes (sha256)
+    O->>O: fingerprint the compiled bytes
     O->>O: gather main code, closures, new functions, methods, property hooks
     O->>O: unregister handlers, set real handlers, register again
     O->>O: per function: CFG snapshot, plan, place probes
     O-->>VM: op array
 ```
 
+- **Source identity.** The report records the SHA-256 of every measured
+  file as PHP compiled it. SHA-256 is slow on CPUs without SHA extensions
+  (about 40 % of opcov's compile-time cost when everything is selected), so
+  the compile hook keeps only a 64-bit fingerprint (foldhash) of the bytes
+  PHP read. `write_report()` reads every measured file again on a pool of
+  worker threads that lives only inside the call (no thread exists across
+  `pcntl_fork()`), checks the fingerprint and computes the SHA-256; the
+  output is the same for any number of workers. The trade-off: a file
+  changed or removed on disk after it was compiled fails the report with an
+  error naming it, instead of being hashed from bytes opcov would otherwise
+  have to keep for every file. A file compiled again from different bytes
+  in one process fails the same way. `eval()`'d code has no file; its
+  string is hashed when it is compiled.
 - **Selection** is decided once per resolved file name and cached for the
-  process. An unselected file is tagged "no probes" in the reserved slot and
+  process. An absolute file name is resolved by opcov itself (below);
+  only a relative one goes through `zend_resolve_path` first. An unselected file is tagged "no probes" in the reserved slot and
   keeps its real handlers and jump tables: it runs exactly as without opcov.
   Resolving a name canonicalizes its directory once per process and then
   costs one `lstat` per file (a symlinked file is resolved in full); on a
@@ -100,9 +114,18 @@ sequenceDiagram
   decision is needed before compilation, hence the path resolution.
 - **Real handlers.** `pass_two()` gives every opcode of a newly compiled op
   array the probe label, because opcov's handlers are registered. After
-  compilation opcov unregisters them, calls `zend_vm_set_opcode_handler()` on
-  every opcode of the new op arrays to get the real handlers, and registers
-  again.
+  compilation opcov removes its handler for the opcodes those op arrays
+  contain (and only those), calls `zend_vm_set_opcode_handler()` on every
+  opcode of the new op arrays to get the real handlers, and registers again.
+  Keeping the handlers unregistered while PHP compiles, which would make the
+  reset unnecessary, is not safe: user code can run in the middle of
+  `zend_compile_file` (a user error handler for a compile-time deprecation,
+  a garbage-collection run that calls destructors, in PHP 8.5+ the
+  destructor of a freed fatal-error backtrace), and a probe that fires while
+  no handler is registered calls a null handler. Unregistering only around
+  `pass_two()` has no hook at its end, and every re-registration point
+  (error observer, `gc_collect_cycles`, exception hook) would have to be
+  proven to precede all of these paths in every supported PHP version.
 - **CFG snapshot.** For each function, opcov runs the engine's own
   `zend_build_cfg`, `zend_cfg_build_predecessors`,
   `zend_cfg_compute_dominators_tree` and `zend_cfg_identify_loops` in a
@@ -118,13 +141,30 @@ sequenceDiagram
   header), in one place shared by the extension, the report and
   `opcov-syntax`.
 - **Probes** are placed: the label is written into each probed opcode. A
-  unit keeps its probes sorted by opcode (32 bytes each) and finds the probe
-  of a firing opcode by binary search; the rarer loop-entry and finally
-  roles live in small side tables of the unit.
+  unit keeps the opcode indexes of its probes in one sorted array of 4-byte
+  entries and the probes (24 bytes each) in a parallel array. A firing
+  opcode is looked up first right after the unit's last probe that fired
+  (code mostly runs forward), then by binary search, which for a typical
+  unit stays within a cache line or two;
+  the rarer loop-entry and finally roles live in small side tables of the
+  unit.
 
 Every step is linear in the size of the function: edges, outcomes and loops
 are looked up through sorted indexes, never by scanning the whole function per
 item. [scale.md](scale.md#engine) has the measurements.
+
+**Frameless calls.** An unqualified call of a frameless internal function
+inside a namespace (`max($a, $x ?? 1)` in `namespace App`) compiles its
+arguments twice: once for the namespaced call `App\max()`, the fallback
+copy that runs only when such a function exists at run time, and once for
+the frameless call of the global function. `Plan` recognizes the two copies
+from the `JMP_FRAMELESS` structure and, when their outcomes match one to
+one, numbers only the frameless copy's outcomes; the fallback copy's
+branches are probed as twins that record the same outcome ids, so the
+report shows one set of outcomes whichever copy runs. A line that only the
+fallback copy has (an argument on its own line that the frameless call
+takes as an operand) is not executable, and the fallback copy probes only
+lines the rest of the function has too.
 
 `eval()`'d code goes through `zend_compile_string` the same way and is measured
 when the file that called `eval()` is selected.
@@ -269,7 +309,10 @@ stateDiagram-v2
 
 Hits are not stored per line in a table. Each fired probe appends a
 `(unit, hit)` reference to a list: hits while collecting, **strays** while not.
-`stop()` builds the result arrays from the list; `reset()` walks the list and
+While collecting it also appends the covered item (file and line, or function
+and outcome), read from the unit and probe the callback has just touched, so
+that `stop()` does not visit them again. `stop()` sorts and deduplicates
+those items as packed 128-bit keys and builds the result arrays from them; `reset()` walks the list and
 re-arms exactly those probes. Its cost is proportional to the probes that
 fired, not to the probes installed (`tests/phpt/units/reset-cost.phpt`:
 100,000 lines installed, a handful fired). `start()` re-arms the strays, so

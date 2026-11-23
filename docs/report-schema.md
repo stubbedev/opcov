@@ -102,7 +102,7 @@ array and fits in an unsigned 32-bit integer.
 
 | Member | Type | Meaning |
 |---|---|---|
-| `sha256` | string | SHA-256 of the measured source as PHP compiled it, 64 lowercase hex digits, so a report never applies to a different version of the file. |
+| `sha256` | string | SHA-256 of the measured source as PHP compiled it, 64 lowercase hex digits, so a report never applies to a different version of the file. The extension computes it when it writes the report, not while compiling: at compile time it keeps only a 64-bit fingerprint of the compiled bytes, and `write_report()` reads each file again, checks that the fingerprint still matches and hashes it. A measured file changed or removed on disk between compilation and `write_report()` therefore fails the report with an error naming it; code compiled from a string (`eval()`) is hashed when it is compiled. |
 | `lines` | object | Executable lines, keyed by line number (a decimal string without leading zeros), each mapped to the hit list of the tests that executed it. |
 | `functions` | object | Functions of the file, keyed by their stable function key (see below). Keys are parsed into opcov's typed function key, so a malformed key is rejected. |
 

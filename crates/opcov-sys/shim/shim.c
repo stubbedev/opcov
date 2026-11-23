@@ -230,6 +230,24 @@ bool opcov_add_index_zval(zval *array, zend_ulong index, zval *value)
 	OPCOV_TRY(add_index_zval(array, index, value));
 }
 
+bool opcov_add_index_trues(zval *array, const uint32_t *indexes, size_t count)
+{
+	OPCOV_TRY(
+		for (size_t i = 0; i < count; i++) {
+			add_index_bool(array, indexes[i], true);
+		});
+}
+
+bool opcov_add_named_trues(zval *array, char prefix, const uint32_t *numbers, size_t count)
+{
+	OPCOV_TRY(
+		char key[16];
+		for (size_t i = 0; i < count; i++) {
+			int len = snprintf(key, sizeof(key), "%c%u", prefix, (unsigned) numbers[i]);
+			add_assoc_bool_ex(array, key, (size_t) len, true);
+		});
+}
+
 bool opcov_add_next_index_zval(zval *array, zval *value)
 {
 	OPCOV_TRY(add_next_index_zval(array, value));

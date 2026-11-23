@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use opcov_core::cfg::{Line, LoopShape};
 use opcov_core::filter::{
-    CaseSensitivity, CompiledFile, Decision, Selection, SelectionConfig, SkipReason,
+    CaseSensitivity, CompiledFile, Decision, Selection, SkipReason, UnresolvedSelection,
 };
 use opcov_core::kind::EdgeKind;
 use opcov_core::report::{
@@ -23,15 +23,7 @@ use crate::source;
 use crate::stream;
 use crate::view::{is_nested, location};
 
-const CASE: CaseSensitivity = if cfg!(target_os = "macos") {
-    CaseSensitivity::Insensitive
-} else {
-    CaseSensitivity::Sensitive
-};
-
 const PHP_EXTENSION: &str = "php";
-const COLLECT_LISTFILE: &str = "collect_paths";
-const EXCLUDE_LISTFILE: &str = "exclude_paths";
 
 #[derive(Debug, Serialize)]
 pub(crate) struct OutcomeFinding {
@@ -374,38 +366,20 @@ fn evaluate_file<'r>(
 }
 
 fn selection(settings: &Settings, base: &Path) -> Result<Selection, Failure> {
-    let entries = |listfile: &Path| {
-        let configured = if listfile == Path::new(COLLECT_LISTFILE) {
-            &settings.collect_paths
-        } else if listfile == Path::new(EXCLUDE_LISTFILE) {
-            &settings.exclude_paths
-        } else {
-            return Err(io::Error::other(format!(
-                "the report names no setting {}",
-                listfile.display()
-            )));
-        };
-        return Ok(configured
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .join("\n"));
-    };
-    let exclude = if settings.exclude_paths.is_empty() {
-        String::new()
-    } else {
-        format!("@{EXCLUDE_LISTFILE}")
-    };
-    return SelectionConfig::parse(&format!("@{COLLECT_LISTFILE}"), &exclude, entries)
-        .and_then(|unresolved| {
-            return unresolved.resolve(|entry| return fs::canonicalize(base.join(entry)), CASE);
-        })
-        .map_err(|error| {
-            return Failure::failed(format!(
-                "cannot rebuild the report's file selection relative to {}: {error}",
-                base.display()
-            ));
-        });
+    return UnresolvedSelection::from_entries(
+        settings.collect_paths.iter().cloned(),
+        settings.exclude_paths.iter().cloned(),
+    )
+    .resolve(
+        |entry| return fs::canonicalize(base.join(entry)),
+        CaseSensitivity::HOST,
+    )
+    .map_err(|error| {
+        return Failure::failed(format!(
+            "cannot rebuild the report's file selection relative to {}: {error}",
+            base.display()
+        ));
+    });
 }
 
 fn canonical(disk: &Path) -> Result<Option<PathBuf>, Failure> {

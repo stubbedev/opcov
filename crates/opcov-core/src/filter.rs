@@ -37,6 +37,14 @@ pub enum CaseSensitivity {
     Insensitive,
 }
 
+impl CaseSensitivity {
+    pub const HOST: Self = if cfg!(target_os = "macos") {
+        Self::Insensitive
+    } else {
+        Self::Sensitive
+    };
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectionConfig;
 
@@ -101,6 +109,17 @@ pub struct UnresolvedSelection {
 }
 
 impl UnresolvedSelection {
+    #[must_use]
+    pub fn from_entries(
+        collect: impl IntoIterator<Item = String>,
+        exclude: impl IntoIterator<Item = String>,
+    ) -> Self {
+        return Self {
+            collect: collect.into_iter().collect(),
+            exclude: exclude.into_iter().collect(),
+        };
+    }
+
     pub fn entries(&self) -> impl Iterator<Item = &Path> {
         return self.collect.iter().chain(&self.exclude).map(Path::new);
     }

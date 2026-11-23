@@ -1,7 +1,5 @@
-use std::collections::HashMap;
-
 use opcov_core::{
-    cfg::{BlockId, Branch, Function, LoopShape, LoopTest, Opcode, Origin, Plan},
+    cfg::{BlockId, Branch, Function, LoopShape, LoopTest, Opcode, Origin, OutcomeSite, Plan},
     report::OutcomeId,
 };
 use opcov_sys::{
@@ -12,8 +10,8 @@ use opcov_sys::{
 
 use crate::{
     engine::{
-        Engine, FinallyEntry, FinallyProbe, FiredRef, Handler, Hit, LoopEntry, Probe, Role, Unit,
-        UnitId,
+        Engine, FinallyEntry, FinallyProbe, FiredRef, Handler, Hit, LoopEntry, Map, Probe, Role,
+        Unit, UnitId,
     },
     lines::{Instr, ProbeSite},
 };
@@ -120,7 +118,7 @@ pub(crate) struct Pending {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct Activations(HashMap<(usize, UnitId, u32), bool>);
+pub(crate) struct Activations(Map<(usize, UnitId, u32), bool>);
 
 impl Activations {
     pub(crate) fn clear(&mut self) {
@@ -178,7 +176,7 @@ pub(crate) fn zero_possible(
 #[derive(Debug)]
 struct Slots {
     index: Vec<u32>,
-    probes: Vec<Probe>,
+    probes: Vec<(u32, Probe)>,
     opcodes: *mut zend_op,
 }
 
@@ -199,20 +197,24 @@ impl Slots {
             // handler is the real one the reset installed.
             let handler = unsafe { Handler::of(self.opcodes.wrapping_add(op)) };
             self.probes
-                .push(Probe::new(u32::try_from(op).ok()?, handler));
+                .push((u32::try_from(op).ok()?, Probe::new(handler)));
             *entry = number;
         }
-        return self.probes.get_mut(position(entry.checked_sub(1)?));
+        return self
+            .probes
+            .get_mut(position(entry.checked_sub(1)?))
+            .map(|(_, probe)| return probe);
     }
 
-    fn finish(mut self) -> (ProbeIndex, Vec<Probe>) {
-        self.probes.sort_unstable_by_key(|probe| return probe.op);
-        for (number, probe) in (1..).zip(&self.probes) {
-            if let Some(entry) = self.index.get_mut(probe.offset()) {
+    fn finish(mut self) -> (ProbeIndex, Vec<u32>, Vec<Probe>) {
+        self.probes.sort_unstable_by_key(|&(op, _)| return op);
+        for (number, &(op, _)) in (1..).zip(&self.probes) {
+            if let Some(entry) = self.index.get_mut(position(op)) {
                 *entry = number;
             }
         }
-        return (ProbeIndex(self.index), self.probes);
+        let (ops, probes) = self.probes.into_iter().unzip();
+        return (ProbeIndex(self.index), ops, probes);
     }
 }
 
@@ -238,9 +240,11 @@ struct Draft {
 }
 
 pub(crate) struct Built {
+    pub(crate) ops: Box<[u32]>,
     pub(crate) probes: Box<[Probe]>,
     pub(crate) sources: Box<[SourceProbe]>,
     pub(crate) owners: Box<[Option<Owner>]>,
+    pub(crate) twins: Box<[(u32, u32)]>,
     pub(crate) entries: Box<[LoopEntry]>,
     pub(crate) finals: Box<[FinallyProbe]>,
     pub(crate) loops: Box<[LoopState]>,
@@ -264,6 +268,20 @@ fn position(number: u32) -> usize {
 fn set_owner(owners: &mut [Option<Owner>], outcome: u32, owner: Owner) {
     if let Some(slot) = owners.get_mut(position(outcome)) {
         *slot = Some(owner);
+    }
+}
+
+fn add_source_owner(
+    owners: &mut [Option<Owner>],
+    twins: &mut Vec<(u32, u32)>,
+    outcome: u32,
+    source: u32,
+) {
+    match owners.get(position(outcome)) {
+        Some(Some(Owner::Source(_))) => twins.push((outcome, source)),
+        Some(Some(Owner::Finally(_)) | None) | None => {
+            set_owner(owners, outcome, Owner::Source(source));
+        }
     }
 }
 
@@ -353,7 +371,20 @@ impl Layout<'_> {
     unsafe fn drafts(&self, slots: &mut Slots) -> (Vec<Draft>, Vec<(u32, usize)>) {
         let mut grouped: Vec<(BlockId, Vec<Target>)> = Vec::new();
         let mut finals = Vec::new();
-        for outcome in self.plan.outcomes() {
+        let mut planned: Vec<&OutcomeSite> = self
+            .plan
+            .outcomes()
+            .iter()
+            .chain(self.plan.twins())
+            .collect();
+        planned.sort_by_key(|outcome| {
+            let to = match outcome.origin {
+                Origin::Edge { to, .. } => to,
+                Origin::FinallyEntry { block } => block,
+            };
+            return (outcome.site, to, outcome.kind);
+        });
+        for outcome in planned {
             let number = outcome.id.get();
             match outcome.origin {
                 Origin::Edge { from, to, branch } => {
@@ -542,8 +573,9 @@ impl Layout<'_> {
         // SAFETY: forwarded from the caller.
         let (drafts, finals) = unsafe { self.drafts(&mut slots) };
         let entry_ops = self.entries(&mut slots);
-        let (index, mut probes) = slots.finish();
+        let (index, ops, mut probes) = slots.finish();
         let mut owners = vec![None; self.plan.outcomes().len()];
+        let mut twins = Vec::new();
         let mut sources = Vec::with_capacity(drafts.len());
         for draft in drafts {
             let Ok(number) = u32::try_from(sources.len()) else {
@@ -553,7 +585,7 @@ impl Layout<'_> {
                 continue;
             };
             for successor in &source.successors {
-                set_owner(&mut owners, successor.outcome, Owner::Source(number));
+                add_source_owner(&mut owners, &mut twins, successor.outcome, number);
             }
             if let Some(slot) = get_mut(&mut probes, source.probe) {
                 slot.source = Some(number);
@@ -571,10 +603,13 @@ impl Layout<'_> {
             .collect();
         entries.sort_unstable_by_key(|entry| return (entry.probe, entry.looped));
         entries.dedup();
+        twins.sort_unstable();
         return Built {
+            ops: ops.into_boxed_slice(),
             probes: probes.into_boxed_slice(),
             sources: sources.into_boxed_slice(),
             owners: owners.into_boxed_slice(),
+            twins: twins.into_boxed_slice(),
             entries: entries.into_boxed_slice(),
             finals,
             loops,
@@ -788,6 +823,17 @@ impl Unit {
                 if let Some(seen) = get_mut(&mut self.seen, outcome) {
                     *seen = false;
                 }
+                let first = self
+                    .twins
+                    .partition_point(|&(owned, _)| return owned < outcome);
+                let twins = self.twins.get(first..).unwrap_or_default();
+                let count = twins.partition_point(|&(owned, _)| return owned == outcome);
+                for index in first..first.saturating_add(count) {
+                    if let Some(&(_, source)) = self.twins.get(index) {
+                        // SAFETY: forwarded from the caller.
+                        unsafe { self.arm_source(source, label) };
+                    }
+                }
                 match get(&self.owners, outcome).copied().flatten() {
                     // SAFETY: forwarded from the caller.
                     Some(Owner::Source(source)) => unsafe { self.arm_source(source, label) },
@@ -886,6 +932,7 @@ impl Engine {
         };
         let Unit {
             opcodes,
+            ops,
             probes,
             sources,
             ..
@@ -894,7 +941,9 @@ impl Engine {
             return;
         };
         for successor in &source.successors {
-            let Some(slot) = get_mut(probes, successor.probe) else {
+            let (Some(slot), Some(&op)) =
+                (get_mut(probes, successor.probe), get(ops, successor.probe))
+            else {
                 continue;
             };
             let installed = if let Some(label) = label {
@@ -914,7 +963,7 @@ impl Engine {
             };
             if let Some(opcodes) = *opcodes {
                 // SAFETY: the unit is alive, so its opcodes are; the probe lies below `last`.
-                unsafe { installed.install(opcodes.wrapping_add(slot.offset())) };
+                unsafe { installed.install(opcodes.wrapping_add(position(op))) };
             }
         }
     }
@@ -1139,12 +1188,10 @@ impl Engine {
         let Some(label) = self.label else {
             return After::Restored;
         };
-        let Some((armed, op, source)) = self
-            .units
-            .get(id)
-            .and_then(|unit| return unit.probes.get(probe))
-            .map(|slot| return (slot.armed, slot.offset(), slot.source))
-        else {
+        let Some((armed, op, source)) = self.units.get(id).and_then(|unit| {
+            let slot = unit.probes.get(probe)?;
+            return Some((slot.armed, unit.op(probe)?, slot.source));
+        }) else {
             return After::Restored;
         };
         let Ok(number) = u32::try_from(probe) else {

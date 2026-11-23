@@ -1,6 +1,6 @@
 use core::ptr::{self, NonNull};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fs, io,
     path::{Path, PathBuf},
 };
@@ -18,15 +18,9 @@ use opcov_sys::{
 };
 
 use crate::{
-    engine::{OffReason, Request, Verdict, with_engine},
+    engine::{Map, OffReason, Request, Verdict, with_engine},
     guard::caught,
     ini, zend,
-};
-
-const CASE: CaseSensitivity = if cfg!(target_os = "macos") {
-    CaseSensitivity::Insensitive
-} else {
-    CaseSensitivity::Sensitive
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,7 +106,10 @@ pub(crate) fn configure() -> Request {
             exclude_paths: unresolved.exclude_entries().iter().cloned().collect(),
             exclude_pattern: (!pattern.is_empty()).then(|| return pattern.clone()),
         };
-        let selection = unresolved.resolve(|entry| return fs::canonicalize(entry), CASE)?;
+        let selection = unresolved.resolve(
+            |entry| return fs::canonicalize(entry),
+            CaseSensitivity::HOST,
+        )?;
         return Ok((selection, settings));
     });
     let (selection, settings) = match configured {
@@ -147,12 +144,12 @@ enum Classified {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct Directories(HashMap<PathBuf, PathBuf>);
+pub(crate) struct Directories(Map<PathBuf, PathBuf>);
 
 impl Directories {
     fn split(path: &str) -> Option<(&str, &str)> {
         let (parent, name) = path.rsplit_once('/')?;
-        let usable = CASE == CaseSensitivity::Sensitive
+        let usable = CaseSensitivity::HOST == CaseSensitivity::Sensitive
             && path.starts_with('/')
             && !matches!(name, "" | "." | "..");
         return usable.then_some((if parent.is_empty() { "/" } else { parent }, name));

@@ -1,16 +1,23 @@
-use core::{cell::UnsafeCell, ffi::c_void, fmt, ptr};
+use core::{
+    cell::{OnceCell, UnsafeCell},
+    ffi::c_void,
+    fmt, ptr,
+};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
+    hash::BuildHasher,
     panic::{self, AssertUnwindSafe},
     sync::atomic::{AtomicBool, Ordering},
 };
+
+use foldhash::fast::FixedState;
 
 use opcov_core::{
     cfg::{Analysis, FunctionKey, Line, Plan},
     filter::{Selection, SkipReason},
     report::{Settings, Sha256},
 };
-use opcov_sys::{zend_op, zend_op_array};
+use opcov_sys::{ZTS, zend_op, zend_op_array};
 
 use crate::{
     branches::{Activations, LoopState, Owner, Pending, SourceProbe},
@@ -142,6 +149,8 @@ impl fmt::Display for Described<'_> {
     }
 }
 
+pub(crate) type Map<K, V> = HashMap<K, V, FixedState>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct FileId(u32);
 
@@ -242,7 +251,6 @@ pub(crate) struct FinallyEntry {
 #[derive(Debug, Clone)]
 pub(crate) struct Probe {
     pub(crate) handler: Handler,
-    pub(crate) op: u32,
     pub(crate) line: Option<Line>,
     pub(crate) source: Option<u32>,
     pub(crate) watchers: u16,
@@ -250,19 +258,14 @@ pub(crate) struct Probe {
 }
 
 impl Probe {
-    pub(crate) fn new(op: u32, handler: Handler) -> Self {
+    pub(crate) fn new(handler: Handler) -> Self {
         return Self {
             handler,
-            op,
             line: None,
             source: None,
             watchers: 0,
             armed: Roles::default(),
         };
-    }
-
-    pub(crate) fn offset(&self) -> usize {
-        return slot_of(self.op);
     }
 }
 
@@ -284,9 +287,12 @@ pub(crate) struct Unit {
     pub(crate) last: usize,
     pub(crate) file: FileId,
     pub(crate) function: FunctionId,
+    pub(crate) ops: Box<[u32]>,
+    pub(crate) cursor: u32,
     pub(crate) probes: Box<[Probe]>,
     pub(crate) sources: Box<[SourceProbe]>,
     pub(crate) owners: Box<[Option<Owner>]>,
+    pub(crate) twins: Box<[(u32, u32)]>,
     pub(crate) entries: Box<[LoopEntry]>,
     pub(crate) finals: Box<[FinallyProbe]>,
     pub(crate) seen: Box<[bool]>,
@@ -295,12 +301,20 @@ pub(crate) struct Unit {
 }
 
 impl Unit {
-    pub(crate) fn probe_at(&self, op: usize) -> Option<usize> {
+    pub(crate) fn probe_at(&mut self, op: usize) -> Option<usize> {
         let op = u32::try_from(op).ok()?;
-        return self
-            .probes
-            .binary_search_by_key(&op, |probe| return probe.op)
-            .ok();
+        let next = usize::try_from(self.cursor).ok()?.saturating_add(1);
+        let probe = if self.ops.get(next) == Some(&op) {
+            next
+        } else {
+            self.ops.binary_search(&op).ok()?
+        };
+        self.cursor = u32::try_from(probe).ok()?;
+        return Some(probe);
+    }
+
+    pub(crate) fn op(&self, probe: usize) -> Option<usize> {
+        return self.ops.get(probe).map(|&op| return slot_of(op));
     }
 
     pub(crate) fn loop_entries(&self, probe: u32) -> impl Iterator<Item = u32> {
@@ -326,19 +340,19 @@ impl Unit {
     }
 
     pub(crate) unsafe fn arm(&mut self, probe: usize, role: Role, label: Handler) {
-        let Some(slot) = self.probes.get_mut(probe) else {
+        let (Some(slot), Some(&op)) = (self.probes.get_mut(probe), self.ops.get(probe)) else {
             return;
         };
         slot.armed.insert(role);
         if let Some(opcodes) = self.opcodes {
             // SAFETY: the unit's op array is alive (`opcodes` is cleared by its destructor) and the
             // probe's opcode index is below `last`.
-            unsafe { label.install(opcodes.wrapping_add(slot.offset())) };
+            unsafe { label.install(opcodes.wrapping_add(slot_of(op))) };
         }
     }
 
     pub(crate) unsafe fn disarm(&mut self, probe: usize, role: Role) {
-        let Some(slot) = self.probes.get_mut(probe) else {
+        let (Some(slot), Some(&op)) = (self.probes.get_mut(probe), self.ops.get(probe)) else {
             return;
         };
         slot.armed.remove(role);
@@ -346,7 +360,7 @@ impl Unit {
             && let Some(opcodes) = self.opcodes
         {
             // SAFETY: as in `arm`.
-            unsafe { slot.handler.install(opcodes.wrapping_add(slot.offset())) };
+            unsafe { slot.handler.install(opcodes.wrapping_add(slot_of(op))) };
         }
     }
 }
@@ -402,7 +416,7 @@ impl Reserved {
 pub(crate) struct Units {
     slots: Vec<Option<Unit>>,
     free: Vec<UnitId>,
-    by_opcodes: HashMap<usize, UnitId>,
+    by_opcodes: Map<usize, UnitId>,
 }
 
 impl Units {
@@ -493,6 +507,7 @@ pub(crate) struct FiredRef {
 #[derive(Debug, Default)]
 pub(crate) struct Fired {
     pub(crate) hits: Vec<FiredRef>,
+    pub(crate) covered: Vec<Covered>,
     pub(crate) strays: Vec<FiredRef>,
     pub(crate) stopped: Vec<FiredRef>,
 }
@@ -504,19 +519,34 @@ pub(crate) enum FiredList {
     Stopped,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Fingerprint(u64);
+
+impl Fingerprint {
+    pub(crate) fn of(content: &[u8]) -> Self {
+        return Self(FixedState::default().hash_one(content));
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Content {
+    File(Fingerprint),
+    Text(Sha256),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Source {
-    Hashed(Sha256),
-    Changed { first: Sha256, then: Sha256 },
+    Compiled(Content),
+    Changed,
     Unreadable(String),
 }
 
 impl Source {
-    fn next(current: Option<Self>, compiled: Result<Sha256, String>) -> Self {
+    fn next(current: Option<Self>, compiled: Result<Content, String>) -> Self {
         return match (current, compiled) {
-            (None, Ok(hash)) => Self::Hashed(hash),
-            (None | Some(Self::Hashed(_)), Err(error)) => Self::Unreadable(error),
-            (Some(Self::Hashed(first)), Ok(then)) if first != then => Self::Changed { first, then },
+            (None, Ok(content)) => Self::Compiled(content),
+            (None | Some(Self::Compiled(_)), Err(error)) => Self::Unreadable(error),
+            (Some(Self::Compiled(first)), Ok(then)) if first != then => Self::Changed,
             (Some(kept), _) => kept,
         };
     }
@@ -540,10 +570,19 @@ pub(crate) struct FunctionRecord {
     pub(crate) analysis: Analysis,
     pub(crate) plan: Plan,
     pub(crate) zero_possible: Box<[bool]>,
+    pub(crate) text: OnceCell<Box<str>>,
+}
+
+impl FunctionRecord {
+    pub(crate) fn key_text(&self) -> &str {
+        return self
+            .text
+            .get_or_init(|| return self.key.to_string().into_boxed_str());
+    }
 }
 
 impl FileRecord {
-    pub(crate) fn compiled_from(&mut self, compiled: Result<Sha256, String>) {
+    pub(crate) fn compiled_from(&mut self, compiled: Result<Content, String>) {
         self.source = Some(Source::next(self.source.take(), compiled));
     }
 }
@@ -551,7 +590,7 @@ impl FileRecord {
 #[derive(Debug, Default)]
 pub(crate) struct Files {
     records: Vec<FileRecord>,
-    by_path: HashMap<String, FileId>,
+    by_path: Map<String, FileId>,
     functions: Vec<FunctionRecord>,
 }
 
@@ -616,6 +655,30 @@ pub(crate) enum Covered {
     Second(FunctionId, u32),
 }
 
+impl Covered {
+    pub(crate) fn order(self) -> u128 {
+        let (variant, owner, number): (u128, u32, u32) = match self {
+            Self::Line(FileId(file), line) => (0, file, line.get()),
+            Self::Outcome(FunctionId(function), number) => (1, function, number),
+            Self::Zero(FunctionId(function), number) => (2, function, number),
+            Self::Second(FunctionId(function), number) => (3, function, number),
+        };
+        return variant.wrapping_shl(64) | u128::from(owner).wrapping_shl(32) | u128::from(number);
+    }
+
+    pub(crate) fn from_order(order: u128) -> Option<Self> {
+        let part = |shift: u32| return u32::try_from(order.wrapping_shr(shift) & 0xffff_ffff).ok();
+        let (variant, owner, number) = (part(64)?, part(32)?, part(0)?);
+        return match variant {
+            0 => Line::new(number).map(|line| return Self::Line(FileId(owner), line)),
+            1 => Some(Self::Outcome(FunctionId(owner), number)),
+            2 => Some(Self::Zero(FunctionId(owner), number)),
+            3 => Some(Self::Second(FunctionId(owner), number)),
+            _ => None,
+        };
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct AttributedTest {
     pub(crate) name: String,
@@ -625,7 +688,7 @@ pub(crate) struct AttributedTest {
 #[derive(Debug, Default)]
 pub(crate) struct Attribution {
     tests: Vec<AttributedTest>,
-    by_name: HashMap<String, usize>,
+    by_name: Map<String, usize>,
 }
 
 impl Attribution {
@@ -695,6 +758,7 @@ impl Counters {
 #[derive(Debug, Default)]
 pub(crate) struct Scratch {
     pub(crate) op_arrays: Vec<*mut zend_op_array>,
+    pub(crate) orders: Vec<u128>,
     pub(crate) covered: Vec<Covered>,
     pub(crate) files: Vec<FileId>,
 }
@@ -745,18 +809,32 @@ impl Engine {
 
     pub(crate) fn record(&mut self, fired: FiredRef) {
         self.counters.probes_fired = self.counters.probes_fired.saturating_add(1);
-        if let Some(unit) = self.units.get_mut(fired.unit) {
-            unit.pending = unit.pending.saturating_add(1);
-        }
-        let list = if self.collecting {
-            FiredList::Hits
-        } else {
-            FiredList::Strays
+        let Some(unit) = self.units.get_mut(fired.unit) else {
+            return;
         };
-        self.list(list).push(fired);
+        unit.pending = unit.pending.saturating_add(1);
+        if !self.collecting {
+            self.fired.strays.push(fired);
+            return;
+        }
+        let covered = match fired.hit {
+            Hit::Line(probe) => usize::try_from(probe)
+                .ok()
+                .and_then(|probe| return unit.probes.get(probe))
+                .and_then(|probe| return probe.line)
+                .map(|line| return Covered::Line(unit.file, line)),
+            Hit::Outcome(number) => Some(Covered::Outcome(unit.function, number)),
+            Hit::Zero(number) => Some(Covered::Zero(unit.function, number)),
+            Hit::Second(number) => Some(Covered::Second(unit.function, number)),
+        };
+        self.fired.covered.extend(covered);
+        self.fired.hits.push(fired);
     }
 
     pub(crate) fn rearm(&mut self, list: FiredList) {
+        if list == FiredList::Hits {
+            self.fired.covered.clear();
+        }
         let refs = core::mem::take(self.list(list));
         let label = self
             .label
@@ -825,14 +903,14 @@ impl Engine {
                 continue;
             };
             unit.restore_producers();
-            for probe in &mut unit.probes {
+            for (probe, &op) in unit.probes.iter_mut().zip(&unit.ops) {
                 probe.watchers = 0;
                 if probe.armed.is_empty() {
                     continue;
                 }
                 probe.armed = Roles::default();
                 // SAFETY: the unit is alive, so its opcodes are; `op` is below `last`.
-                unsafe { probe.handler.install(opcodes.wrapping_add(probe.offset())) };
+                unsafe { probe.handler.install(opcodes.wrapping_add(slot_of(op))) };
             }
         }
     }
@@ -859,10 +937,14 @@ fn enter() {
         !threads::foreign(),
         "opcov state touched from a thread that does not own the probes"
     );
-    assert!(
-        !ENGINE.busy.swap(true, Ordering::Acquire),
-        "opcov state entered re-entrantly"
-    );
+    let entered = if ZTS {
+        !ENGINE.busy.swap(true, Ordering::Acquire)
+    } else {
+        let free = !ENGINE.busy.load(Ordering::Relaxed);
+        ENGINE.busy.store(true, Ordering::Relaxed);
+        free
+    };
+    assert!(entered, "opcov state entered re-entrantly");
 }
 
 pub(crate) fn with_engine<R>(body: impl FnOnce(&mut Engine) -> R) -> Option<R> {
@@ -896,4 +978,81 @@ pub(crate) fn after_panic() {
         engine.collecting = false;
         engine.restore_every_probe();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn file(content: &[u8]) -> Content {
+        return Content::File(Fingerprint::of(content));
+    }
+
+    #[test]
+    fn a_file_compiled_again_from_the_same_bytes_keeps_its_content() {
+        let first = Source::next(None, Ok(file(b"<?php echo 1;")));
+        assert_eq!(
+            Source::next(Some(first.clone()), Ok(file(b"<?php echo 1;"))),
+            first
+        );
+    }
+
+    #[test]
+    fn a_file_compiled_again_from_other_bytes_is_changed_for_good() {
+        let first = Source::next(None, Ok(file(b"<?php echo 1;")));
+        let changed = Source::next(Some(first), Ok(file(b"<?php echo 2;")));
+        assert_eq!(changed, Source::Changed);
+        assert_eq!(
+            Source::next(Some(changed), Ok(file(b"<?php echo 1;"))),
+            Source::Changed
+        );
+    }
+
+    #[test]
+    fn an_unreadable_compilation_is_kept_as_the_reason() {
+        let unreadable = Source::next(None, Err(String::from("gone")));
+        assert_eq!(unreadable, Source::Unreadable(String::from("gone")));
+        assert_eq!(
+            Source::next(Some(unreadable.clone()), Ok(file(b"<?php"))),
+            unreadable
+        );
+    }
+
+    #[test]
+    fn fingerprints_tell_apart_contents_that_differ_in_one_byte_or_in_length() {
+        let base = vec![b'a'; 4096];
+        let mut flipped = base.clone();
+        if let Some(byte) = flipped.get_mut(2048) {
+            *byte = b'b';
+        }
+        assert_ne!(Fingerprint::of(&base), Fingerprint::of(&flipped));
+        assert_ne!(Fingerprint::of(&base), Fingerprint::of(&base[..4095]));
+        assert_eq!(Fingerprint::of(&base), Fingerprint::of(&base.clone()));
+    }
+
+    #[test]
+    fn covered_items_sort_by_their_order_as_they_compare_and_round_trip() {
+        let line = |number| return Line::new(number).unwrap();
+        let mut items = vec![
+            Covered::Second(FunctionId(0), 0),
+            Covered::Line(FileId(u32::MAX), line(u32::MAX)),
+            Covered::Outcome(FunctionId(2), 1),
+            Covered::Line(FileId(1), line(9)),
+            Covered::Zero(FunctionId(u32::MAX), u32::MAX),
+            Covered::Outcome(FunctionId(2), 0),
+            Covered::Line(FileId(1), line(1)),
+        ];
+        let mut by_order = items.clone();
+        by_order.sort_unstable_by_key(|item| return item.order());
+        items.sort_unstable();
+        assert_eq!(by_order, items);
+        for item in items {
+            assert_eq!(Covered::from_order(item.order()), Some(item));
+        }
+    }
+
+    #[test]
+    fn a_probe_takes_24_bytes() {
+        assert_eq!(size_of::<Probe>(), 24);
+    }
 }

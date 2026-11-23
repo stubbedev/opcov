@@ -15,4 +15,4 @@ pub use model::{
     OpIndex, SnapshotError,
 };
 pub use opcode::{Opcode, PhpVersion};
-pub use plan::{Branch, LoopSite, LoopTest, Origin, OutcomeSite, Plan};
+pub use plan::{Branch, LoopSite, LoopTest, OpSpan, Origin, OutcomeSite, Plan};

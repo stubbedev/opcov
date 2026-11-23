@@ -56,6 +56,8 @@ const char *opcov_ini_string(const char *name, size_t len);
 void opcov_string_release(zend_string *string);
 bool opcov_array_init(zval *target, uint32_t size);
 bool opcov_add_index_zval(zval *array, zend_ulong index, zval *value);
+bool opcov_add_index_trues(zval *array, const uint32_t *indexes, size_t count);
+bool opcov_add_named_trues(zval *array, char prefix, const uint32_t *numbers, size_t count);
 bool opcov_add_next_index_zval(zval *array, zval *value);
 void *opcov_map_ptr_at(const HashTable *map, uint32_t index);
 zval *opcov_array_value_at(HashTable *array, uint32_t index);

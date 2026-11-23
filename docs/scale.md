@@ -71,11 +71,48 @@ What was changed, each measured on the corpus before and after:
   of once per function, and closures and anonymous classes are ranked only
   when a compilation has a selected function.
 
-The largest remaining item is the SHA-256 of every selected file's bytes
-(written to the report so that merged reports can detect a changed file):
-about 1.2 s of the 3.1 s added for 194 MB of source, because this CPU has no
-SHA extensions. CPUs with them (AMD Zen, Intel Ice Lake and later) hash about
-ten times faster through the same `sha2` crate.
+### Hashing, path resolution and handler resets
+
+A second round, measured the same way (minimum of five interleaved runs,
+same corpus and PHP; the selected runs leave out the one file opcov cannot
+key, `symfony/.../Cache/Traits/ValueWrapper.php`, whose class name is not
+UTF-8), with `write_report()` timed after the compile:
+
+| | without opcov | unselected, before | unselected, after | selected, before | selected, after |
+|---|---|---|---|---|---|
+| compile, wall | 3.29 s | 3.85 s | 3.74 s | 6.24 s | **5.32 s** |
+| compile, system CPU | 0.43 s | 0.69 s | 0.56 s | | |
+| `write_report()` with every file, wall | | | | 0.37 s | 0.52 s |
+| peak RSS | 619 MiB | 632 MiB | 631 MiB | 1,061 MiB | 1,095 MiB |
+
+- **SHA-256 left the compile path.** It was about 1.2 s of the selected
+  compile (13 % of all samples, `sha2::sha256::compress256`) on this CPU
+  without SHA extensions. The compile hook now keeps a 64-bit foldhash
+  fingerprint of the compiled bytes, and `write_report()` reads the files
+  again on one worker thread per core, checks the fingerprint and hashes
+  them: 0.15 s more wall time at report time for 1 s less at compile time.
+  [how-it-works.md](how-it-works.md#compiling-a-file) has the trade-off.
+- **Absolute file names are not resolved twice.** For an `include` of an
+  absolute path the compile hook used to call `zend_resolve_path` (a
+  `realpath` with three failing `readlink` and three `stat` calls per file
+  on a cache miss) before opcov's own resolution; it now resolves the name
+  itself (one `statx` per file and one canonicalization per directory). This
+  removed 103,000 `readlink` and 128,000 `newfstatat` calls on the corpus.
+- **Handler resets touch fewer opcodes of the handler table.** After a
+  compile opcov unregisters its user handler only for the opcodes the new op
+  arrays contain (about 50 instead of 255) and computes the plain handlers
+  of smart-branch producers with only their own opcodes unregistered (that
+  was 510 handler-table writes per unit). Not resetting unselected op arrays
+  at all would need opcov's handlers unregistered while PHP compiles, which
+  is unsafe ([how-it-works.md](how-it-works.md#compiling-a-file)); the reset
+  itself (`zend_vm_set_opcode_handler` per opcode) remains, about 2 % of an
+  unselected compile.
+- **Hash maps** keyed by pointers, paths and loop activations use foldhash
+  with a fixed seed instead of SipHash.
+
+Peak RSS grew by 34 MiB, mostly the per-function frameless twin tables of
+the plan and the report's file reads; the probe itself shrank from 32 to 24
+bytes plus a 4-byte opcode index.
 
 ### Per-test cost
 
@@ -84,12 +121,35 @@ A generated suite of 1,000 files with 100 functions each (1.3 million lines,
 and ending with `stop($test)` and `reset()`: every test fires and re-arms about
 900 probes, 18,165,446 in total.
 
-| | without opcov | before | after |
+| | without opcov | first round, before | first round, after | second round, before | second round, after |
+|---|---|---|---|---|---|
+| test loop, CPU | 0.96 s | 6.82 s | 6.85 s | 6.18 s | **4.95 s** |
+| `stop()` + `reset()`, median per test | | 192 µs | 175 µs | 158 µs | **113 µs** |
+| `stop()` + `reset()`, 99th percentile | | 327 µs | 307 µs | 256 µs | 196 µs |
+| peak RSS | 184 MiB | 948 MiB | 798 MiB | 798 MiB | 804 MiB |
+
+(The second round ran on a less loaded machine, 0.84 s without opcov, so its
+"before" is lower than the first round's "after" for the same code.) The added CPU per fired
+and re-armed probe fell from about 294 ns to 226 ns. The probe's own cost is
+dominated by cache misses on the unit, the opcode index and the probe in a
+2.1-million-probe working set; the second round made the lookup touch a
+4-byte opcode array instead of 32-byte probes, recorded each covered item
+when the probe fires (the unit and probe are in cache then) instead of
+visiting them again in `stop()`, sorts covered items as packed 128-bit keys,
+groups them without B-tree maps, caches each function's key text, and builds
+the PHP arrays of lines and outcomes in one engine call each.
+
+A micro-benchmark that runs one function of 200,000 lines once per test
+(every line a probe, fired and re-armed each test):
+
+| per line | without opcov | before | after |
 |---|---|---|---|
-| test loop, CPU | 0.96 s | 6.82 s | 6.85 s |
-| `stop()` + `reset()`, median per test | | 192 µs | 175 µs |
-| `stop()` + `reset()`, 99th percentile | | 327 µs | 307 µs |
-| peak RSS | 184 MiB | 948 MiB | 798 MiB |
+| running the function | 12.8 ns | 85.0 ns | **38.8 ns** |
+| `stop()` + `reset()` | | 71.6 ns | **48.0 ns** |
+
+Looking up the firing opcode right after the unit's previous probe, before
+falling back to the binary search, makes forward execution of a large
+function cost one comparison per probe.
 
 `stop()` and `reset()` depend only on the probes that fired; the 2.1 million
 installed probes do not enter either. `stop()` groups the hits by file and

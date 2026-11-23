@@ -5,6 +5,7 @@ use std::process::{self, Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use opcov_core::cfg::PhpVersion;
 use serde::{Deserialize, Serialize};
 
 use crate::failure::{Failure, Verdict};
@@ -156,12 +157,10 @@ impl Checkup {
 }
 
 fn php_minor(api: u32) -> String {
-    return match api {
-        20_240_924 => String::from("PHP 8.4"),
-        20_250_925 => String::from("PHP 8.5"),
-        20_260_924 => String::from("PHP 8.6"),
-        other => format!("the PHP with module API {other}"),
-    };
+    return PhpVersion::from_module_api(api).map_or_else(
+        || return format!("the PHP with module API {api}"),
+        |version| return format!("PHP {version}"),
+    );
 }
 
 fn compiled_value<'a>(output: &'a str, prefix: &str, key: &str) -> Option<&'a str> {

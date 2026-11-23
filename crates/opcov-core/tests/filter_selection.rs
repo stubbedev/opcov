@@ -714,3 +714,33 @@ mod reference_agreement {
         }
     }
 }
+
+#[cfg(test)]
+mod from_entries {
+    use std::path::Path;
+
+    use opcov_core::filter::{CaseSensitivity, SelectionConfig, UnresolvedSelection};
+
+    #[test]
+    fn entries_build_the_selection_the_same_settings_parse_to() {
+        let parsed = SelectionConfig::parse("/app/src:/app/lib", "/app/src/gen", |path: &Path| {
+            panic!("no listfile expected, asked for {}", path.display())
+        })
+        .unwrap();
+        let built = UnresolvedSelection::from_entries(
+            [String::from("/app/src"), String::from("/app/lib")],
+            [String::from("/app/src/gen")],
+        );
+        assert_eq!(built, parsed);
+    }
+
+    #[test]
+    fn the_host_case_rule_is_insensitive_only_on_macos() {
+        let expected = if cfg!(target_os = "macos") {
+            CaseSensitivity::Insensitive
+        } else {
+            CaseSensitivity::Sensitive
+        };
+        assert_eq!(CaseSensitivity::HOST, expected);
+    }
+}

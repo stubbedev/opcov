@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use opcov_core::cfg::{Line, Opcode, PhpVersion};
+use opcov_core::cfg::{Line, OpIndex, OpSpan, Opcode, PhpVersion};
 use opcov_sys::{IS_CONST, IS_CV, IS_TMP_VAR, IS_VAR};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,7 +231,20 @@ pub(crate) fn declarations_only(instrs: &[Instr]) -> bool {
     });
 }
 
-pub(crate) fn place(version: PhpVersion, instrs: &[Instr], blocks: &[LineBlock]) -> Placement {
+fn in_fallback(fallbacks: &[OpSpan], op: usize) -> bool {
+    return u32::try_from(op).is_ok_and(|op| {
+        return fallbacks
+            .iter()
+            .any(|span| return span.contains(OpIndex::new(op)));
+    });
+}
+
+pub(crate) fn place(
+    version: PhpVersion,
+    instrs: &[Instr],
+    blocks: &[LineBlock],
+    fallbacks: &[OpSpan],
+) -> Placement {
     let mut placement = Placement::default();
     let mut last_line: Option<Line> = None;
     for block in blocks {
@@ -263,7 +276,7 @@ pub(crate) fn place(version: PhpVersion, instrs: &[Instr], blocks: &[LineBlock])
                 }
                 continue;
             }
-            if placement.lines.last() != Some(&op.line) {
+            if placement.lines.last() != Some(&op.line) && !in_fallback(fallbacks, index) {
                 placement.lines.push(op.line);
             }
             last_line = Some(op.line);
@@ -294,6 +307,12 @@ pub(crate) fn place(version: PhpVersion, instrs: &[Instr], blocks: &[LineBlock])
     }
     placement.lines.sort_unstable();
     placement.lines.dedup();
+    if !fallbacks.is_empty() {
+        let Placement { probes, lines } = &mut placement;
+        probes.retain(|probe| {
+            return !in_fallback(fallbacks, probe.op) || lines.binary_search(&probe.line).is_ok();
+        });
+    }
     return placement;
 }
 
@@ -354,7 +373,7 @@ mod tests {
             with(op(Opcode::Echo, 3), CV, UNUSED, UNUSED),
             with(op(Opcode::Return, 4), CONST, UNUSED, UNUSED),
         ];
-        let placement = place(PhpVersion::Php85, &instrs, &[block(0..4, false)]);
+        let placement = place(PhpVersion::Php85, &instrs, &[block(0..4, false)], &[]);
         assert_eq!(probe_lines(&placement), vec![(1, 3), (3, 4)], "probes");
         assert_eq!(
             placement
@@ -368,6 +387,45 @@ mod tests {
     }
 
     #[test]
+    fn a_frameless_fallback_copy_adds_no_line_and_probes_only_lines_executable_elsewhere() {
+        let instrs = [
+            with(op(Opcode::JmpFrameless, 4), CONST, UNUSED, UNUSED),
+            op(Opcode::InitNsFcallByName, 4),
+            with(op(Opcode::SendValEx, 4), CONST, UNUSED, UNUSED),
+            with(op(Opcode::SendValEx, 5), CONST, UNUSED, UNUSED),
+            op(Opcode::DoFcallByName, 4),
+            op(Opcode::Jmp, 4),
+            with(op(Opcode::FramelessIcall2, 4), CONST, CONST, TMP),
+            with(op(Opcode::Return, 6), TMP, UNUSED, UNUSED),
+        ];
+        let blocks = [
+            block(0..1, false),
+            block(1..6, true),
+            block(6..7, false),
+            block(7..8, true),
+        ];
+        let fallback = OpSpan {
+            start: OpIndex::new(1),
+            end: OpIndex::new(6),
+        };
+        let placement = place(PhpVersion::Php85, &instrs, &blocks, &[fallback]);
+        assert_eq!(
+            probe_lines(&placement),
+            vec![(0, 4), (1, 4), (4, 4), (6, 4), (7, 6)],
+            "the fallback copy keeps only its probes on line 4"
+        );
+        assert_eq!(
+            placement
+                .lines
+                .iter()
+                .map(|l| return l.get())
+                .collect::<Vec<_>>(),
+            vec![4, 6],
+            "line 5 exists only in the fallback copy"
+        );
+    }
+
+    #[test]
     fn every_block_entry_gets_a_probe_even_on_the_same_line() {
         let instrs = [
             with(op(Opcode::Jmpz, 3), CV, UNUSED, UNUSED),
@@ -375,7 +433,7 @@ mod tests {
             with(op(Opcode::Return, 3), CONST, UNUSED, UNUSED),
         ];
         let blocks = [block(0..1, false), block(1..2, true), block(2..3, true)];
-        let placement = place(PhpVersion::Php85, &instrs, &blocks);
+        let placement = place(PhpVersion::Php85, &instrs, &blocks, &[]);
         assert_eq!(
             probe_lines(&placement),
             vec![(0, 3), (1, 3), (2, 3)],
@@ -397,7 +455,7 @@ mod tests {
             block(2..3, true),
             block(3..4, true),
         ];
-        let placement = place(PhpVersion::Php85, &instrs, &blocks);
+        let placement = place(PhpVersion::Php85, &instrs, &blocks, &[]);
         assert_eq!(
             probe_lines(&placement),
             vec![(0, 3), (1, 4), (3, 5)],
@@ -421,7 +479,7 @@ mod tests {
             op(Opcode::DoFcall, 4),
             with(op(Opcode::Return, 5), CONST, UNUSED, UNUSED),
         ];
-        let placement = place(PhpVersion::Php85, &instrs, &[block(0..3, false)]);
+        let placement = place(PhpVersion::Php85, &instrs, &[block(0..3, false)], &[]);
         assert_eq!(probe_lines(&placement), vec![(0, 3), (2, 5)], "probes");
         assert!(
             !placement.lines.contains(&line(4)),
@@ -442,7 +500,7 @@ mod tests {
                 ..block(1..2, false)
             },
         ];
-        let placement = place(PhpVersion::Php85, &instrs, &blocks);
+        let placement = place(PhpVersion::Php85, &instrs, &blocks, &[]);
         assert_eq!(probe_lines(&placement), vec![(0, 3)], "probes");
     }
 
