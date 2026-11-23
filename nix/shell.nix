@@ -3,18 +3,20 @@
     config,
     lib,
     opcov,
+    phpBuilds,
     phpShell,
+    phpVmBuilds,
     pkgs,
     self',
     ...
-  }: {
-    devShells.default =
+  }: let
+    shellFor = php:
       (opcov.craneLib.devShell.override {
         mkShell = pkgs.mkShell.override {
           stdenv = opcov.craneLib.stdenvSelector pkgs;
         };
       }) {
-        checks = self'.checks;
+        inherit (self') checks;
 
         packages = with pkgs; [
           config.treefmt.build.wrapper
@@ -27,11 +29,15 @@
           jq
           git
           gh
-          phpShell
+          mago
+          php
+          php.packages.composer
           rustPlatform.bindgenHook
         ];
 
-        env = opcov.cargoEnv // opcov.phptEnv phpShell // {RUSTC_WRAPPER = lib.getExe pkgs.sccache;};
+        env = opcov.cargoEnv // opcov.phptEnv php // {RUSTC_WRAPPER = lib.getExe pkgs.sccache;};
       };
+  in {
+    devShells = {default = shellFor phpShell;} // lib.mapAttrs (_: shellFor) (phpBuilds // phpVmBuilds);
   };
 }

@@ -76,3 +76,20 @@ dist extension version libc out:
 # Print the CHANGELOG.md section for `version`, failing when it has none.
 changelog version:
     @awk -v heading="## [{{ version }}]" 'index($0, "## ") == 1 { if (found) exit; found = index($0, heading) == 1; next } found && /^\[[^]]+\]: / { exit } found { print } END { if (!found) { print "changelog: CHANGELOG.md has no section " heading > "/dev/stderr"; exit 1 } }' CHANGELOG.md
+
+# Check the opcov/phpunit package: mago analysis, lint and format, then its unit and integration tests against the built extension.
+[script]
+php-check:
+    artifacts="$(cargo build --locked --package opcov-ext --message-format=json-render-diagnostics)"
+    OPCOV_EXTENSION="$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "opcov_ext") | .filenames[]' <<<"$artifacts")"
+    export OPCOV_EXTENSION
+    cd php/phpunit
+    composer install --no-interaction --no-progress --quiet
+    for fixture in tests/fixture/phpunit12 tests/fixture/phpunit13 tests/fixture/pest4; do
+        composer install --no-interaction --no-progress --quiet --working-dir="$fixture"
+    done
+    mago analyze
+    mago lint
+    mago fmt --check
+    php vendor/bin/phpunit
+
