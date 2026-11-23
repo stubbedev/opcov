@@ -25,7 +25,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-nix
       - name: Run every check
-        run: nix flake check -L
+        run: nix flake check -L --keep-going
 
   php-package:
     runs-on: ubuntu-24.04

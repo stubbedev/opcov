@@ -8,6 +8,9 @@ targets = [
 
 [advisories]
 yanked = "deny"
+ignore = [
+  { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained, not vulnerable: a compile-time macro crate that mago-syntax 1.61 depends on, with no maintained replacement upstream" },
+]
 
 [licenses]
 unused-allowed-license = "allow"
