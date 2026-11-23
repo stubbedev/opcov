@@ -67,7 +67,7 @@ plus clang-built PHP 8.4 (CALL VM) and 8.5 (TAILCALL VM) on Linux.
 
 Everything builds with nightly Rust: the dev shell, `nix build`, every
 `nix flake check` check (and so CI) and rustfmt under treefmt. The
-toolchain is defined once in `nix/toolchain.nix`: the latest nightly that
+toolchain is defined once in `nix/build.nix`: the latest nightly that
 ships rust-analyzer and rust-src, chosen by rust-overlay and pinned through
 `flake.lock`, so Dependabot moves it forward. There is no stable fallback
 and no MSRV; `Cargo.toml` declares no `rust-version`.
@@ -84,11 +84,11 @@ explicitly.
   `catch_unwind` guards would catch nothing and a panic would abort PHP (see
   `docs/adr/0001-bindings.md`).
 - Every build on Linux links with mold, which cuts most of an incremental
-  rebuild's time: crane's `stdenvSelector` in `nix/toolchain.nix` picks
+  rebuild's time: crane's `stdenvSelector` in `nix/build.nix` picks
   `useMoldLinker` over `clangStdenv`, and the dev shell reuses that stdenv.
   macOS keeps clang's default linker, since mold cannot emit Mach-O.
 - Every build runs rustc's parallel front end with eight threads
-  (`-Zthreads=8` through `CARGO_BUILD_RUSTFLAGS` in `nix/toolchain.nix`);
+  (`-Zthreads=8` through `CARGO_BUILD_RUSTFLAGS` in `nix/build.nix`);
   the front end is single-threaded otherwise. A `RUSTFLAGS` set in the
   environment replaces it.
 - `[profile.dev]` keeps only line tables as debuginfo for the workspace's
@@ -107,6 +107,12 @@ unwinds on panic: the extension catches every panic at its engine entry points
 so that PHP survives it, which `panic = "abort"` would make impossible.
 `opcov-ext` refuses to compile under `panic = "abort"`.
 
+## Install
+
+Every channel (release archives, PIE, Docker layer images, Nix) is in
+`docs/install.md`; supported PHP versions and platforms are in
+`docs/support.md`.
+
 ## Nix
 
 The package and its checks are built with [crane](https://github.com/ipetkov/crane)
@@ -114,14 +120,17 @@ The package and its checks are built with [crane](https://github.com/ipetkov/cra
 `flake.nix`). Dependencies build once into their own derivation, so editing
 the crate's own code never rebuilds them.
 
-- `nix build` builds the release package; name, version and description
-  come from `Cargo.toml`, dependencies from `Cargo.lock`
+- `nix build` builds the `opcov` CLI (`packages.opcov-cli`, the default);
+  `opcov-php84`, `opcov-php85`, `opcov-php86` and their `-zts` variants build
+  the extension per PHP; `php85-with-opcov` and `php86-with-opcov` are PHP
+  with opcov loaded; `release` builds every release archive; `docker-*` build
+  the layer images; `overlays.default` adds all of them to nixpkgs
 - `nix flake check` runs treefmt's check, `just lint`, `just shear`,
   `just test` (nextest's `ci` profile), `just deny bans licenses sources`
   and the `.phpt` suite for every PHP build (`phpt-*`) in the sandbox, so the justfile stays the one definition of each gate.
   Advisories need network access the sandbox lacks, so the security workflow
   checks them instead.
-- `nix run` runs it
+- `nix run` runs the `opcov` CLI
 - `nix fmt` (or `just fmt`) formats every file through treefmt
   (`nix/treefmt.nix`): alejandra for Nix, rustfmt for Rust, taplo for TOML,
   yamlfmt for YAML and `just --fmt` for the justfile, plus actionlint over the

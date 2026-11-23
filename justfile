@@ -48,3 +48,26 @@ phpt-run extension +paths:
     trap 'rm -r "$runner"' EXIT
     cp "{{ env('PHP_RUN_TESTS') }}" "$runner/run-tests.php"
     "$php" "$runner/run-tests.php" -n -q --show-diff -p "$php" -d "extension={{ extension }}" {{ paths }}
+
+# Package the extension at `extension` as the release archive for php-config's PHP into `out`, named as PIE expects, and run the smoke tests against the packaged copy.
+[script]
+dist extension version libc out:
+    case "{{ libc }}" in glibc | musl | bsdlibc) ;; *) echo "dist: libc must be glibc, musl or bsdlibc, got '{{ libc }}'" >&2; exit 1 ;; esac
+    php="$({{ php_config }} --php-binary)"
+    asset="$("$php" -n -r 'function fail(string $message): never { fwrite(STDERR, "dist: " . $message . "\n"); exit(1); } if (PHP_EXTRA_VERSION !== "") { fail("PHP " . PHP_VERSION . " is a pre-release; release archives are built against released PHP versions only"); } $machine = php_uname("m"); $arch = ["x86_64" => "x86_64", "aarch64" => "arm64", "arm64" => "arm64"][$machine] ?? fail("unsupported machine " . $machine); printf("php_opcov-v%s_php%d.%d-%s-%s-%s-%s", $argv[1], PHP_MAJOR_VERSION, PHP_MINOR_VERSION, $arch, strtolower(PHP_OS_FAMILY), $argv[2], PHP_ZTS ? "zts" : "nts");' "{{ version }}" "{{ libc }}")"
+    work="$(mktemp -d)"
+    trap 'rm -r "$work"' EXIT
+    mkdir "$work/stage" "$work/check"
+    install -m 0644 "{{ extension }}" "$work/stage/opcov.so"
+    install -m 0644 LICENSE "$work/stage/LICENSE"
+    (cd "$work/stage" && sha256sum opcov.so LICENSE > SHA256SUMS)
+    mkdir -p "{{ out }}"
+    tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 -C "$work/stage" -c opcov.so LICENSE SHA256SUMS | gzip -9n > "{{ out }}/$asset.tgz"
+    tar -xzf "{{ out }}/$asset.tgz" -C "$work/check"
+    (cd "$work/check" && sha256sum -c SHA256SUMS)
+    just phpt-run "$work/check/opcov.so" tests/phpt/smoke
+    (cd "{{ out }}" && sha256sum "$asset.tgz" > "$asset.tgz.sha256")
+
+# Print the CHANGELOG.md section for `version`, failing when it has none.
+changelog version:
+    @awk -v heading="## [{{ version }}]" 'index($0, "## ") == 1 { if (found) exit; found = index($0, heading) == 1; next } found && /^\[[^]]+\]: / { exit } found { print } END { if (!found) { print "changelog: CHANGELOG.md has no section " heading > "/dev/stderr"; exit 1 } }' CHANGELOG.md

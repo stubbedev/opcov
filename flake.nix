@@ -26,10 +26,10 @@
     flake-parts.lib.mkFlake {inherit inputs;} {
       systems = nixpkgs.lib.systems.flakeExposed;
       imports = [
+        ./nix/args.nix
         ./nix/package.nix
         ./nix/php.nix
         ./nix/shell.nix
-        ./nix/toolchain.nix
         ./nix/treefmt.nix
       ];
     };

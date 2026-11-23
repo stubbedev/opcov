@@ -1,0 +1,58 @@
+name: "php-src-nightly"
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: php-src-nightly
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  phpt:
+    strategy:
+      fail-fast: false
+      matrix:
+        thread-safety: [nts, zts]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+      - name: Build php-src master and run the .phpt suite against it
+        env:
+          THREAD_SAFETY: ${{ matrix.thread-safety }}
+        run: |
+          rev="$(git ls-remote https://github.com/php/php-src refs/heads/master | cut -f1)"
+          echo "php-src master is at $rev"
+          nix build -L --impure --file nix/php-src.nix --argstr rev "$rev" "$THREAD_SAFETY"
+
+  report:
+    needs: phpt
+    if: failure()
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - name: Open an issue, or comment on the open one
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Nightly build against php-src master fails"
+          number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number,title --jq "map(select(.title == \"$title\")) | first | .number // empty")"
+          body="The scheduled build of opcov against php-src master failed: $RUN_URL"
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi

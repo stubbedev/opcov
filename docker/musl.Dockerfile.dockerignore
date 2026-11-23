@@ -1,0 +1,8 @@
+*
+!Cargo.toml
+!Cargo.lock
+!justfile
+!LICENSE
+!crates
+!schema
+!tests/phpt

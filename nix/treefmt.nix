@@ -3,7 +3,7 @@
 
   perSystem = {
     lib,
-    rustToolchain,
+    opcov,
     ...
   }: {
     treefmt = {
@@ -14,7 +14,7 @@
         just.enable = true;
         rustfmt = {
           enable = true;
-          package = rustToolchain;
+          package = opcov.rustToolchain;
           inherit ((lib.importTOML ../Cargo.toml).workspace.package) edition;
         };
         taplo.enable = true;

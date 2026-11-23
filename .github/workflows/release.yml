@@ -1,0 +1,220 @@
+name: "release"
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      rust-toolchain: ${{ steps.plan.outputs.rust-toolchain }}
+      images: ${{ steps.plan.outputs.images }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+      - name: Check the tag against Cargo.toml and CHANGELOG.md, and plan the matrices
+        id: plan
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(nix eval --raw .#opcov-cli.version)"
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::tag $TAG does not match the workspace version $version in Cargo.toml"
+            exit 1
+          fi
+          nix shell --inputs-from . nixpkgs#just --command just changelog "$version" > /dev/null
+          {
+            echo "version=$version"
+            echo "rust-toolchain=$(nix eval --raw .#legacyPackages.x86_64-linux.rustupToolchain)"
+            echo "images=$(nix eval --json .#legacyPackages.x86_64-linux.releaseImages)"
+          } >> "$GITHUB_OUTPUT"
+
+  nix:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+      - name: Build, test and package the extension for every PHP build
+        run: |
+          nix build -L .#release
+          mkdir dist
+          cp -L result/* dist/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-nix-${{ runner.os }}-${{ runner.arch }}
+          path: dist/
+          if-no-files-found: error
+      - name: Build the Docker images and check that each loads into its official PHP image
+        if: runner.os == 'Linux'
+        env:
+          IMAGES: ${{ needs.plan.outputs.images }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          mkdir images
+          mapfile -t rows < <(jq -r '.[] | [.attr, .tag, .debian] | @tsv' <<< "$IMAGES")
+          for row in "${rows[@]}"; do
+            IFS=$'\t' read -r attr tag debian <<< "$row"
+            nix build -L ".#$attr" --out-link image
+            loaded="$(docker load --input image | sed -n 's/^Loaded image: //p')"
+            printf 'FROM %s AS opcov\nFROM %s\nCOPY --from=opcov / /\n' "$loaded" "$debian" | docker build --tag opcov-verify -
+            if ! reported="$(docker run --rm opcov-verify php -r 'echo \opcov\version();' 2>&1)" || [ "$reported" != "$VERSION" ]; then
+              echo "::error::$loaded in $debian does not report opcov $VERSION: $reported"
+              exit 1
+            fi
+            cp -L image "images/$tag.tar.gz"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: runner.os == 'Linux'
+        with:
+          name: images-${{ runner.arch }}
+          path: images/
+          if-no-files-found: error
+
+  musl:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        image: ${{ fromJSON(needs.plan.outputs.images) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build, test and package the extension in ${{ matrix.image.alpine }}
+        env:
+          PHP_IMAGE: ${{ matrix.image.alpine }}
+          RUST_TOOLCHAIN: ${{ needs.plan.outputs.rust-toolchain }}
+        run: |
+          docker build --file docker/musl.Dockerfile \
+            --build-arg "PHP_IMAGE=$PHP_IMAGE" \
+            --build-arg "RUST_TOOLCHAIN=$RUST_TOOLCHAIN" \
+            --output type=local,dest=dist .
+      - name: Name the artifact
+        id: artifact
+        env:
+          PHP_IMAGE: ${{ matrix.image.alpine }}
+        run: echo "name=dist-musl-${{ runner.arch }}-${PHP_IMAGE//[:.]/-}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: dist/
+          if-no-files-found: error
+
+  images:
+    needs: [plan, nix, musl]
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.plan.outputs.images) }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: images-*
+      - name: Push the image for each architecture and the multi-architecture index
+        id: push
+        env:
+          TAG: ${{ matrix.image.tag }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          manifests=()
+          for arch in X64:amd64 ARM64:arm64; do
+            loaded="$(docker load --input "images-${arch%%:*}/$TAG.tar.gz" | sed -n 's/^Loaded image: //p')"
+            if [ "$loaded" != "$image:$TAG" ]; then
+              echo "::error::images-${arch%%:*}/$TAG.tar.gz holds $loaded, expected $image:$TAG"
+              exit 1
+            fi
+            docker tag "$loaded" "$image:$TAG-${arch##*:}"
+            docker push "$image:$TAG-${arch##*:}"
+            manifests+=("$image:$TAG-${arch##*:}")
+          done
+          docker buildx imagetools create --tag "$image:$TAG" "${manifests[@]}"
+          {
+            echo "name=$image"
+            echo "digest=$(docker buildx imagetools inspect "$image:$TAG" --format '{{json .Manifest}}' | jq -r .digest)"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.push.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  publish:
+    needs: [plan, nix, musl, images]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - name: Verify every archive and collect the checksums
+        working-directory: dist
+        run: |
+          sha256sum --check --strict ./*.tgz.sha256
+          cat ./*.tgz.sha256 > SHA256SUMS
+          rm ./*.tgz.sha256
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.tgz
+      - uses: ./.github/actions/setup-nix
+      - name: Write the release notes
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          {
+            nix shell --inputs-from . nixpkgs#just --command just changelog "$VERSION"
+            echo
+            echo "Built for PHP $(find dist -name '*.tgz' -printf '%f\n' | sed -n 's/^php_opcov-v[^_]*_php\([0-9.]*\)-.*/\1/p' | sort -uV | paste -sd ' '), NTS and ZTS."
+            echo "Report schema: $(jq -r '"`\(.properties.schema.const)`"' schema/opcov-report.v*.json | paste -sd ' ')."
+            echo "Platforms and install channels: [docs/install.md](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/install.md)."
+          } > notes.md
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "opcov $VERSION" --notes-file notes.md "${prerelease[@]}" dist/*

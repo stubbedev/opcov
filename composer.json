@@ -1,0 +1,23 @@
+{
+  "name": "opcov/opcov",
+  "description": "Opcode-level line, branch-outcome and loop coverage for PHP",
+  "type": "php-ext",
+  "license": "MIT",
+  "homepage": "https://github.com/stubbedev/opcov",
+  "keywords": ["coverage", "code-coverage", "branch-coverage", "extension"],
+  "support": {
+    "issues": "https://github.com/stubbedev/opcov/issues",
+    "source": "https://github.com/stubbedev/opcov",
+    "docs": "https://github.com/stubbedev/opcov/blob/main/docs/install.md"
+  },
+  "require": {
+    "php": "~8.4.0 || ~8.5.0 || ~8.6.0"
+  },
+  "php-ext": {
+    "extension-name": "opcov",
+    "support-nts": true,
+    "support-zts": true,
+    "download-url-method": ["pre-packaged-binary"],
+    "os-families": ["linux", "darwin"]
+  }
+}

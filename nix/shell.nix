@@ -1,20 +1,17 @@
 {
   perSystem = {
-    cargoEnv,
     config,
-    craneLib,
     lib,
-    phpDefault,
-    phpEnv,
+    opcov,
     phpShell,
     pkgs,
     self',
     ...
   }: {
     devShells.default =
-      (craneLib.devShell.override {
+      (opcov.craneLib.devShell.override {
         mkShell = pkgs.mkShell.override {
-          stdenv = craneLib.stdenvSelector pkgs;
+          stdenv = opcov.craneLib.stdenvSelector pkgs;
         };
       }) {
         checks = self'.checks;
@@ -34,7 +31,7 @@
           rustPlatform.bindgenHook
         ];
 
-        env = cargoEnv // phpEnv phpDefault // {RUSTC_WRAPPER = lib.getExe pkgs.sccache;};
+        env = opcov.cargoEnv // opcov.phptEnv phpShell // {RUSTC_WRAPPER = lib.getExe pkgs.sccache;};
       };
   };
 }
