@@ -11,7 +11,7 @@ opcov binds to the Zend engine through its own `opcov-sys` crate:
 - `bindgen` runs over the headers of the exact PHP being targeted, found through
   `php-config` (`PHP_CONFIG`, else `php-config` on `PATH`), with an allowlist of
   the engine items opcov uses (`ENGINE_ITEMS` in `crates/opcov-sys/build.rs`).
-- A C shim compiled by `cc` (`crates/opcov-sys/shim/shim.c`, 51 lines plus an 18-line header) exports
+- A C shim compiled by `cc` (`crates/opcov-sys/shim/shim.c`, about 180 lines plus a 45-line header) exports
   the inline functions, macros and TSRM-indirected globals that bindgen cannot
   emit. It holds accessors only.
 - Zend macros that are pure data (`STANDARD_MODULE_HEADER`/`_PROPERTIES`,
@@ -85,10 +85,29 @@ target headers:
 | `opcov_op_handler()` | `zend_op.handler` read as an address, whatever its type for the VM kind |
 | `opcov_parse_parameters_none()` | `zend_parse_parameters_none()` |
 | `opcov_is_user_code()` | `ZEND_USER_CODE(function->type)` (an enum constant on 8.6 that bindgen drops) |
+| `opcov_is_user_class()` | `ce->type == ZEND_USER_CLASS` (an enum constant on 8.6 that bindgen drops) |
+| `opcov_ini_long()`, `opcov_ini_string()` | `zend_ini_long()`, `zend_ini_string_ex()`, whose `orig` parameter is `int` before 8.6 and `bool` since |
+| `opcov_parse_path()`, `opcov_parse_array()` | `ZEND_PARSE_PARAMETERS_START(1, 1)` with `Z_PARAM_PATH` / `Z_PARAM_ARRAY_HT` |
+| `opcov_zval_null()`, `opcov_zval_bool()`, `opcov_zval_long()` | `ZVAL_NULL`, `ZVAL_BOOL`, `ZVAL_LONG` |
+| `opcov_read_string()`, `opcov_read_long()` | `Z_TYPE_P` check plus `Z_STRVAL_P`/`Z_STRLEN_P`, `Z_LVAL_P` |
+| `opcov_array_init()` | `array_init_size` |
+| `opcov_add_index_zval()`, `opcov_add_next_index_zval()` | inline `add_index_zval`, `add_next_index_zval` |
+| `opcov_map_ptr_at()` | `Z_PTR` of bucket `n` of a hash map, null for `IS_UNDEF` (iterating `CG(function_table)`, `CG(class_table)`, a class's methods and properties) |
+| `opcov_array_value_at()` | element `n` of a packed or hash array, dereferenced, null for `IS_UNDEF` |
+| `opcov_string_init()`, `opcov_string_release()` | inline `zend_string_init`, `zend_string_release` |
+| `opcov_register_class()` | `INIT_CLASS_ENTRY_EX` plus `zend_register_internal_class_ex` |
+
+`shim.h` also declares four PCRE functions by hand (`pcre_get_compiled_regex_cache`,
+`php_pcre_pce_incref`, `php_pcre_pce_decref`, `php_pcre_match_impl`, with
+`pcre_cache_entry` as an opaque type) instead of including
+`ext/pcre/php_pcre.h`: with an external PCRE2 (nixpkgs, most distributions)
+that header includes `pcre2.h`, which `php-config --includes` does not list.
+The four signatures are identical in the 8.4, 8.5 and 8.6 headers.
 
 The ZTS accessors call `tsrm_get_ls_cache()` on every use instead of caching it
-in a `ZEND_TSRMLS_CACHE` thread-local; the probe hot path (#5, #6) should
-revisit this if profiling shows the call.
+in a `ZEND_TSRMLS_CACHE` thread-local. The probe callback (#5) needs none of
+them: it reads the frame the VM passes and the op array's reserved slot, and
+checks thread ownership only once a second thread has started.
 
 ## Panics: `panic = "unwind"` and a guard at every entry point
 
@@ -104,7 +123,11 @@ runs its body through `guard::guard`, which wraps it in `catch_unwind`. On a
 panic it records the first reason (entry point and panic message) in a
 process-wide `OnceLock`, returns a neutral value to the engine, and PHP carries
 on. `php --ri opcov` shows `Collection => disabled: panic in <entry>: <message>`.
-Restoring original opcode handlers on panic arrives with the probes (#5).
+After recording the reason the guard puts the original handler back on every
+armed probe; the probe callback then only forwards, and new op arrays get
+their real handlers but no probes. The guard covers module and request
+startup and shutdown, the compile hooks, the `op_array_dtor` hook, the probe
+callback and every PHP function.
 
 Two constraints found while proving it:
 
@@ -182,32 +205,48 @@ found and `PHP_CONFIG`. It exposes `cfg(php_version = "8.4" | "8.5" | "8.6")` an
 ## Engine symbols used
 
 Undefined dynamic symbols of `opcov.so` (from `nm -D --undefined-only`, PHP 8.5
-NTS and ZTS, `engine-selftest` enabled), resolved against the PHP binary:
+NTS and ZTS, release features), resolved against the PHP binary (libc symbols
+left out):
 
 | Symbol | Used for |
 |---|---|
-| `executor_globals` (NTS), `executor_globals_offset` (ZTS) | `EG()` |
-| `compiler_globals` (NTS), `compiler_globals_offset` (ZTS) | `CG()` |
+| `executor_globals` (NTS), `executor_globals_offset` (ZTS) | `EG()`: current frame, `error_reporting` |
+| `compiler_globals` (NTS), `compiler_globals_offset` (ZTS) | `CG()`: `compiler_options`, `function_table`, `class_table` |
 | `tsrm_get_ls_cache` (ZTS) | `EG()`/`CG()` on ZTS |
-| `_emalloc`, `_efree` | inside `ZVAL_STRINGL` and the arena shim |
-| `zend_wrong_parameters_none_error` | inside `zend_parse_parameters_none()` |
+| `_emalloc`, `_efree`, `__zend_malloc`, `zend_string_init_interned`, `std_object_handlers` | inside the shim's string, class-entry and arena wrappers |
+| `_zend_new_array`, `zend_hash_index_update`, `zend_hash_next_index_insert`, `add_assoc_zval_ex` | building the arrays the PHP functions return |
+| `zend_parse_arg_str_slow`, `zend_wrong_parameter_error`, `zend_wrong_parameters_count_error`, `zend_wrong_parameters_none_error` | inside the shim's argument parsing |
+| `zend_register_ini_entries_ex`, `zend_unregister_ini_entries_ex`, `zend_ini_long`, `zend_ini_string_ex`, `display_ini_entries` | the four INI settings and `php --ri` |
+| `zend_register_internal_class_ex`, `spl_ce_RuntimeException`, `spl_ce_LogicException`, `zend_throw_exception` | `\opcov\CannotCollectException` and the `LogicException`s of the API |
 | `php_info_print_table_start`, `_row`, `_end` | `php --ri opcov` |
 | `zend_vm_kind` | VM kind in `php --ri` and the self-test |
-| `zend_set_user_opcode_handler`, `zend_get_user_opcode_handler` | probe label (self-test; probes in #5) |
-| `zend_vm_set_opcode_handler` | probe label (self-test; handler restore in #5) |
-| `zend_compile_file`, `zend_compile_string` | compile hooks (self-test; wrapped in #3) |
-| `zend_get_resource_handle` | `op_array.reserved[]` slot (self-test; #5) |
-| `zend_register_extension`, `zend_get_extension` | runtime `zend_extension` for `op_array_dtor` (self-test; #5) |
-| `zend_build_cfg`, `zend_cfg_build_predecessors`, `zend_cfg_compute_dominators_tree`, `zend_cfg_identify_loops` | CFG (self-test; #4) |
+| `zend_set_user_opcode_handler`, `zend_get_user_opcode_handler` | registering the probe callback for every opcode, saving and restoring other extensions' handlers |
+| `zend_vm_set_opcode_handler` | the probe label, and the real handlers after `pass_two()` |
+| `zend_compile_file`, `zend_compile_string` | the compile hooks (#3, #5) |
+| `zend_resolve_path` | resolving a file before compilation for the jump-table decision |
+| `zend_execute_ex`, `execute_ex` | detecting the stock executor for declarations-only files |
+| `zend_get_resource_handle` | the `op_array.reserved[]` slot that maps an op array to its unit |
+| `zend_register_extension` | the runtime `zend_extension` whose `op_array_dtor` frees units |
+| `zend_build_cfg`, `zend_cfg_build_predecessors`, `zend_cfg_compute_dominators_tree`, `zend_cfg_identify_loops` | the CFG snapshot (#4) |
+| `pcre_get_compiled_regex_cache`, `php_pcre_pce_incref`, `php_pcre_pce_decref`, `php_pcre_match_impl` | `opcov.exclude_pattern` |
+| `zend_get_extension` | self-test only (`engine-selftest`) |
 
-The release build without `engine-selftest` references only the first seven
-rows. Constants and types taken from the headers at compile time:
+Constants and types taken from the headers at compile time:
 `ZEND_MODULE_API_NO`, `ZEND_DEBUG`, `PHP_API_VERSION`, `PHP_VERSION`,
-`ZEND_NOP`, `ZEND_USER_OPCODE`, `ZEND_USER_OPCODE_DISPATCH`, `ZEND_VM_KIND_*`,
-`IS_UNUSED`, `MAY_BE_STRING`, `MAY_BE_VOID`, `ZEND_BB_LOOP_HEADER`, `SUCCESS`,
+`PHP_VERSION_ID`, `ZEND_NOP`, `ZEND_USER_OPCODE`, `ZEND_USER_OPCODE_CONTINUE`,
+`ZEND_USER_OPCODE_DISPATCH`, `ZEND_VM_KIND_*`, `IS_UNUSED`, `IS_CONST`,
+`IS_TMP_VAR`, `IS_VAR`, `IS_CV`, `MAY_BE_ARRAY`, `MAY_BE_STRING`,
+`MAY_BE_VOID`, `ZEND_ACC_ABSTRACT`, `ZEND_ACC_ANON_CLASS`, `ZEND_ACC_CLOSURE`,
+`ZEND_ACC_DONE_PASS_TWO`, `ZEND_BB_START`, `ZEND_BB_CATCH`,
+`ZEND_BB_FINALLY`, `ZEND_BB_FINALLY_END`, `ZEND_BB_RECV_ENTRY`,
+`ZEND_BB_REACHABLE`, `ZEND_BB_LOOP_HEADER`, `ZEND_COMPILE_NO_JUMPTABLES`,
+`ZEND_INI_SYSTEM`, `ZEND_INI_PERDIR`, `ZEND_PROPERTY_HOOK_COUNT`, `SUCCESS`,
 and the structs `zend_module_entry`, `zend_function_entry`,
-`zend_internal_arg_info`, `zend_execute_data`, `zend_op`, `zend_op_array`,
-`zend_cfg`, `zend_basic_block`, `zend_extension`, `zval` and the engine globals.
+`zend_internal_arg_info`, `zend_ini_entry_def`, `zend_execute_data`,
+`zend_function`, `zend_op`, `zend_op_array`, `zend_class_entry`,
+`zend_property_info`, `zend_file_handle`, `zend_string`, `HashTable`,
+`zend_cfg`, `zend_basic_block`, `zend_extension`, `zval` and the engine
+globals.
 
 ## Generated code and lints
 

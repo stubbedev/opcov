@@ -133,6 +133,18 @@ impl ArgInfo<0> {
 }
 
 #[must_use]
+pub const fn argument(name: &'static CStr, type_mask: u32) -> zend_internal_arg_info {
+    return zend_internal_arg_info {
+        name: name.as_ptr(),
+        type_: zend_type {
+            ptr: ptr::null_mut(),
+            type_mask,
+        },
+        default_value: ptr::null(),
+    };
+}
+
+#[must_use]
 pub const fn function_entry<const N: usize>(
     name: &'static CStr,
     handler: FunctionHandler,
@@ -178,6 +190,83 @@ impl<const N: usize> FunctionTable<N> {
     }
 
     const fn as_ptr(&'static self) -> *const zend_function_entry {
+        return (&raw const self.entries).cast();
+    }
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "a const context cannot use TryFrom; the assertion above each cast rules out truncation"
+)]
+const fn ini_lengths(name: &CStr, default: &CStr) -> (u16, u32) {
+    let name_length = name.count_bytes();
+    let value_length = default.count_bytes();
+    assert!(
+        name_length <= u16::MAX as usize,
+        "an INI name must fit zend_ini_entry_def.name_length"
+    );
+    assert!(
+        value_length <= u32::MAX as usize,
+        "an INI default must fit zend_ini_entry_def.value_length"
+    );
+    return (name_length as u16, value_length as u32);
+}
+
+#[must_use]
+pub const fn ini_entry(
+    name: &'static CStr,
+    default: &'static CStr,
+    modifiable: u8,
+) -> zend_ini_entry_def {
+    let (name_length, value_length) = ini_lengths(name, default);
+    return zend_ini_entry_def {
+        name: name.as_ptr(),
+        on_modify: None,
+        mh_arg1: ptr::null_mut(),
+        mh_arg2: ptr::null_mut(),
+        mh_arg3: ptr::null_mut(),
+        value: default.as_ptr(),
+        displayer: None,
+        value_length,
+        name_length,
+        modifiable,
+    };
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct IniTable<const N: usize> {
+    entries: [zend_ini_entry_def; N],
+    end: zend_ini_entry_def,
+}
+
+// SAFETY: an IniTable is immutable after its const construction; the engine only reads it, and every
+// pointer in it refers to 'static, immutable C strings.
+unsafe impl<const N: usize> Sync for IniTable<N> {}
+
+impl<const N: usize> IniTable<N> {
+    #[must_use]
+    pub const fn new(entries: [zend_ini_entry_def; N]) -> Self {
+        return Self {
+            entries,
+            end: zend_ini_entry_def {
+                name: ptr::null(),
+                on_modify: None,
+                mh_arg1: ptr::null_mut(),
+                mh_arg2: ptr::null_mut(),
+                mh_arg3: ptr::null_mut(),
+                value: ptr::null(),
+                displayer: None,
+                value_length: 0,
+                name_length: 0,
+                modifiable: 0,
+            },
+        };
+    }
+
+    #[must_use]
+    pub const fn as_ptr(&'static self) -> *const zend_ini_entry_def {
         return (&raw const self.entries).cast();
     }
 }

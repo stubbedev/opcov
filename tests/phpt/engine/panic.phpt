@@ -16,3 +16,9 @@ PHP API => %d
 Thread safety => %r(ZTS|NTS)%r
 VM kind => %r(CALL|SWITCH|GOTO|HYBRID|TAILCALL)%r
 Collection => disabled: panic in opcov\selftest_panic(): deliberate panic injected by opcov\selftest_panic()
+
+Directive => Local Value => Master Value
+opcov.enabled => 0 => 0
+opcov.collect_paths => no value => no value
+opcov.exclude_paths => no value => no value
+opcov.exclude_pattern => no value => no value

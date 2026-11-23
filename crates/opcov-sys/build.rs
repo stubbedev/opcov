@@ -14,39 +14,76 @@ const WRAPPER_HEADER: &str = "shim/wrapper.h";
 
 const ENGINE_ITEMS: &[&str] = &[
     "opcov_.*",
+    "add_assoc_zval_ex",
+    "display_ini_entries",
+    "execute_ex",
+    "pcre_get_compiled_regex_cache",
     "php_info_print_table_end",
     "php_info_print_table_row",
     "php_info_print_table_start",
+    "php_pcre_match_impl",
+    "php_pcre_pce_decref",
+    "php_pcre_pce_incref",
+    "spl_ce_LogicException",
+    "spl_ce_RuntimeException",
     "zend_build_cfg",
     "zend_cfg_build_predecessors",
     "zend_cfg_compute_dominators_tree",
     "zend_cfg_identify_loops",
+    "zend_compile_file",
+    "zend_compile_string",
+    "zend_execute_ex",
     "zend_get_extension",
     "zend_get_resource_handle",
     "zend_get_user_opcode_handler",
     "zend_register_extension",
+    "zend_register_ini_entries_ex",
+    "zend_resolve_path",
     "zend_set_user_opcode_handler",
+    "zend_throw_exception",
+    "zend_unregister_ini_entries_ex",
     "zend_vm_kind",
     "zend_vm_set_opcode_handler",
+    "IS_CONST",
+    "IS_CV",
+    "IS_TMP_VAR",
     "IS_UNUSED",
+    "IS_VAR",
+    "MAY_BE_ARRAY",
     "MAY_BE_STRING",
     "MAY_BE_VOID",
     "PHP_API_VERSION",
     "PHP_VERSION",
+    "PHP_VERSION_ID",
+    "ZEND_ACC_ANON_CLASS",
+    "ZEND_ACC_CLOSURE",
+    "ZEND_ACC_DONE_PASS_TWO",
+    "ZEND_BB_CATCH",
+    "ZEND_BB_FINALLY",
+    "ZEND_BB_FINALLY_END",
     "ZEND_BB_LOOP_HEADER",
+    "ZEND_BB_REACHABLE",
+    "ZEND_BB_RECV_ENTRY",
+    "ZEND_BB_START",
+    "ZEND_COMPILE_NO_JUMPTABLES",
     "ZEND_DEBUG",
+    "ZEND_INI_PERDIR",
+    "ZEND_INI_SYSTEM",
     "ZEND_MODULE_API_NO",
     "ZEND_NOP",
+    "ZEND_PROPERTY_HOOK_COUNT",
     "ZEND_USER_OPCODE",
+    "ZEND_USER_OPCODE_CONTINUE",
     "ZEND_USER_OPCODE_DISPATCH",
     "ZEND_VM_KIND_.*",
-    "zend_compile_file",
-    "zend_compile_string",
     "zend_basic_block",
     "zend_cfg",
     "zend_execute_data",
     "zend_extension",
+    "zend_file_handle",
+    "zend_function",
     "zend_function_entry",
+    "zend_ini_entry_def",
     "zend_internal_arg_info",
     "zend_module_entry",
     "zend_op",
@@ -65,7 +102,18 @@ struct MacroTypes;
 
 impl bindgen::callbacks::ParseCallbacks for MacroTypes {
     fn int_macro(&self, name: &str, _value: i64) -> Option<bindgen::callbacks::IntKind> {
-        if matches!(name, "IS_UNUSED" | "ZEND_NOP" | "ZEND_USER_OPCODE") {
+        if matches!(
+            name,
+            "IS_CONST"
+                | "IS_CV"
+                | "IS_TMP_VAR"
+                | "IS_UNUSED"
+                | "IS_VAR"
+                | "ZEND_INI_PERDIR"
+                | "ZEND_INI_SYSTEM"
+                | "ZEND_NOP"
+                | "ZEND_USER_OPCODE"
+        ) {
             return Some(bindgen::callbacks::IntKind::U8);
         }
         if name.starts_with("ZEND_USER_OPCODE_") || name.starts_with("ZEND_VM_KIND_") {
