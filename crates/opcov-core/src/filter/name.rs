@@ -23,7 +23,9 @@ fn compiling_file(description: &str) -> Option<&str> {
 pub fn stream_scheme(path: &str) -> Option<&str> {
     let length = path
         .bytes()
-        .take_while(|&byte| return byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
+        .take_while(|&byte| {
+            return byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.');
+        })
         .count();
     if length < 2 {
         return None;

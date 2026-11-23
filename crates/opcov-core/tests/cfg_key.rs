@@ -70,7 +70,7 @@ mod key {
         #[test]
         fn canonical_form_round_trips(key in key()) {
             let text = key.to_string();
-            prop_assert_eq!(text.parse::<FunctionKey>().unwrap(), key.clone(), "parse of {}", text);
+            prop_assert_eq!(&text.parse::<FunctionKey>().unwrap(), &key, "parse of {}", text);
             let json = serde_json::to_string(&key).unwrap();
             prop_assert_eq!(serde_json::from_str::<FunctionKey>(&json).unwrap(), key, "serde of {}", json);
         }

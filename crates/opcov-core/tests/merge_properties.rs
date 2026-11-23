@@ -67,14 +67,14 @@ mod properties {
             let left = merge(&[a.clone(), b.clone()]).unwrap();
             let right = merge(&[b.clone(), c.clone()]).unwrap();
             let flat = merged(&[a.clone(), b, c.clone()]);
-            prop_assert_eq!(merged(&[left, c]), flat.clone());
+            prop_assert_eq!(&merged(&[left, c]), &flat);
             prop_assert_eq!(merged(&[a, right]), flat);
         }
 
         #[test]
         fn merge_is_idempotent(universe in universe(), a in run(), b in run()) {
             let (a, b) = (universe.report(&a), universe.report(&b));
-            prop_assert_eq!(merged(&[a.clone()]), bytes(&a));
+            prop_assert_eq!(merged(std::slice::from_ref(&a)), bytes(&a));
             prop_assert_eq!(merged(&[a.clone(), a.clone()]), bytes(&a));
             let both = merge(&[a, b.clone()]).unwrap();
             prop_assert_eq!(merged(&[both.clone(), b]), bytes(&both));

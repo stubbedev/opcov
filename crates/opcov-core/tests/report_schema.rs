@@ -238,14 +238,18 @@ mod schema {
     fn functions_are_read_in_any_order_and_written_in_key_order() {
         let unordered = mutate(
             r#""functions":{"#,
-            r#""functions":{"App\Foo::zed":{"span":null,"outcomes":[],"loops":[]},"#,
+            r#""functions":{"App\\Foo::zed":{"span":null,"outcomes":[],"loops":[]},"#,
         );
         let report = Report::read(unordered.as_bytes()).unwrap();
         let written = String::from_utf8(bytes(&report)).unwrap();
-        let bar = written.find("App\\Foo::bar").unwrap();
-        let zed = written.find("App\\Foo::zed").unwrap();
+        let bar = written.find(r"App\\Foo::bar").unwrap();
+        let zed = written.find(r"App\\Foo::zed").unwrap();
         assert!(bar < zed, "functions are written in key order: {written}");
-        assert_eq!(Report::read(written.as_bytes()).unwrap(), report, "the reordered report reads back");
+        assert_eq!(
+            Report::read(written.as_bytes()).unwrap(),
+            report,
+            "the reordered report reads back"
+        );
     }
 
     #[test]

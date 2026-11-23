@@ -82,145 +82,146 @@ mod model {
         return blocks.iter().copied().map(BlockId::new).collect();
     }
 
+    const OUTCOME_KIND_TABLE: [(Opcode, Successor, Option<EdgeKind>); 38] = [
+        (Opcode::Jmpz, Successor::Target, Some(EdgeKind::IfFalse)),
+        (Opcode::Jmpz, Successor::Fallthrough, Some(EdgeKind::IfTrue)),
+        (Opcode::Jmpnz, Successor::Target, Some(EdgeKind::IfTrue)),
+        (
+            Opcode::Jmpnz,
+            Successor::Fallthrough,
+            Some(EdgeKind::IfFalse),
+        ),
+        (
+            Opcode::JmpzEx,
+            Successor::Target,
+            Some(EdgeKind::ShortCircuit),
+        ),
+        (
+            Opcode::JmpnzEx,
+            Successor::Fallthrough,
+            Some(EdgeKind::Evaluate),
+        ),
+        (
+            Opcode::Coalesce,
+            Successor::Target,
+            Some(EdgeKind::CoalesceValue),
+        ),
+        (
+            Opcode::Coalesce,
+            Successor::Fallthrough,
+            Some(EdgeKind::CoalesceFallback),
+        ),
+        (
+            Opcode::JmpSet,
+            Successor::Target,
+            Some(EdgeKind::TernaryValue),
+        ),
+        (
+            Opcode::JmpSet,
+            Successor::Fallthrough,
+            Some(EdgeKind::TernaryFallback),
+        ),
+        (
+            Opcode::JmpNull,
+            Successor::Target,
+            Some(EdgeKind::NullsafeNull),
+        ),
+        (
+            Opcode::JmpNull,
+            Successor::Fallthrough,
+            Some(EdgeKind::NullsafeValue),
+        ),
+        (
+            Opcode::FeResetRw,
+            Successor::Target,
+            Some(EdgeKind::LoopSkip),
+        ),
+        (
+            Opcode::FeResetR,
+            Successor::Fallthrough,
+            Some(EdgeKind::LoopEnter),
+        ),
+        (
+            Opcode::FeFetchR,
+            Successor::Target,
+            Some(EdgeKind::LoopExit),
+        ),
+        (
+            Opcode::FeFetchRw,
+            Successor::Fallthrough,
+            Some(EdgeKind::LoopBack),
+        ),
+        (
+            Opcode::Match,
+            Successor::Arm(3),
+            Some(EdgeKind::MatchArm(3)),
+        ),
+        (
+            Opcode::Match,
+            Successor::Default,
+            Some(EdgeKind::MatchNoArm),
+        ),
+        (Opcode::Match, Successor::Fallthrough, None),
+        (
+            Opcode::SwitchString,
+            Successor::Arm(1),
+            Some(EdgeKind::SwitchCase(1)),
+        ),
+        (
+            Opcode::SwitchLong,
+            Successor::Default,
+            Some(EdgeKind::SwitchDefault),
+        ),
+        (
+            Opcode::SwitchLong,
+            Successor::Fallthrough,
+            Some(EdgeKind::Engine),
+        ),
+        (Opcode::Catch, Successor::Fallthrough, Some(EdgeKind::Catch)),
+        (Opcode::Catch, Successor::Target, Some(EdgeKind::Flow)),
+        (Opcode::FastCall, Successor::Target, Some(EdgeKind::Finally)),
+        (
+            Opcode::FastCall,
+            Successor::Fallthrough,
+            Some(EdgeKind::Flow),
+        ),
+        (
+            Opcode::JmpFrameless,
+            Successor::Target,
+            Some(EdgeKind::Engine),
+        ),
+        (
+            Opcode::JmpFrameless,
+            Successor::Fallthrough,
+            Some(EdgeKind::Engine),
+        ),
+        (
+            Opcode::AssertCheck,
+            Successor::Target,
+            Some(EdgeKind::Engine),
+        ),
+        (
+            Opcode::BindInitStaticOrJmp,
+            Successor::Fallthrough,
+            Some(EdgeKind::Engine),
+        ),
+        (Opcode::Jmp, Successor::Target, Some(EdgeKind::Flow)),
+        (Opcode::Jmp, Successor::Fallthrough, None),
+        (Opcode::Echo, Successor::Fallthrough, Some(EdgeKind::Flow)),
+        (Opcode::Echo, Successor::Target, None),
+        (Opcode::Return, Successor::Fallthrough, None),
+        (Opcode::Jmpz, Successor::Arm(0), None),
+        (
+            Opcode::Unknown(250),
+            Successor::Fallthrough,
+            Some(EdgeKind::Flow),
+        ),
+        (Opcode::Unknown(250), Successor::Target, None),
+    ];
+
     #[test]
     fn opcode_successors_map_to_outcome_kinds() {
-        let cases = [
-            (Opcode::Jmpz, Successor::Target, Some(EdgeKind::IfFalse)),
-            (Opcode::Jmpz, Successor::Fallthrough, Some(EdgeKind::IfTrue)),
-            (Opcode::Jmpnz, Successor::Target, Some(EdgeKind::IfTrue)),
-            (
-                Opcode::Jmpnz,
-                Successor::Fallthrough,
-                Some(EdgeKind::IfFalse),
-            ),
-            (
-                Opcode::JmpzEx,
-                Successor::Target,
-                Some(EdgeKind::ShortCircuit),
-            ),
-            (
-                Opcode::JmpnzEx,
-                Successor::Fallthrough,
-                Some(EdgeKind::Evaluate),
-            ),
-            (
-                Opcode::Coalesce,
-                Successor::Target,
-                Some(EdgeKind::CoalesceValue),
-            ),
-            (
-                Opcode::Coalesce,
-                Successor::Fallthrough,
-                Some(EdgeKind::CoalesceFallback),
-            ),
-            (
-                Opcode::JmpSet,
-                Successor::Target,
-                Some(EdgeKind::TernaryValue),
-            ),
-            (
-                Opcode::JmpSet,
-                Successor::Fallthrough,
-                Some(EdgeKind::TernaryFallback),
-            ),
-            (
-                Opcode::JmpNull,
-                Successor::Target,
-                Some(EdgeKind::NullsafeNull),
-            ),
-            (
-                Opcode::JmpNull,
-                Successor::Fallthrough,
-                Some(EdgeKind::NullsafeValue),
-            ),
-            (
-                Opcode::FeResetRw,
-                Successor::Target,
-                Some(EdgeKind::LoopSkip),
-            ),
-            (
-                Opcode::FeResetR,
-                Successor::Fallthrough,
-                Some(EdgeKind::LoopEnter),
-            ),
-            (
-                Opcode::FeFetchR,
-                Successor::Target,
-                Some(EdgeKind::LoopExit),
-            ),
-            (
-                Opcode::FeFetchRw,
-                Successor::Fallthrough,
-                Some(EdgeKind::LoopBack),
-            ),
-            (
-                Opcode::Match,
-                Successor::Arm(3),
-                Some(EdgeKind::MatchArm(3)),
-            ),
-            (
-                Opcode::Match,
-                Successor::Default,
-                Some(EdgeKind::MatchNoArm),
-            ),
-            (Opcode::Match, Successor::Fallthrough, None),
-            (
-                Opcode::SwitchString,
-                Successor::Arm(1),
-                Some(EdgeKind::SwitchCase(1)),
-            ),
-            (
-                Opcode::SwitchLong,
-                Successor::Default,
-                Some(EdgeKind::SwitchDefault),
-            ),
-            (
-                Opcode::SwitchLong,
-                Successor::Fallthrough,
-                Some(EdgeKind::Engine),
-            ),
-            (Opcode::Catch, Successor::Fallthrough, Some(EdgeKind::Catch)),
-            (Opcode::Catch, Successor::Target, Some(EdgeKind::Flow)),
-            (Opcode::FastCall, Successor::Target, Some(EdgeKind::Finally)),
-            (
-                Opcode::FastCall,
-                Successor::Fallthrough,
-                Some(EdgeKind::Flow),
-            ),
-            (
-                Opcode::JmpFrameless,
-                Successor::Target,
-                Some(EdgeKind::Engine),
-            ),
-            (
-                Opcode::JmpFrameless,
-                Successor::Fallthrough,
-                Some(EdgeKind::Engine),
-            ),
-            (
-                Opcode::AssertCheck,
-                Successor::Target,
-                Some(EdgeKind::Engine),
-            ),
-            (
-                Opcode::BindInitStaticOrJmp,
-                Successor::Fallthrough,
-                Some(EdgeKind::Engine),
-            ),
-            (Opcode::Jmp, Successor::Target, Some(EdgeKind::Flow)),
-            (Opcode::Jmp, Successor::Fallthrough, None),
-            (Opcode::Echo, Successor::Fallthrough, Some(EdgeKind::Flow)),
-            (Opcode::Echo, Successor::Target, None),
-            (Opcode::Return, Successor::Fallthrough, None),
-            (Opcode::Jmpz, Successor::Arm(0), None),
-            (
-                Opcode::Unknown(250),
-                Successor::Fallthrough,
-                Some(EdgeKind::Flow),
-            ),
-            (Opcode::Unknown(250), Successor::Target, None),
-        ];
-        for (opcode, successor, kind) in cases {
+        for (opcode, successor, kind) in OUTCOME_KIND_TABLE {
             assert_eq!(
                 opcode_edge_kind(opcode, successor),
                 kind,

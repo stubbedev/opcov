@@ -266,7 +266,8 @@ impl Sha256 {
             return Err(invalid());
         }
         let mut bytes = [0_u8; 32];
-        for (slot, pair) in bytes.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+        let (pairs, _rest) = hex.as_bytes().as_chunks::<2>();
+        for (slot, pair) in bytes.iter_mut().zip(pairs) {
             let digits = std::str::from_utf8(pair).map_err(|_utf8| return invalid())?;
             *slot = u8::from_str_radix(digits, 16).map_err(|_digits| return invalid())?;
         }

@@ -449,6 +449,7 @@ mod tests {
         return ClassRef::Named(name.parse().unwrap());
     }
 
+    #[expect(clippy::too_many_lines, reason = "one table row per key shape")]
     fn canonical_keys() -> Vec<(FunctionKey, &'static str)> {
         return vec![
             (

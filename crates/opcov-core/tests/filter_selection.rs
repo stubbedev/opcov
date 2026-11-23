@@ -1,4 +1,8 @@
 #[cfg(test)]
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "pub(super) is the intended visibility; the pub this lint suggests is denied by rustc unreachable_pub"
+)]
 mod support {
     use std::collections::BTreeMap;
     use std::io;
@@ -6,12 +10,12 @@ mod support {
 
     use opcov_core::filter::{CaseSensitivity, Selection, SelectionConfig};
 
-    pub(super) fn no_listfiles(path: &Path) -> Result<String, io::Error> {
-        panic!("no listfile expected, asked for {}", path.display());
+    pub(super) fn no_listfiles() -> impl FnMut(&Path) -> Result<String, io::Error> {
+        return |path| panic!("no listfile expected, asked for {}", path.display());
     }
 
-    pub(super) fn identity(path: &Path) -> Result<PathBuf, io::Error> {
-        return Ok(path.to_path_buf());
+    pub(super) fn identity() -> impl FnMut(&Path) -> Result<PathBuf, io::Error> {
+        return |path| return Ok(path.to_path_buf());
     }
 
     pub(super) fn table<T: for<'a> From<&'a str>>(rows: &[(&str, &str)]) -> BTreeMap<PathBuf, T> {
@@ -37,7 +41,7 @@ mod support {
         realpath: impl FnMut(&Path) -> Result<PathBuf, io::Error>,
         case: CaseSensitivity,
     ) -> Selection {
-        return SelectionConfig::parse(collect, exclude, no_listfiles)
+        return SelectionConfig::parse(collect, exclude, no_listfiles())
             .unwrap()
             .resolve(realpath, case)
             .unwrap();
@@ -56,7 +60,7 @@ mod ini_syntax {
     use super::support::{identity, lookup, no_listfiles, table};
 
     fn parse_inline(collect: &str, exclude: &str) -> UnresolvedSelection {
-        return SelectionConfig::parse(collect, exclude, no_listfiles).unwrap();
+        return SelectionConfig::parse(collect, exclude, no_listfiles()).unwrap();
     }
 
     fn entries(selection: &UnresolvedSelection) -> Vec<&str> {
@@ -68,7 +72,11 @@ mod ini_syntax {
 
     #[test]
     fn single_path() {
-        assert_eq!(entries(&parse_inline("/srv/app", "")), ["/srv/app"], "one entry");
+        assert_eq!(
+            entries(&parse_inline("/srv/app", "")),
+            ["/srv/app"],
+            "one entry"
+        );
     }
 
     #[test]
@@ -84,13 +92,21 @@ mod ini_syntax {
     #[test]
     fn leading_trailing_and_double_separators_are_ignored() {
         let selection = parse_inline("::/a::/b:", ":/c:");
-        assert_eq!(entries(&selection), ["/a", "/b", "/c"], "empty segments skipped");
+        assert_eq!(
+            entries(&selection),
+            ["/a", "/b", "/c"],
+            "empty segments skipped"
+        );
     }
 
     #[test]
     fn whitespace_around_entries_is_trimmed() {
         let selection = parse_inline("  /a : /b  ", " ");
-        assert_eq!(entries(&selection), ["/a", "/b"], "trimmed, blank exclude is empty");
+        assert_eq!(
+            entries(&selection),
+            ["/a", "/b"],
+            "trimmed, blank exclude is empty"
+        );
     }
 
     #[test]
@@ -98,7 +114,7 @@ mod ini_syntax {
         let selection = parse_inline("", "");
         assert_eq!(selection.entries().count(), 0, "no entries");
         let resolved = selection
-            .resolve(identity, CaseSensitivity::Sensitive)
+            .resolve(identity(), CaseSensitivity::Sensitive)
             .unwrap();
         assert!(resolved.is_empty_collect(), "empty collect list");
     }
@@ -106,7 +122,10 @@ mod ini_syntax {
     #[test]
     fn listfile_with_blank_lines_and_crlf() {
         let files = table(&[
-            ("/etc/collect.txt", "\r\n/srv/app\r\n\r\n   \r\n/srv/lib/x.php\r\n"),
+            (
+                "/etc/collect.txt",
+                "\r\n/srv/app\r\n\r\n   \r\n/srv/lib/x.php\r\n",
+            ),
             ("/etc/exclude.txt", "/srv/app/vendor\n\n"),
         ]);
         let selection =
@@ -162,22 +181,38 @@ mod ini_syntax {
             "opcov.collect_paths: cannot read listfile /etc/missing.txt: No such file or directory",
             "message names the setting, the listfile and the cause"
         );
-        assert!(std::error::Error::source(&error).is_some(), "io error is the source");
+        assert!(
+            std::error::Error::source(&error).is_some(),
+            "io error is the source"
+        );
     }
 
     #[test]
     fn at_sign_without_a_listfile_is_an_error() {
-        let error = SelectionConfig::parse(" @ ", "", no_listfiles).unwrap_err();
+        let error = SelectionConfig::parse(" @ ", "", no_listfiles()).unwrap_err();
         assert!(
-            matches!(error, FilterError::MissingListfileName { setting: PathSetting::Collect }),
+            matches!(
+                error,
+                FilterError::MissingListfileName {
+                    setting: PathSetting::Collect
+                }
+            ),
             "got {error:?}"
         );
     }
 
     #[test]
     fn ini_names() {
-        assert_eq!(PathSetting::Collect.ini_name(), "opcov.collect_paths", "collect");
-        assert_eq!(PathSetting::Exclude.ini_name(), "opcov.exclude_paths", "exclude");
+        assert_eq!(
+            PathSetting::Collect.ini_name(),
+            "opcov.collect_paths",
+            "collect"
+        );
+        assert_eq!(
+            PathSetting::Exclude.ini_name(),
+            "opcov.exclude_paths",
+            "exclude"
+        );
     }
 }
 
@@ -194,7 +229,7 @@ mod decisions {
     use super::support::{identity, lookup, no_listfiles, selection_with, table};
 
     fn selection(collect: &str, exclude: &str) -> Selection {
-        return selection_with(collect, exclude, identity, CaseSensitivity::Sensitive);
+        return selection_with(collect, exclude, identity(), CaseSensitivity::Sensitive);
     }
 
     fn decide(selection: &Selection, file: &str) -> Decision {
@@ -210,40 +245,88 @@ mod decisions {
     #[test]
     fn directory_matches_by_prefix_with_a_separator_boundary() {
         let selection = selection("/srv/app", "");
-        assert_eq!(decide(&selection, "/srv/app/x.php"), Decision::Selected, "direct child");
-        assert_eq!(decide(&selection, "/srv/app/a/b/c.php"), Decision::Selected, "deep child");
-        assert_eq!(decide(&selection, "/srv/application/x.php"), NOT_COLLECTED, "sibling prefix");
+        assert_eq!(
+            decide(&selection, "/srv/app/x.php"),
+            Decision::Selected,
+            "direct child"
+        );
+        assert_eq!(
+            decide(&selection, "/srv/app/a/b/c.php"),
+            Decision::Selected,
+            "deep child"
+        );
+        assert_eq!(
+            decide(&selection, "/srv/application/x.php"),
+            NOT_COLLECTED,
+            "sibling prefix"
+        );
         assert_eq!(decide(&selection, "/srv/ap"), NOT_COLLECTED, "shorter name");
-        assert_eq!(decide(&selection, "/srv"), NOT_COLLECTED, "parent directory");
+        assert_eq!(
+            decide(&selection, "/srv"),
+            NOT_COLLECTED,
+            "parent directory"
+        );
     }
 
     #[test]
     fn trailing_separator_on_the_entry_does_not_change_matching() {
         let selection = selection("/srv/app/", "");
-        assert_eq!(decide(&selection, "/srv/app/x.php"), Decision::Selected, "child");
-        assert_eq!(decide(&selection, "/srv/application/x.php"), NOT_COLLECTED, "sibling");
+        assert_eq!(
+            decide(&selection, "/srv/app/x.php"),
+            Decision::Selected,
+            "child"
+        );
+        assert_eq!(
+            decide(&selection, "/srv/application/x.php"),
+            NOT_COLLECTED,
+            "sibling"
+        );
     }
 
     #[test]
     fn file_entries_match_exactly() {
         let selection = selection("/srv/lib/x.php", "");
-        assert_eq!(decide(&selection, "/srv/lib/x.php"), Decision::Selected, "the file");
-        assert_eq!(decide(&selection, "/srv/lib/x.php.bak"), NOT_COLLECTED, "longer name");
-        assert_eq!(decide(&selection, "/srv/lib/y.php"), NOT_COLLECTED, "other file");
+        assert_eq!(
+            decide(&selection, "/srv/lib/x.php"),
+            Decision::Selected,
+            "the file"
+        );
+        assert_eq!(
+            decide(&selection, "/srv/lib/x.php.bak"),
+            NOT_COLLECTED,
+            "longer name"
+        );
+        assert_eq!(
+            decide(&selection, "/srv/lib/y.php"),
+            NOT_COLLECTED,
+            "other file"
+        );
     }
 
     #[test]
     fn root_entry_selects_every_absolute_file() {
         let selection = selection("/", "");
-        assert_eq!(decide(&selection, "/x.php"), Decision::Selected, "top level");
-        assert_eq!(decide(&selection, "/a/b/x.php"), Decision::Selected, "nested");
+        assert_eq!(
+            decide(&selection, "/x.php"),
+            Decision::Selected,
+            "top level"
+        );
+        assert_eq!(
+            decide(&selection, "/a/b/x.php"),
+            Decision::Selected,
+            "nested"
+        );
     }
 
     #[test]
     fn empty_collect_selects_nothing() {
         let selection = selection("", "/srv/app/vendor");
         assert!(selection.is_empty_collect(), "empty collect");
-        assert_eq!(decide(&selection, "/srv/app/x.php"), NOT_COLLECTED, "nothing selected");
+        assert_eq!(
+            decide(&selection, "/srv/app/x.php"),
+            NOT_COLLECTED,
+            "nothing selected"
+        );
     }
 
     #[test]
@@ -254,7 +337,11 @@ mod decisions {
             excluded_by("/srv/app/src"),
             "a more specific collect entry does not override the exclusion"
         );
-        assert_eq!(decide(&selection, "/srv/app/y.php"), Decision::Selected, "outside exclude");
+        assert_eq!(
+            decide(&selection, "/srv/app/y.php"),
+            Decision::Selected,
+            "outside exclude"
+        );
     }
 
     #[test]
@@ -291,7 +378,10 @@ mod decisions {
     fn path_exclusion_is_reported_before_pattern_exclusion() {
         let selection = selection("/srv/app", "/srv/app/vendor");
         assert_eq!(
-            selection.decide(CompiledFile::Resolved(Path::new("/srv/app/vendor/x.php")), true),
+            selection.decide(
+                CompiledFile::Resolved(Path::new("/srv/app/vendor/x.php")),
+                true
+            ),
             excluded_by("/srv/app/vendor"),
             "path exclusion names its entry"
         );
@@ -301,22 +391,38 @@ mod decisions {
     fn eval_code_is_decided_by_its_host_file() {
         let selection = selection("/srv/app", "/srv/app/vendor");
         let decide_eval = |host: &str| {
-            return selection.decide(CompiledFile::Eval { host: Path::new(host) }, false);
+            return selection.decide(
+                CompiledFile::Eval {
+                    host: Path::new(host),
+                },
+                false,
+            );
         };
-        assert_eq!(decide_eval("/srv/app/x.php"), Decision::Selected, "selected host");
+        assert_eq!(
+            decide_eval("/srv/app/x.php"),
+            Decision::Selected,
+            "selected host"
+        );
         assert_eq!(
             decide_eval("/srv/app/vendor/y.php"),
             excluded_by("/srv/app/vendor"),
             "excluded host"
         );
-        assert_eq!(decide_eval("/srv/other.php"), NOT_COLLECTED, "unselected host");
+        assert_eq!(
+            decide_eval("/srv/other.php"),
+            NOT_COLLECTED,
+            "unselected host"
+        );
     }
 
     #[test]
     fn stream_wrappers_and_unresolvable_files_are_never_selected() {
         let selection = selection("/", "");
         assert_eq!(
-            selection.decide(CompiledFile::StreamWrapper("phar:///srv/app.phar/x.php"), false),
+            selection.decide(
+                CompiledFile::StreamWrapper("phar:///srv/app.phar/x.php"),
+                false
+            ),
             Decision::Skipped(SkipReason::StreamWrapper),
             "phar"
         );
@@ -335,28 +441,56 @@ mod decisions {
     #[test]
     fn case_sensitive_mode_distinguishes_case() {
         let selection = selection("/Srv/App", "");
-        assert_eq!(decide(&selection, "/srv/app/x.php"), NOT_COLLECTED, "different case");
-        assert_eq!(decide(&selection, "/Srv/App/x.php"), Decision::Selected, "same case");
+        assert_eq!(
+            decide(&selection, "/srv/app/x.php"),
+            NOT_COLLECTED,
+            "different case"
+        );
+        assert_eq!(
+            decide(&selection, "/Srv/App/x.php"),
+            Decision::Selected,
+            "same case"
+        );
     }
 
     #[test]
     fn case_insensitive_mode_folds_ascii_case() {
-        let selection =
-            selection_with("/Srv/App", "/srv/app/VENDOR", identity, CaseSensitivity::Insensitive);
-        assert_eq!(decide(&selection, "/SRV/app/X.php"), Decision::Selected, "folded collect");
+        let selection = selection_with(
+            "/Srv/App",
+            "/srv/app/VENDOR",
+            identity(),
+            CaseSensitivity::Insensitive,
+        );
+        assert_eq!(
+            decide(&selection, "/SRV/app/X.php"),
+            Decision::Selected,
+            "folded collect"
+        );
         assert_eq!(
             decide(&selection, "/srv/APP/Vendor/x.php"),
             excluded_by("/srv/app/VENDOR"),
             "folded exclude, reported with its resolved spelling"
         );
-        assert_eq!(decide(&selection, "/srv/application/x.php"), NOT_COLLECTED, "boundary kept");
+        assert_eq!(
+            decide(&selection, "/srv/application/x.php"),
+            NOT_COLLECTED,
+            "boundary kept"
+        );
     }
 
     #[test]
     fn case_insensitive_mode_does_not_fold_non_ascii() {
-        let selection = selection_with("/srv/Äpp", "", identity, CaseSensitivity::Insensitive);
-        assert_eq!(decide(&selection, "/srv/äpp/x.php"), NOT_COLLECTED, "non-ASCII kept");
-        assert_eq!(decide(&selection, "/SRV/Äpp/x.php"), Decision::Selected, "ASCII folded");
+        let selection = selection_with("/srv/Äpp", "", identity(), CaseSensitivity::Insensitive);
+        assert_eq!(
+            decide(&selection, "/srv/äpp/x.php"),
+            NOT_COLLECTED,
+            "non-ASCII kept"
+        );
+        assert_eq!(
+            decide(&selection, "/SRV/Äpp/x.php"),
+            Decision::Selected,
+            "ASCII folded"
+        );
     }
 
     #[test]
@@ -371,13 +505,21 @@ mod decisions {
             lookup(&filesystem),
             CaseSensitivity::Sensitive,
         );
-        assert_eq!(decide(&selection, "/srv/app/x.php"), Decision::Selected, "symlink target");
+        assert_eq!(
+            decide(&selection, "/srv/app/x.php"),
+            Decision::Selected,
+            "symlink target"
+        );
         assert_eq!(
             decide(&selection, "/srv/app/vendor/y.php"),
             excluded_by("/srv/app/vendor"),
             "resolved exclude"
         );
-        assert_eq!(decide(&selection, "/home/me/project/x.php"), NOT_COLLECTED, "link name itself");
+        assert_eq!(
+            decide(&selection, "/home/me/project/x.php"),
+            NOT_COLLECTED,
+            "link name itself"
+        );
     }
 
     #[test]
@@ -389,15 +531,19 @@ mod decisions {
             lookup(&filesystem),
             CaseSensitivity::Sensitive,
         );
-        let deduplicated = selection_with("/srv/app", "", identity, CaseSensitivity::Sensitive);
+        let deduplicated = selection_with("/srv/app", "", identity(), CaseSensitivity::Sensitive);
         assert_eq!(selection, deduplicated, "both entries collapse into one");
-        assert_eq!(decide(&selection, "/srv/app/x.php"), Decision::Selected, "resolved file");
+        assert_eq!(
+            decide(&selection, "/srv/app/x.php"),
+            Decision::Selected,
+            "resolved file"
+        );
     }
 
     #[test]
     fn unresolvable_entry_is_an_error_naming_it() {
         let filesystem = table(&[("/srv/app", "/srv/app")]);
-        let error = SelectionConfig::parse("/srv/app", "/srv/gone", no_listfiles)
+        let error = SelectionConfig::parse("/srv/app", "/srv/gone", no_listfiles())
             .unwrap()
             .resolve(lookup(&filesystem), CaseSensitivity::Sensitive)
             .unwrap_err();
@@ -419,9 +565,12 @@ mod decisions {
     #[test]
     fn realpath_returning_a_non_canonical_path_is_an_error() {
         for resolved in ["relative/app", "/srv/../app"] {
-            let error = SelectionConfig::parse("app", "", no_listfiles)
+            let error = SelectionConfig::parse("app", "", no_listfiles())
                 .unwrap()
-                .resolve(|_| return Ok(PathBuf::from(resolved)), CaseSensitivity::Sensitive)
+                .resolve(
+                    |_| return Ok(PathBuf::from(resolved)),
+                    CaseSensitivity::Sensitive,
+                )
                 .unwrap_err();
             assert!(
                 matches!(
@@ -472,7 +621,10 @@ mod reference_agreement {
     }
 
     fn depth(path: &str) -> usize {
-        return path.split('/').filter(|segment| return !segment.is_empty()).count();
+        return path
+            .split('/')
+            .filter(|segment| return !segment.is_empty())
+            .count();
     }
 
     fn reference(
@@ -482,7 +634,10 @@ mod reference_agreement {
         pattern_excluded: bool,
         case: CaseSensitivity,
     ) -> Decision {
-        if !collect.iter().any(|entry| return contains(entry, file, case)) {
+        if !collect
+            .iter()
+            .any(|entry| return contains(entry, file, case))
+        {
             return Decision::Skipped(SkipReason::NotInCollectPaths);
         }
         let shortest = exclude
@@ -507,7 +662,7 @@ mod reference_agreement {
             pattern_excluded in any::<bool>(),
             case in case(),
         ) {
-            let selection = selection_with(&collect.join(":"), &exclude.join(":"), identity, case);
+            let selection = selection_with(&collect.join(":"), &exclude.join(":"), identity(), case);
             prop_assert_eq!(selection.is_empty_collect(), collect.is_empty(), "empty collect");
             for file in &files {
                 prop_assert_eq!(

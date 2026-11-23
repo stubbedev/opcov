@@ -101,7 +101,11 @@ pub struct UnresolvedSelection {
 
 impl UnresolvedSelection {
     pub fn entries(&self) -> impl Iterator<Item = &Path> {
-        return self.collect.iter().chain(&self.exclude).map(PathBuf::as_path);
+        return self
+            .collect
+            .iter()
+            .chain(&self.exclude)
+            .map(PathBuf::as_path);
     }
 
     pub fn resolve(
@@ -147,9 +151,9 @@ fn resolve_setting(
 
 fn is_canonical(path: &Path) -> bool {
     return path.is_absolute()
-        && path
-            .components()
-            .all(|component| return !matches!(component, Component::ParentDir | Component::CurDir));
+        && path.components().all(|component| {
+            return !matches!(component, Component::ParentDir | Component::CurDir);
+        });
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

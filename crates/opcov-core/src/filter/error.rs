@@ -49,7 +49,10 @@ impl fmt::Display for FilterError {
         let setting = self.setting().ini_name();
         return match self {
             Self::MissingListfileName { .. } => {
-                write!(formatter, "{setting}: `@` must be followed by the path of a listfile")
+                write!(
+                    formatter,
+                    "{setting}: `@` must be followed by the path of a listfile"
+                )
             }
             Self::ListfileUnreadable {
                 listfile, source, ..

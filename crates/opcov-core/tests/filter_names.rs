@@ -39,7 +39,11 @@ mod reported_names {
 
     #[test]
     fn eval_outside_execution_names_the_unknown_host() {
-        assert_eq!(eval_host("Unknown(0) : eval()'d code"), Some("Unknown"), "engine fallback");
+        assert_eq!(
+            eval_host("Unknown(0) : eval()'d code"),
+            Some("Unknown"),
+            "engine fallback"
+        );
     }
 
     #[test]

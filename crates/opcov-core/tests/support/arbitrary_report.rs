@@ -1,3 +1,8 @@
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "pub(super) is the intended visibility; the pub this lint suggests is denied by rustc unreachable_pub"
+)]
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use opcov_core::cfg::{FunctionKey, Line};

@@ -9,8 +9,8 @@ use serde::Serialize;
 
 use super::error::ModelError;
 use super::model::{
-    FileCoverage, Function, Generator, Header, HitSet, IdSorted, Identified, Loop, LoopId,
-    Outcome, OutcomeId, Report, Settings, SourcePath, TestIndex, TestRefs, TestTable,
+    FileCoverage, Function, Generator, Header, HitSet, IdSorted, Identified, Loop, LoopId, Outcome,
+    OutcomeId, Report, Settings, SourcePath, TestIndex, TestRefs, TestTable,
 };
 use crate::cfg::FunctionKey;
 

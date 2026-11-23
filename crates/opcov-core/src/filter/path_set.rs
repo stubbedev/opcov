@@ -6,7 +6,7 @@ use super::CaseSensitivity;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct Node {
     entry: Option<PathBuf>,
-    children: BTreeMap<Box<[u8]>, Node>,
+    children: BTreeMap<Box<[u8]>, Self>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,7 +31,11 @@ impl PathSet {
         let mut scratch = Vec::new();
         let mut node = &mut self.root;
         for component in path.components() {
-            let key = fold(self.case, component.as_os_str().as_encoded_bytes(), &mut scratch);
+            let key = fold(
+                self.case,
+                component.as_os_str().as_encoded_bytes(),
+                &mut scratch,
+            );
             node = node.children.entry(key.into()).or_default();
         }
         if node.entry.is_none() {
@@ -43,7 +47,11 @@ impl PathSet {
         let mut scratch = Vec::new();
         let mut node = &self.root;
         for component in file.components() {
-            let key = fold(self.case, component.as_os_str().as_encoded_bytes(), &mut scratch);
+            let key = fold(
+                self.case,
+                component.as_os_str().as_encoded_bytes(),
+                &mut scratch,
+            );
             node = node.children.get(key)?;
             if let Some(entry) = &node.entry {
                 return Some(entry);
