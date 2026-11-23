@@ -23,6 +23,6 @@ bool(true)
 NULL
 ["work.php"]
 status.php: not in opcov.collect_paths
-jump_table_files,probes_fired,probes_installed,probes_rearmed,units
+files_selected,files_skipped,jump_table_files,pending_discards,probes_fired,probes_installed,probes_rearmed,units,watches_installed
 bool(true)
 bool(true)

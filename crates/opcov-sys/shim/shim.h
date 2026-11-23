@@ -3,6 +3,7 @@
 
 #include "php.h"
 #include "zend_arena.h"
+#include "Optimizer/zend_cfg.h"
 
 typedef struct _pcre_cache_entry pcre_cache_entry;
 
@@ -14,14 +15,29 @@ PHPAPI void php_pcre_match_impl(pcre_cache_entry *pce, zend_string *subject_str,
 
 extern const char opcov_module_build_id[];
 
+typedef zend_op_array *(*opcov_compile_file_t)(zend_file_handle *handle, int type);
+typedef zend_op_array *(*opcov_compile_string_t)(zend_string *source, const char *filename, zend_compile_position position);
+
 zend_executor_globals *opcov_executor_globals(void);
 zend_compiler_globals *opcov_compiler_globals(void);
 zend_arena *opcov_arena_create(size_t size);
+bool opcov_arena_create_caught(size_t size, zend_arena **arena);
+bool opcov_build_cfg(zend_arena **arena, const zend_op_array *op_array, zend_cfg *cfg);
+void opcov_bailout(void);
+bool opcov_compile_file(opcov_compile_file_t compile, zend_file_handle *handle, int type, zend_op_array **result);
+bool opcov_compile_string(opcov_compile_string_t compile, zend_string *source, const char *filename, zend_compile_position position, zend_op_array **result);
+const char *opcov_sapi_name(void);
+bool opcov_module_loaded(const char *name, size_t len);
+bool opcov_ini_bool(const char *name, size_t len);
+bool opcov_throw(zend_class_entry *class_entry, const char *message, size_t len);
+bool opcov_pcre_compile(const char *pattern, size_t len, pcre_cache_entry **entry);
+bool opcov_pcre_match(pcre_cache_entry *entry, const char *subject, size_t len, int *matched);
+bool opcov_add_assoc_zval(zval *array, const char *key, size_t len, zval *value);
 void opcov_arena_destroy(zend_arena *arena);
 void opcov_zval_null(zval *target);
 void opcov_zval_bool(zval *target, bool value);
 void opcov_zval_long(zval *target, zend_long value);
-void opcov_zval_stringl(zval *target, const char *str, size_t len);
+bool opcov_zval_stringl(zval *target, const char *str, size_t len);
 const void *opcov_op_handler(const zend_op *op);
 bool opcov_parse_parameters_none(zend_execute_data *execute_data);
 bool opcov_parse_path(zend_execute_data *execute_data, const char **path, size_t *len);
@@ -37,11 +53,10 @@ bool opcov_is_user_code(const zend_function *function);
 bool opcov_is_user_class(const zend_class_entry *class_entry);
 zend_long opcov_ini_long(const char *name, size_t len);
 const char *opcov_ini_string(const char *name, size_t len);
-zend_string *opcov_string_init(const char *str, size_t len, bool persistent);
 void opcov_string_release(zend_string *string);
-void opcov_array_init(zval *target, uint32_t size);
-void opcov_add_index_zval(zval *array, zend_ulong index, zval *value);
-void opcov_add_next_index_zval(zval *array, zval *value);
+bool opcov_array_init(zval *target, uint32_t size);
+bool opcov_add_index_zval(zval *array, zend_ulong index, zval *value);
+bool opcov_add_next_index_zval(zval *array, zval *value);
 void *opcov_map_ptr_at(const HashTable *map, uint32_t index);
 zval *opcov_array_value_at(HashTable *array, uint32_t index);
 bool opcov_read_string(const zval *value, const char **str, size_t *len);

@@ -10,4 +10,4 @@ try {
     echo $e->getMessage(), "\n";
 }
 --EXPECT--
-opcov cannot collect coverage: opcov.collect_paths is not set
+opcov cannot collect coverage: opcov.collect_paths is not set; set it to the files and directories to measure (see https://github.com/stubbedev/opcov/blob/main/docs/troubleshooting.md#collect-paths-empty)

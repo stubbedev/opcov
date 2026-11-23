@@ -8,12 +8,12 @@ use opcov_core::cfg::{
 use opcov_sys::{
     PHP_VERSION_ID, ZEND_ACC_ANON_CLASS, ZEND_ACC_CLOSURE, ZEND_BB_CATCH, ZEND_BB_FINALLY,
     ZEND_BB_FINALLY_END, ZEND_BB_LOOP_HEADER, ZEND_BB_REACHABLE, ZEND_BB_RECV_ENTRY, ZEND_BB_START,
-    opcov_arena_create, opcov_arena_destroy, zend_basic_block, zend_build_cfg, zend_cfg,
-    zend_cfg_build_predecessors, zend_cfg_compute_dominators_tree, zend_cfg_identify_loops,
-    zend_op, zend_op_array,
+    opcov_arena_create_caught, opcov_arena_destroy, opcov_build_cfg, zend_arena, zend_basic_block,
+    zend_cfg, zend_op, zend_op_array,
 };
 
 use crate::{
+    guard::caught,
     lines::{Instr, LineBlock, OperandType},
     ordinals::Ordinals,
     zend,
@@ -39,6 +39,7 @@ pub(crate) enum SnapshotFailure {
     InvertedSpan { start: Line, end: Line },
     Unranked { what: &'static str },
     Cfg(SnapshotError),
+    Bailout,
 }
 
 impl fmt::Display for SnapshotFailure {
@@ -59,6 +60,7 @@ impl fmt::Display for SnapshotFailure {
                 "the {what} was not ranked among the declarations sharing its line span"
             ),
             Self::Cfg(error) => write!(f, "{error}"),
+            Self::Bailout => write!(f, "a fatal error interrupted building the CFG"),
         };
     }
 }
@@ -193,16 +195,19 @@ unsafe fn raw_block(block: &zend_basic_block) -> Result<RawBlock, SnapshotFailur
 }
 
 unsafe fn raw_cfg(op_array: *const zend_op_array) -> Result<Vec<RawBlock>, SnapshotFailure> {
-    // SAFETY: allocates a fresh arena; it is destroyed below before this function returns.
-    let mut arena = unsafe { opcov_arena_create(ARENA_SIZE) };
+    let mut arena: *mut zend_arena = core::ptr::null_mut();
+    // SAFETY: allocates a fresh arena; it is destroyed below before this function returns. A fatal
+    // error on the way is caught inside the call.
+    caught(unsafe { opcov_arena_create_caught(ARENA_SIZE, &raw mut arena) })
+        .map_err(|_bailout| return SnapshotFailure::Bailout)?;
     let mut cfg = zend_cfg::default();
     // SAFETY: `op_array` is a live, compiled op array; the CFG is allocated in `arena`, which
-    // outlives every read of `cfg` below.
-    unsafe {
-        zend_build_cfg(&raw mut arena, op_array, 0, &raw mut cfg);
-        zend_cfg_build_predecessors(&raw mut arena, &raw mut cfg);
-        zend_cfg_compute_dominators_tree(op_array, &raw mut cfg);
-        zend_cfg_identify_loops(op_array, &raw mut cfg);
+    // outlives every read of `cfg` below. A fatal error on the way is caught inside the call.
+    let built = caught(unsafe { opcov_build_cfg(&raw mut arena, op_array, &raw mut cfg) });
+    if built.is_err() {
+        // SAFETY: the arena was created above and nothing refers to it any more.
+        unsafe { opcov_arena_destroy(arena) };
+        return Err(SnapshotFailure::Bailout);
     }
     let blocks = count(cfg.blocks_count, "block count").and_then(|block_count| {
         if block_count == 0 {

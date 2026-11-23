@@ -11,4 +11,4 @@ try {
     echo str_replace(__DIR__ . "/", "", $e->getMessage()), "\n";
 }
 --EXPECT--
-opcov cannot collect coverage: opcov.collect_paths: cannot resolve fixtures/does-not-exist: No such file or directory (os error 2)
+opcov cannot collect coverage: opcov.collect_paths: cannot resolve fixtures/does-not-exist: No such file or directory (os error 2) (see https://github.com/stubbedev/opcov/blob/main/docs/troubleshooting.md#invalid-selection)

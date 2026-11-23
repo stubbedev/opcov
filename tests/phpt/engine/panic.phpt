@@ -12,10 +12,12 @@ echo "still running\n";
 opcov
 
 Version => %d.%d.%d
-PHP API => %d
-Thread safety => %r(ZTS|NTS)%r
+Built for => PHP 8.%d.%s %r(ZTS|NTS)%r, API %d
+Running on => PHP 8.%d.%s, SAPI cli
 VM kind => %r(CALL|SWITCH|GOTO|HYBRID|TAILCALL)%r
-Collection => disabled: panic in opcov\selftest_panic(): deliberate panic injected by opcov\selftest_panic()
+OPcache => %r(not loaded|off for the cli SAPI)%r
+Conflicts => none
+Collection => disabled: panic in opcov\selftest_panic(): deliberate panic injected by opcov\selftest_panic() (see https://github.com/stubbedev/opcov/blob/main/docs/troubleshooting.md#panic)
 
 Directive => Local Value => Master Value
 opcov.enabled => 0 => 0

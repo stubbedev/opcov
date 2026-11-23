@@ -1,5 +1,18 @@
 #include "shim.h"
 #include "php_main.h"
+#include "SAPI.h"
+#include "zend_exceptions.h"
+
+#define OPCOV_TRY(body) \
+	do { \
+		bool opcov_completed = true; \
+		zend_try { \
+			body; \
+		} zend_catch { \
+			opcov_completed = false; \
+		} zend_end_try(); \
+		return opcov_completed; \
+	} while (0)
 
 const char opcov_module_build_id[] = ZEND_MODULE_BUILD_ID;
 
@@ -26,6 +39,77 @@ zend_arena *opcov_arena_create(size_t size)
 	return zend_arena_create(size);
 }
 
+bool opcov_arena_create_caught(size_t size, zend_arena **arena)
+{
+	OPCOV_TRY(*arena = zend_arena_create(size));
+}
+
+bool opcov_build_cfg(zend_arena **arena, const zend_op_array *op_array, zend_cfg *cfg)
+{
+	OPCOV_TRY(
+		zend_build_cfg(arena, op_array, 0, cfg);
+		zend_cfg_build_predecessors(arena, cfg);
+		zend_cfg_compute_dominators_tree(op_array, cfg);
+		zend_cfg_identify_loops(op_array, cfg));
+}
+
+void opcov_bailout(void)
+{
+	zend_bailout();
+}
+
+bool opcov_compile_file(opcov_compile_file_t compile, zend_file_handle *handle, int type, zend_op_array **result)
+{
+	OPCOV_TRY(*result = compile(handle, type));
+}
+
+bool opcov_compile_string(opcov_compile_string_t compile, zend_string *source, const char *filename, zend_compile_position position, zend_op_array **result)
+{
+	OPCOV_TRY(*result = compile(source, filename, position));
+}
+
+const char *opcov_sapi_name(void)
+{
+	return sapi_module.name;
+}
+
+bool opcov_module_loaded(const char *name, size_t len)
+{
+	return zend_hash_str_exists(&module_registry, name, len);
+}
+
+bool opcov_ini_bool(const char *name, size_t len)
+{
+	return zend_ini_parse_bool(zend_ini_str(name, len, false));
+}
+
+bool opcov_throw(zend_class_entry *class_entry, const char *message, size_t len)
+{
+	OPCOV_TRY(
+		zend_string *copy = zend_string_init(message, len, false);
+		zend_throw_exception(class_entry, ZSTR_VAL(copy), 0);
+		zend_string_release(copy));
+}
+
+bool opcov_pcre_compile(const char *pattern, size_t len, pcre_cache_entry **entry)
+{
+	OPCOV_TRY(
+		zend_string *regex = zend_string_init(pattern, len, false);
+		*entry = pcre_get_compiled_regex_cache(regex);
+		zend_string_release(regex));
+}
+
+bool opcov_pcre_match(pcre_cache_entry *entry, const char *subject, size_t len, int *matched)
+{
+	OPCOV_TRY(
+		zend_string *string = zend_string_init(subject, len, false);
+		zval result;
+		ZVAL_UNDEF(&result);
+		php_pcre_match_impl(entry, string, &result, NULL, false, 0, 0);
+		zend_string_release(string);
+		*matched = Z_TYPE(result) == IS_LONG ? Z_LVAL(result) > 0 : -1);
+}
+
 void opcov_arena_destroy(zend_arena *arena)
 {
 	zend_arena_destroy(arena);
@@ -46,9 +130,9 @@ void opcov_zval_long(zval *target, zend_long value)
 	ZVAL_LONG(target, value);
 }
 
-void opcov_zval_stringl(zval *target, const char *str, size_t len)
+bool opcov_zval_stringl(zval *target, const char *str, size_t len)
 {
-	ZVAL_STRINGL(target, str, len);
+	OPCOV_TRY(ZVAL_STRINGL(target, str, len));
 }
 
 const void *opcov_op_handler(const zend_op *op)
@@ -126,29 +210,29 @@ const char *opcov_ini_string(const char *name, size_t len)
 	return zend_ini_string_ex(name, len, 0, NULL);
 }
 
-zend_string *opcov_string_init(const char *str, size_t len, bool persistent)
-{
-	return zend_string_init(str, len, persistent);
-}
-
 void opcov_string_release(zend_string *string)
 {
 	zend_string_release(string);
 }
 
-void opcov_array_init(zval *target, uint32_t size)
+bool opcov_array_init(zval *target, uint32_t size)
 {
-	array_init_size(target, size);
+	OPCOV_TRY(array_init_size(target, size));
 }
 
-void opcov_add_index_zval(zval *array, zend_ulong index, zval *value)
+bool opcov_add_assoc_zval(zval *array, const char *key, size_t len, zval *value)
 {
-	add_index_zval(array, index, value);
+	OPCOV_TRY(add_assoc_zval_ex(array, key, len, value));
 }
 
-void opcov_add_next_index_zval(zval *array, zval *value)
+bool opcov_add_index_zval(zval *array, zend_ulong index, zval *value)
 {
-	add_next_index_zval(array, value);
+	OPCOV_TRY(add_index_zval(array, index, value));
+}
+
+bool opcov_add_next_index_zval(zval *array, zval *value)
+{
+	OPCOV_TRY(add_next_index_zval(array, value));
 }
 
 void *opcov_map_ptr_at(const HashTable *map, uint32_t index)

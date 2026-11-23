@@ -23,5 +23,5 @@ selected: app/main.php
 selected: application/main.php
 skipped: app/helper.php: not in opcov.collect_paths
 skipped: report.inc: not in opcov.collect_paths
-off: opcov.collect_paths: listfile DIR/paths.txt contains no paths
-off: opcov.collect_paths: cannot read listfile DIR/paths.txt: No such file or directory (os error 2)
+off: opcov.collect_paths: listfile DIR/paths.txt contains no paths (see https://github.com/stubbedev/opcov/blob/main/docs/troubleshooting.md#invalid-selection)
+off: opcov.collect_paths: cannot read listfile DIR/paths.txt: No such file or directory (os error 2) (see https://github.com/stubbedev/opcov/blob/main/docs/troubleshooting.md#invalid-selection)

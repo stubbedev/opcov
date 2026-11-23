@@ -824,6 +824,7 @@ pub(crate) enum After {
 impl Engine {
     pub(crate) fn drop_pending(&mut self) {
         let pending = core::mem::take(&mut self.pending);
+        self.counters.discarded(pending.len());
         for entry in &pending {
             self.unwatch(*entry);
         }
@@ -840,6 +841,7 @@ impl Engine {
             .position(|entry| return entry.unit == id)
         {
             let pending = self.pending.swap_remove(position);
+            self.counters.discarded(1);
             self.unwatch(pending);
         }
         self.activations.forget_unit(id);
@@ -850,6 +852,7 @@ impl Engine {
     }
 
     fn watch(&mut self, pending: Pending, label: Handler) {
+        self.counters.watches_installed = self.counters.watches_installed.saturating_add(1);
         self.adjust_watch(pending, Some(label));
         self.pending.push(pending);
     }
@@ -1040,6 +1043,7 @@ impl Engine {
             .position(|entry| return entry.frame == frame.key())
         {
             let pending = self.pending.swap_remove(position);
+            self.counters.discarded(1);
             self.unwatch(pending);
         }
     }

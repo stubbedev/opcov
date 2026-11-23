@@ -14,7 +14,9 @@ compile_error!(
 
 mod api;
 mod branches;
+mod code;
 mod compiler;
+mod conflicts;
 mod engine;
 mod guard;
 mod info;
@@ -36,6 +38,7 @@ use core::{
     ptr,
 };
 
+use conflicts::{Conflicts, Environment};
 use engine::{Engine, OffReason, with_engine};
 use guard::{EntryPoint, guard};
 use opcov_sys::{
@@ -112,7 +115,7 @@ unsafe fn accepts_no_arguments(execute_data: *mut zend_execute_data) -> bool {
 unsafe fn return_string(return_value: *mut zval, value: &[u8]) {
     // SAFETY: the caller passes the engine's return slot; the engine copies `value` into a new
     // zend_string before this returns.
-    unsafe { opcov_zval_stringl(return_value, value.as_ptr().cast(), value.len()) };
+    guard::record(unsafe { opcov_zval_stringl(return_value, value.as_ptr().cast(), value.len()) });
 }
 
 unsafe extern "C" fn version(execute_data: *mut zend_execute_data, return_value: *mut zval) {
@@ -198,12 +201,19 @@ fn activate() {
         with_engine(|engine| engine.request = None);
         return;
     }
-    let request = select::configure();
-    let measuring = request.selection.is_some();
+    let mut request = select::configure();
+    let conflicts = Conflicts::of(Environment::current().conflicts());
+    let probing = conflicts.is_none();
+    let measuring = probing && request.selection.is_some();
+    if let Some(conflicts) = conflicts {
+        request.problem = Some(OffReason::Conflicts(conflicts));
+    }
     with_engine(|engine| {
         engine.request = Some(request);
         engine.collecting = false;
-        install(engine);
+        if probing {
+            install(engine);
+        }
     });
     if measuring {
         let globals = zend::compiler_globals();

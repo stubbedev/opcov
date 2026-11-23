@@ -14,6 +14,8 @@ use opcov_sys::{zend_op, zend_op_array};
 
 use crate::{
     branches::{Activations, LoopState, Owner, Pending, SourceProbe},
+    code::{Code, Explained},
+    conflicts::Conflicts,
     guard::{COLLECTION, Disabled},
     select::Pattern,
     threads,
@@ -33,10 +35,31 @@ pub(crate) enum OffReason {
     InvalidPattern(String),
     PatternFailed(String),
     Snapshot { file: String, message: String },
+    NothingSelected { compiled: usize },
+    Conflicts(Conflicts),
 }
 
-impl fmt::Display for OffReason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl OffReason {
+    pub(crate) const fn code(&self) -> Code {
+        return match self {
+            Self::Panic(_) => Code::Panic,
+            Self::SecondThread => Code::SecondThread,
+            Self::IniRegistrationFailed => Code::IniRegistrationFailed,
+            Self::NotEnabledAtStartup => Code::NotEnabledAtStartup,
+            Self::NoReservedSlot => Code::NoReservedSlot,
+            Self::NotEnabled => Code::NotEnabled,
+            Self::CompileHooksMissing => Code::CompileHooksMissing,
+            Self::Selection(_) => Code::InvalidSelection,
+            Self::CollectPathsEmpty => Code::CollectPathsEmpty,
+            Self::InvalidPattern(_) => Code::InvalidExcludePattern,
+            Self::PatternFailed(_) => Code::ExcludePatternFailed,
+            Self::Snapshot { .. } => Code::SnapshotFailed,
+            Self::NothingSelected { .. } => Code::NothingSelected,
+            Self::Conflicts(conflicts) => conflicts.first().code(),
+        };
+    }
+
+    fn describe(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         return match self {
             Self::Panic(disabled) => write!(f, "{disabled}"),
             Self::SecondThread => write!(
@@ -54,12 +77,15 @@ impl fmt::Display for OffReason {
                 f,
                 "PHP has no free op_array.reserved slot left for opcov (other extensions use all of them)"
             ),
-            Self::NotEnabled => write!(f, "opcov.enabled is 0"),
+            Self::NotEnabled => write!(f, "opcov.enabled is 0; set opcov.enabled=1"),
             Self::CompileHooksMissing => {
                 write!(f, "zend_compile_file or zend_compile_string is not set")
             }
             Self::Selection(message) => write!(f, "{message}"),
-            Self::CollectPathsEmpty => write!(f, "opcov.collect_paths is not set"),
+            Self::CollectPathsEmpty => write!(
+                f,
+                "opcov.collect_paths is not set; set it to the files and directories to measure"
+            ),
             Self::InvalidPattern(pattern) => write!(
                 f,
                 "opcov.exclude_pattern is not a valid PCRE pattern with delimiters: {pattern}"
@@ -70,7 +96,49 @@ impl fmt::Display for OffReason {
             Self::Snapshot { file, message } => {
                 write!(f, "cannot analyse code compiled from {file}: {message}")
             }
+            Self::NothingSelected { compiled } => write!(
+                f,
+                "opcov.collect_paths selected none of the {compiled} files compiled during this run"
+            ),
+            Self::Conflicts(_) => Ok(()),
         };
+    }
+}
+
+impl fmt::Display for OffReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Self::Conflicts(conflicts) = self {
+            for (position, conflict) in conflicts.iter().enumerate() {
+                if position > 0 {
+                    f.write_str("; ")?;
+                }
+                write!(
+                    f,
+                    "{}",
+                    Explained {
+                        code: conflict.code(),
+                        text: conflict
+                    }
+                )?;
+            }
+            return Ok(());
+        }
+        return write!(
+            f,
+            "{}",
+            Explained {
+                code: self.code(),
+                text: &Described(self)
+            }
+        );
+    }
+}
+
+struct Described<'a>(&'a OffReason);
+
+impl fmt::Display for Described<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        return self.0.describe(f);
     }
 }
 
@@ -563,7 +631,17 @@ pub(crate) struct Counters {
     pub(crate) probes_installed: u64,
     pub(crate) probes_fired: u64,
     pub(crate) probes_rearmed: u64,
+    pub(crate) watches_installed: u64,
+    pub(crate) pending_discards: u64,
     pub(crate) jump_table_files: u64,
+}
+
+impl Counters {
+    pub(crate) fn discarded(&mut self, count: usize) {
+        self.pending_discards = self
+            .pending_discards
+            .saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
+    }
 }
 
 #[derive(Debug, Default)]
@@ -571,7 +649,6 @@ pub(crate) struct Scratch {
     pub(crate) op_arrays: Vec<*mut zend_op_array>,
     pub(crate) covered: Vec<Covered>,
     pub(crate) files: Vec<FileId>,
-    pub(crate) value: serde_json::Value,
 }
 
 #[derive(Debug)]

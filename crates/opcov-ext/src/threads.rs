@@ -29,6 +29,34 @@ pub(crate) fn second_thread_started() -> bool {
     return SECOND_THREAD.load(Ordering::Acquire);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OwnerThread {
+    Unclaimed,
+    Current,
+    Other,
+}
+
+impl OwnerThread {
+    pub(crate) const fn name(self) -> &'static str {
+        return match self {
+            Self::Unclaimed => "unclaimed",
+            Self::Current => "current",
+            Self::Other => "other",
+        };
+    }
+}
+
+pub(crate) fn owner() -> OwnerThread {
+    if !ZTS {
+        return OwnerThread::Current;
+    }
+    return match OWNER.get() {
+        None => OwnerThread::Unclaimed,
+        Some(owner) if *owner == thread::current().id() => OwnerThread::Current,
+        Some(_) => OwnerThread::Other,
+    };
+}
+
 pub(crate) fn on_owner_thread() -> bool {
     return !ZTS || OWNER.get() == Some(&thread::current().id());
 }

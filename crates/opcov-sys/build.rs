@@ -14,13 +14,10 @@ const WRAPPER_HEADER: &str = "shim/wrapper.h";
 
 const ENGINE_ITEMS: &[&str] = &[
     "opcov_.*",
-    "add_assoc_zval_ex",
     "display_ini_entries",
-    "pcre_get_compiled_regex_cache",
     "php_info_print_table_end",
     "php_info_print_table_row",
     "php_info_print_table_start",
-    "php_pcre_match_impl",
     "php_pcre_pce_decref",
     "php_pcre_pce_incref",
     "spl_ce_LogicException",
@@ -40,7 +37,6 @@ const ENGINE_ITEMS: &[&str] = &[
     "zend_register_ini_entries_ex",
     "zend_resolve_path",
     "zend_set_user_opcode_handler",
-    "zend_throw_exception",
     "zend_throw_exception_hook",
     "zend_object",
     "zend_unregister_ini_entries_ex",

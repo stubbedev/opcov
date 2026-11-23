@@ -12,7 +12,7 @@ use opcov_core::{
     report::{LoopId, OutcomeId, PathBase, Root},
 };
 use opcov_sys::{
-    ArgInfo, HashTable, MAXPATHLEN, MAY_BE_ARRAY, MAY_BE_NULL, MAY_BE_STRING, MAY_BE_VOID,
+    ArgInfo, HashTable, MAXPATHLEN, MAY_BE_ARRAY, MAY_BE_NULL, MAY_BE_STRING, MAY_BE_VOID, ZTS,
     argument, function_entry, opcov_array_entry_at, opcov_array_value_at, opcov_getcwd,
     opcov_parse_array, opcov_parse_optional_string, opcov_parse_path, opcov_parse_path_and_array,
     opcov_read_bool, opcov_read_string, opcov_type_name, optional_argument, zend_execute_data,
@@ -22,9 +22,13 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     accepts_no_arguments,
-    engine::{Covered, Engine, FileId, FiredList, Hit, OffReason, Role, Verdict, with_engine},
-    guard::{COLLECTION, EntryPoint, guard},
-    ini,
+    conflicts::{Conflict, Conflicts, Environment},
+    engine::{
+        Covered, Engine, FileId, FiredList, Hit, OffReason, Probe, Role, Roles, Unit, Verdict,
+        with_engine,
+    },
+    guard::{COLLECTION, Caught, EntryPoint, guard},
+    info, ini,
     php::{self, Exception},
     report::{self, Entry},
     threads, zend,
@@ -71,6 +75,10 @@ pub(crate) const WRITE_REPORT: zend_function_entry =
     function_entry(c"opcov\\write_report", write_report, &REPORT);
 
 fn off_reason() -> Option<OffReason> {
+    return off_reason_in(&Environment::current());
+}
+
+fn off_reason_in(environment: &Environment) -> Option<OffReason> {
     if let Some(disabled) = COLLECTION.disabled() {
         return Some(OffReason::Panic(disabled.clone()));
     }
@@ -79,6 +87,9 @@ fn off_reason() -> Option<OffReason> {
     }
     if let Some(startup) = STARTUP.get() {
         return Some(startup.clone());
+    }
+    if let Some(conflicts) = Conflicts::of(environment.conflicts()) {
+        return Some(OffReason::Conflicts(conflicts));
     }
     return with_engine(|engine| {
         if engine.request.is_none() {
@@ -139,17 +150,15 @@ unsafe extern "C" fn ensure_can_collect(
             if engine.completed_cycles == 0 || engine.selected_files().next().is_some() {
                 return None;
             }
-            let skipped = engine
+            let compiled = engine
                 .request
                 .as_ref()
                 .map_or(0, |request| return request.decisions.len());
-            return Some(format!(
-                "{CANNOT_COLLECT}: opcov.collect_paths selected none of the {skipped} files compiled during this run"
-            ));
+            return Some(OffReason::NothingSelected { compiled });
         })
         .flatten();
-        if let Some(message) = empty_run {
-            php::throw(Exception::CannotCollect, &message);
+        if let Some(reason) = empty_run {
+            refuse(&reason);
         }
     });
 }
@@ -258,68 +267,70 @@ impl Engine {
     }
 }
 
-unsafe fn emit_function(target: *mut zval, hits: &FunctionHits) {
+unsafe fn emit_function(target: *mut zval, hits: &FunctionHits) -> Caught<()> {
     // SAFETY: the caller passes a writable zval; every child zval is moved into its parent.
     unsafe {
-        php::array(target, 2);
+        php::array(target, 2)?;
         let mut outcomes = zval::default();
-        php::array(&raw mut outcomes, hits.outcomes.len());
+        php::array(&raw mut outcomes, hits.outcomes.len())?;
         for number in &hits.outcomes {
             let mut hit = php::bool_value(true);
             php::set(
                 &raw mut outcomes,
                 &OutcomeId::new(*number).to_string(),
                 &mut hit,
-            );
+            )?;
         }
-        php::set(target, "outcomes", &mut outcomes);
+        php::set(target, "outcomes", &mut outcomes)?;
         let mut loops = zval::default();
-        php::array(&raw mut loops, hits.loops.len());
+        php::array(&raw mut loops, hits.loops.len())?;
         for (number, &(zero, second)) in &hits.loops {
             let mut looped = zval::default();
-            php::array(&raw mut looped, 2);
+            php::array(&raw mut looped, 2)?;
             for (name, flag) in [("zero", zero), ("second", second)] {
                 if flag {
                     let mut hit = php::bool_value(true);
-                    php::set(&raw mut looped, name, &mut hit);
+                    php::set(&raw mut looped, name, &mut hit)?;
                 }
             }
             php::set(
                 &raw mut loops,
                 &LoopId::new(*number).to_string(),
                 &mut looped,
-            );
+            )?;
         }
-        php::set(target, "loops", &mut loops);
+        php::set(target, "loops", &mut loops)?;
     }
+    return Ok(());
 }
 
-unsafe fn emit_hits(engine: &Engine, return_value: *mut zval) {
+unsafe fn emit_hits(engine: &Engine, return_value: *mut zval) -> Caught<()> {
     let files = engine.file_hits();
     // SAFETY: the caller passes the engine's return slot; every child zval is moved into its parent.
     unsafe {
-        php::array(return_value, files.len());
+        php::array(return_value, files.len())?;
         for file in &files {
             let mut entry = zval::default();
-            php::array(&raw mut entry, 2);
+            php::array(&raw mut entry, 2)?;
             let mut covered = zval::default();
-            php::array(&raw mut covered, file.lines.len());
+            php::array(&raw mut covered, file.lines.len())?;
             for &line in &file.lines {
                 let mut hit = php::bool_value(true);
-                php::set_index(&raw mut covered, line, &mut hit);
+                php::set_index(&raw mut covered, line, &mut hit)?;
             }
-            php::set(&raw mut entry, "lines", &mut covered);
+            php::set(&raw mut entry, "lines", &mut covered)?;
             let mut functions = zval::default();
-            php::array(&raw mut functions, file.functions.len());
+            php::array(&raw mut functions, file.functions.len())?;
             for (key, hits) in &file.functions {
                 let mut function = zval::default();
-                emit_function(&raw mut function, hits);
-                php::set(&raw mut functions, &key.to_string(), &mut function);
+                emit_function(&raw mut function, hits)?;
+                php::set(&raw mut functions, &key.to_string(), &mut function)?;
             }
-            php::set(&raw mut entry, "functions", &mut functions);
-            php::set(return_value, file.path, &mut entry);
+            php::set(&raw mut entry, "functions", &mut functions)?;
+            php::set(return_value, file.path, &mut entry)?;
         }
     }
+    return Ok(());
 }
 
 impl Engine {
@@ -401,21 +412,22 @@ unsafe extern "C" fn stop(execute_data: *mut zend_execute_data, return_value: *m
             refuse(&reason);
             return;
         }
-        let stopped = with_engine(|engine| {
+        let stopped = with_engine(|engine| -> Caught<bool> {
             if !engine.collecting {
-                return false;
+                return Ok(false);
             }
             engine.collecting = false;
             engine.completed_cycles = engine.completed_cycles.saturating_add(1);
+            engine.drop_pending();
             engine.collect_hits();
             if let Some(test) = test {
                 engine.attribution.attribute(test, &engine.scratch.covered);
             }
             // SAFETY: the engine passes this call's return slot.
-            unsafe { emit_hits(engine, return_value) };
-            return true;
+            unsafe { emit_hits(engine, return_value) }?;
+            return Ok(true);
         });
-        if stopped != Some(true) {
+        if matches!(stopped, None | Some(Ok(false))) {
             php::throw(
                 Exception::Logic,
                 "opcov\\stop() was called without opcov\\start()",
@@ -495,26 +507,44 @@ impl Engine {
     }
 }
 
-unsafe fn emit_entry(target: *mut zval, entry: &Entry) -> Result<(), serde_json::Error> {
+#[derive(Debug)]
+enum EntryError {
+    Bailout,
+    Serialize(serde_json::Error),
+}
+
+impl From<crate::guard::Bailout> for EntryError {
+    fn from(_bailout: crate::guard::Bailout) -> Self {
+        return Self::Bailout;
+    }
+}
+
+impl From<serde_json::Error> for EntryError {
+    fn from(error: serde_json::Error) -> Self {
+        return Self::Serialize(error);
+    }
+}
+
+unsafe fn emit_entry(target: *mut zval, entry: &Entry) -> Result<(), EntryError> {
     // SAFETY: the caller passes a writable zval; every child is moved into its parent.
     unsafe {
-        php::array(target, 2);
+        php::array(target, 2)?;
         let mut lines = zval::default();
-        php::array(&raw mut lines, entry.lines.len());
+        php::array(&raw mut lines, entry.lines.len())?;
         for (line, hits) in &entry.lines {
             let mut tests = zval::default();
-            php::emit(&raw mut tests, &serde_json::to_value(hits)?);
-            php::set_index(&raw mut lines, line.get(), &mut tests);
+            php::emit(&raw mut tests, &serde_json::to_value(hits)?)?;
+            php::set_index(&raw mut lines, line.get(), &mut tests)?;
         }
-        php::set(target, "lines", &mut lines);
+        php::set(target, "lines", &mut lines)?;
         let mut functions = zval::default();
-        php::array(&raw mut functions, entry.functions.len());
+        php::array(&raw mut functions, entry.functions.len())?;
         for (key, function) in &entry.functions {
             let mut model = zval::default();
-            php::emit(&raw mut model, &serde_json::to_value(function)?);
-            php::set(&raw mut functions, &key.to_string(), &mut model);
+            php::emit(&raw mut model, &serde_json::to_value(function)?)?;
+            php::set(&raw mut functions, &key.to_string(), &mut model)?;
         }
-        php::set(target, "functions", &mut functions);
+        php::set(target, "functions", &mut functions)?;
     }
     return Ok(());
 }
@@ -573,17 +603,25 @@ unsafe extern "C" fn executable(execute_data: *mut zend_execute_data, return_val
         };
         // SAFETY: the engine passes this call's return slot; every child is moved into it.
         unsafe {
-            php::array(return_value, models.len());
+            if php::array(return_value, models.len()).is_err() {
+                return;
+            }
             for (path, model) in &models {
                 let mut entry = zval::default();
-                if let Err(error) = emit_entry(&raw mut entry, model) {
-                    php::throw(
-                        Exception::Runtime,
-                        &format!("opcov\\executable() cannot describe {path}: {error}"),
-                    );
+                match emit_entry(&raw mut entry, model) {
+                    Ok(()) => {}
+                    Err(EntryError::Bailout) => return,
+                    Err(EntryError::Serialize(error)) => {
+                        php::throw(
+                            Exception::Runtime,
+                            &format!("opcov\\executable() cannot describe {path}: {error}"),
+                        );
+                        return;
+                    }
+                }
+                if php::set(return_value, path, &mut entry).is_err() {
                     return;
                 }
-                php::set(return_value, path, &mut entry);
             }
         }
     });
@@ -591,11 +629,11 @@ unsafe extern "C" fn executable(execute_data: *mut zend_execute_data, return_val
 
 impl Engine {
     fn status_detail(&self) -> (Vec<Value>, Map<String, Value>, Value) {
-        let selected = self
+        let selected: Vec<Value> = self
             .selected_files()
             .map(|file| return Value::String(self.path(file).to_owned()))
             .collect();
-        let skipped = self
+        let skipped: Map<String, Value> = self
             .request
             .iter()
             .flat_map(|request| return &request.decisions)
@@ -609,25 +647,44 @@ impl Engine {
             })
             .collect();
         let counters = json!({
+            "files_selected": selected.len(),
+            "files_skipped": skipped.len(),
             "units": self.units.count_live(),
             "probes_installed": self.counters.probes_installed,
             "probes_fired": self.counters.probes_fired,
             "probes_rearmed": self.counters.probes_rearmed,
+            "watches_installed": self.counters.watches_installed,
+            "pending_discards": self.counters.pending_discards,
             "jump_table_files": self.counters.jump_table_files,
         });
         return (selected, skipped, counters);
     }
 }
 
-fn status(engine: Option<&Engine>, reason: Option<&OffReason>) -> Value {
+fn status(engine: Option<&Engine>, reason: Option<&OffReason>, environment: &Environment) -> Value {
     let (selected, skipped, counters) = engine.map_or_else(
         || return (Vec::new(), Map::new(), json!({})),
         Engine::status_detail,
     );
+    let conflicts: Vec<Value> = environment
+        .conflicts()
+        .iter()
+        .map(Conflict::to_json)
+        .collect();
     return json!({
         "enabled": ini::enabled(),
         "collecting": engine.is_some_and(|engine| return engine.collecting),
         "off_reason": reason.map(ToString::to_string),
+        "off_code": reason.map(|reason| return reason.code().name()),
+        "owner_thread": threads::owner().name(),
+        "zts": ZTS,
+        "vm_kind": info::vm_kind().to_string_lossy(),
+        "sapi": environment.sapi,
+        "opcache": environment
+            .opcache
+            .as_ref()
+            .map_or(Value::Null, |opcache| return opcache.to_json(&environment.sapi)),
+        "conflicts": conflicts,
         "selected_files": selected,
         "skipped_files": skipped,
         "counters": counters,
@@ -640,21 +697,75 @@ unsafe extern "C" fn get_status(execute_data: *mut zend_execute_data, return_val
         if !unsafe { accepts_no_arguments(execute_data) } {
             return;
         }
-        let reason = off_reason();
-        let emitted = with_engine(|engine| {
-            engine.scratch.value = status(Some(engine), reason.as_ref());
-            // SAFETY: the engine passes this call's return slot.
-            unsafe { php::emit(return_value, &engine.scratch.value) };
-            engine.scratch.value = Value::Null;
-        });
-        if emitted.is_none() {
-            // SAFETY: as above; the engine is absent, so the status is built from the reason alone.
-            unsafe { php::emit(return_value, &status(None, reason.as_ref())) };
+        let environment = Environment::current();
+        let reason = off_reason_in(&environment);
+        let built =
+            with_engine(|engine| return status(Some(engine), reason.as_ref(), &environment))
+                .unwrap_or_else(|| return status(None, reason.as_ref(), &environment));
+        // SAFETY: the engine passes this call's return slot.
+        if unsafe { php::emit(return_value, &built) }.is_err() {
+            return;
         }
     });
 }
 
+fn role_names(roles: Roles) -> Vec<&'static str> {
+    return roles.iter().map(Role::name).collect();
+}
+
 impl Engine {
+    fn probe_detail(&self, unit: &Unit, number: usize, probe: &Probe) -> Value {
+        let function = self
+            .files
+            .function(unit.function)
+            .map_or_else(String::new, |record| return record.key.to_string());
+        let watched_by: Vec<String> = unit
+            .sources
+            .iter()
+            .flat_map(|source| return source.successors.iter())
+            .filter(|successor| return usize::try_from(successor.probe).ok() == Some(number))
+            .map(|successor| return OutcomeId::new(successor.outcome).to_string())
+            .collect();
+        let mut roles = Roles::default();
+        if probe.line.is_some() {
+            roles.insert(Role::Line);
+        }
+        if probe.source.is_some() {
+            roles.insert(Role::Source);
+        }
+        if !watched_by.is_empty() {
+            roles.insert(Role::Watch);
+        }
+        if !probe.entries.is_empty() {
+            roles.insert(Role::LoopEntry);
+        }
+        if probe.finally.is_some() {
+            roles.insert(Role::FinallyEntry);
+        }
+        let source_outcomes: Vec<String> = probe
+            .source
+            .and_then(|source| return unit.sources.get(usize::try_from(source).ok()?))
+            .map_or_else(Vec::new, |source| {
+                return source
+                    .successors
+                    .iter()
+                    .map(|successor| return OutcomeId::new(successor.outcome).to_string())
+                    .collect();
+            });
+        return json!({
+            "function": function,
+            "op": probe.op,
+            "line": probe.line.map(Line::get),
+            "roles": role_names(roles),
+            "armed": role_names(probe.armed),
+            "watchers": probe.watchers,
+            "source_outcomes": source_outcomes,
+            "watched_outcomes": watched_by,
+            "loop_entries": probe.entries.iter().map(|&looped| return LoopId::new(looped).to_string()).collect::<Vec<_>>(),
+            "finally_outcome": probe.finally.map(|entry| return OutcomeId::new(entry.outcome).to_string()),
+        });
+    }
+
     fn debug_info(&self, requested: &str) -> Value {
         let decision = self
             .request
@@ -666,7 +777,7 @@ impl Engine {
             Some(Verdict::Measure(_)) | None => Value::Null,
         };
         let Some(file) = self.find_file(requested) else {
-            return json!({"skip_reason": skip, "executable_lines": [], "functions": {}, "probes": []});
+            return json!({"skip_reason": skip, "executable_lines": [], "functions": {}, "probes": [], "units": 0});
         };
         let Some(record) = self.files.get(file) else {
             return Value::Null;
@@ -684,23 +795,19 @@ impl Engine {
                 );
             })
             .collect();
-        let probes: Vec<Value> = self
+        let units: Vec<&Unit> = self
             .units
             .live()
             .filter(|unit| return unit.file == file)
+            .collect();
+        let probes: Vec<Value> = units
+            .iter()
             .flat_map(|unit| {
-                let function = self
-                    .files
-                    .function(unit.function)
-                    .map_or_else(String::new, |record| return record.key.to_string());
-                return unit.probes.iter().map(move |probe| {
-                    return json!({
-                        "function": function,
-                        "op": probe.op,
-                        "line": probe.line.map(Line::get),
-                        "armed": probe.armed.iter().map(Role::name).collect::<Vec<_>>(),
-                    });
-                });
+                return unit
+                    .probes
+                    .iter()
+                    .enumerate()
+                    .map(move |(number, probe)| return self.probe_detail(unit, number, probe));
             })
             .collect();
         return json!({
@@ -708,6 +815,7 @@ impl Engine {
             "executable_lines": record.lines.iter().map(|line| return line.get()).collect::<Vec<_>>(),
             "functions": functions,
             "probes": probes,
+            "units": units.len(),
         });
     }
 }
@@ -723,15 +831,12 @@ unsafe extern "C" fn get_debug_info(execute_data: *mut zend_execute_data, return
         // SAFETY: the argument string stays alive during this call.
         let bytes = unsafe { core::slice::from_raw_parts(text.cast::<u8>(), length) };
         let requested = String::from_utf8_lossy(bytes);
-        let emitted = with_engine(|engine| {
-            engine.scratch.value = engine.debug_info(&requested);
-            // SAFETY: the engine passes this call's return slot.
-            unsafe { php::emit(return_value, &engine.scratch.value) };
-            engine.scratch.value = Value::Null;
+        let built = with_engine(|engine| return engine.debug_info(&requested)).unwrap_or_else(|| {
+            return json!({"skip_reason": "collection is off", "executable_lines": [], "functions": {}, "probes": [], "units": 0});
         });
-        if emitted.is_none() {
-            // SAFETY: as above.
-            unsafe { php::array(return_value, 0) };
+        // SAFETY: the engine passes this call's return slot.
+        if unsafe { php::emit(return_value, &built) }.is_err() {
+            return;
         }
     });
 }
@@ -985,7 +1090,7 @@ unsafe extern "C" fn write_report(execute_data: *mut zend_execute_data, _return_
             refuse(&reason);
             return;
         }
-        let built = with_engine(|engine| {
+        let Some(built) = with_engine(|engine| {
             if engine.collecting {
                 return Err(Refusal::new(
                     Exception::Logic,
@@ -998,13 +1103,10 @@ unsafe extern "C" fn write_report(execute_data: *mut zend_execute_data, _return_
                     format!("cannot build the report for {}: {error}", target.display()),
                 );
             });
-        })
-        .unwrap_or_else(|| {
-            return Err(Refusal::new(
-                Exception::CannotCollect,
-                format!("{CANNOT_COLLECT}: {}", OffReason::NotEnabledAtStartup),
-            ));
-        });
+        }) else {
+            refuse(&OffReason::NotEnabledAtStartup);
+            return;
+        };
         let report = match built {
             Ok(report) => report,
             Err(refusal) => {

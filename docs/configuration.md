@@ -170,14 +170,39 @@ All functions live in the `opcov` namespace.
 
 | Function | Behaviour |
 |---|---|
-| `ensure_can_collect(): void` | Throws `\opcov\CannotCollectException` (a `RuntimeException`) with the reason when collection is off. After at least one `start()`/`stop()` cycle it also throws when no compiled file was selected. |
+| `ensure_can_collect(): void` | Throws `\opcov\CannotCollectException` (a `RuntimeException`) with the reason when collection is off, or when the setup conflicts with probes (OPcache's optimizer, JIT, file cache or preload, OPcache under a non-CLI SAPI, Xdebug's or PCOV's coverage mode; settings are checked again on every call, so `ini_set('opcache.jit', ...)` is caught). The message ends with a link to its entry in [troubleshooting.md](troubleshooting.md). After at least one `start()`/`stop()` cycle it also throws when no compiled file was selected. |
 | `start(): void` | Starts recording. Re-arms the probes that fired while collection was off (bootstrap code), so the collection sees them again. Throws `CannotCollectException` when collection is off and `LogicException` when already collecting. |
-| `stop(?string $test = null): array` | Stops recording and returns what fired since `start()` (shape below), sorted by file, line, function key and id. It does not re-arm the probes. With `$test`, the same hits are also attributed to that test id for `write_report()`. Throws `LogicException` without a `start()`, `CannotCollectException` when collection went off meanwhile, and `ValueError` (before stopping) when `$test` is empty or not UTF-8. |
+| `stop(?string $test = null): array` | Stops recording and returns what fired since `start()` (shape below), sorted by file, line, function key and id. It does not re-arm the probes, and it discards branch watches still pending, since their frames are gone once a test ends (or `exit()` or a fatal error unwound them). With `$test`, the same hits are also attributed to that test id for `write_report()`. Throws `LogicException` without a `start()`, `CannotCollectException` when collection went off meanwhile, and `ValueError` (before stopping) when `$test` is empty or not UTF-8. |
 | `reset(): void` | Re-arms every probe that fired since the last `reset()`; its cost is proportional to the probes that fired, not to the probes installed. Throws `LogicException` while collecting. |
 | `executable(array $files): array` | `[file => ['lines' => [line => []], 'functions' => [key => ['span' => null, 'outcomes' => [...], 'loops' => [...]]]]]` for the given files that were compiled, built by the same conversion as a report's `lines` and `functions` (function keys name the file by its resolved path; outcomes and loops are the report's, with empty hit lists). |
 | `write_report(string $path, array $options = []): void` | Writes a canonical `opcov-report/1` report (see [report-schema.md](report-schema.md)) to `$path`; see below. |
-| `get_status(): array` | `enabled`, `collecting`, `off_reason`, `selected_files`, `skipped_files` (file => reason) and `counters` (`units`, `probes_installed`, `probes_fired`, `probes_rearmed`, `jump_table_files`). |
-| `get_debug_info(string $file): array` | `skip_reason`, `executable_lines`, `functions` (function key => CFG snapshot with blocks, edges, loops and diagnostics) and `probes` (function, opcode index, line, armed roles). |
+| `get_status(): array` | The state of collection and everything that explains it; keys below. |
+| `get_debug_info(string $file): array` | `skip_reason` (why the file is not measured, or `null`), `executable_lines`, `units` (live compiled copies of the file), `functions` (function key => CFG snapshot with blocks, edges with their kinds, loops and diagnostics) and `probes`: per probe slot `function`, `op` (opcode index), `line`, `roles` (the roles the slot has: `Line`, `Source`, `Watch`, `LoopEntry`, `FinallyEntry`), `armed` (the roles still armed), `watchers` (pending branch sources watching it), `source_outcomes` (the outcomes a `Source` decides), `watched_outcomes` (the outcomes it resolves as a successor), `loop_entries` and `finally_outcome`. Bug reports attach it. |
+
+`get_status()` returns:
+
+| Key | Value |
+|---|---|
+| `enabled` | `opcov.enabled` for this request |
+| `collecting` | `true` between `start()` and `stop()` |
+| `off_reason` | why collection is refused, with its troubleshooting link, or `null` |
+| `off_code` | the [troubleshooting](troubleshooting.md) code of `off_reason`, or `null` |
+| `owner_thread` | `current`, `other` or `unclaimed`: the thread that owns the probes (always `current` on NTS) |
+| `zts` | whether PHP is thread-safe |
+| `vm_kind` | `CALL`, `SWITCH`, `GOTO`, `HYBRID` or `TAILCALL` |
+| `sapi` | the SAPI name, for example `cli` |
+| `opcache` | `null` when OPcache is not loaded, else `active` (caching for this SAPI) and the settings opcov checks: `enable`, `enable_cli`, `protect_memory`, `file_cache`, `jit`, `jit_buffer_size`, `preload`, `optimization_level` |
+| `conflicts` | every unsupported setup found now, as `code`, `problem` and `fix` (OPcache, JIT, Xdebug and PCOV coverage modes; see [support.md](support.md#opcache-and-jit) and [compatibility.md](compatibility.md)) |
+| `selected_files` | the measured files compiled so far |
+| `skipped_files` | compiled file => why it is not measured |
+| `counters` | `files_selected`, `files_skipped`, `units` (live compiled copies of measured code), `probes_installed`, `probes_fired`, `probes_rearmed` (re-arms by `start()`, `reset()` and request end), `watches_installed` (successor watches a branch source installed because it could not decide its outcome from the operands), `pending_discards` (watches dropped unresolved: an exception, `stop()`, a destroyed unit, or a frame that left), `jump_table_files` |
+
+After `exit()` or a fatal error during collection, shutdown functions still
+see a consistent opcov: `collecting` is still `true`, `stop($test)` attributes
+the hits made up to the interruption to that test, and `write_report()` writes
+a complete report (`tests/phpt/process/exit.phpt`, `fatal.phpt`). A fatal error
+raised inside opcov's own engine calls is caught there and resumed after opcov's
+frames returned (ADR 0001, "Fatal errors").
 
 `stop()` returns, for every file with a hit:
 

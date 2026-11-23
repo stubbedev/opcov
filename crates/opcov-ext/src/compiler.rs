@@ -10,16 +10,16 @@ use opcov_core::{
 };
 use opcov_sys::{
     ZEND_ACC_DONE_PASS_TWO, ZEND_COMPILE_NO_JUMPTABLES, ZEND_PROPERTY_HOOK_COUNT,
-    opcov_is_user_class, opcov_is_user_code, opcov_string_release, zend_class_entry,
-    zend_compile_file, zend_compile_position, zend_compile_string, zend_file_handle, zend_function,
-    zend_object, zend_op_array, zend_property_info, zend_resolve_path, zend_string,
-    zend_throw_exception_hook,
+    opcov_compile_file, opcov_compile_string, opcov_is_user_class, opcov_is_user_code,
+    opcov_string_release, zend_class_entry, zend_compile_file, zend_compile_position,
+    zend_compile_string, zend_file_handle, zend_function, zend_object, zend_op_array,
+    zend_property_info, zend_resolve_path, zend_string, zend_throw_exception_hook,
 };
 
 use crate::{
     branches::{self, Layout},
     engine::{Engine, FileId, FunctionRecord, OffReason, Reserved, Unit, Verdict, with_engine},
-    guard::{COLLECTION, EntryPoint, guard},
+    guard::{self, COLLECTION, EntryPoint, guard},
     lines,
     ordinals::Ordinals,
     probes,
@@ -160,10 +160,16 @@ unsafe extern "C" fn compile_file(
         (*globals).compiler_options = tables.apply(options);
         (zend::function_table_used(), zend::class_table_used())
     };
-    // SAFETY: calls the hook that was installed before opcov's with the engine's own arguments.
-    let op_array = unsafe { (originals.file)(handle, kind) };
+    let mut op_array: *mut zend_op_array = ptr::null_mut();
+    // SAFETY: calls the hook that was installed before opcov's with the engine's own arguments; a
+    // fatal error during compilation is caught inside the call.
+    let completed =
+        unsafe { opcov_compile_file(Some(originals.file), handle, kind, &raw mut op_array) };
     // SAFETY: as above.
     unsafe { (*globals).compiler_options = options };
+    if !completed {
+        guard::resume_bailout();
+    }
     guard(EntryPoint::CompileFile, (), || {
         // SAFETY: the op array (or null) was just compiled from the live handle; the tables are
         // live.
@@ -205,10 +211,23 @@ unsafe extern "C" fn compile_string(
             zend::class_table_used(),
         )
     };
-    // SAFETY: calls the hook that was installed before opcov's with the engine's own arguments.
-    let op_array = unsafe { (originals.string)(source, filename, position) };
+    let mut op_array: *mut zend_op_array = ptr::null_mut();
+    // SAFETY: calls the hook that was installed before opcov's with the engine's own arguments; a
+    // fatal error during compilation is caught inside the call.
+    let completed = unsafe {
+        opcov_compile_string(
+            Some(originals.string),
+            source,
+            filename,
+            position,
+            &raw mut op_array,
+        )
+    };
     // SAFETY: as above.
     unsafe { (*globals).compiler_options = options };
+    if !completed {
+        guard::resume_bailout();
+    }
     guard(EntryPoint::CompileString, (), || {
         // SAFETY: the op array (or null) was just compiled from the live source; the tables are
         // live.

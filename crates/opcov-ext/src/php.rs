@@ -2,13 +2,14 @@ use core::ptr;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 use opcov_sys::{
-    add_assoc_zval_ex, opcov_add_index_zval, opcov_add_next_index_zval, opcov_array_init,
-    opcov_register_class, opcov_string_init, opcov_string_release, opcov_zval_bool,
-    opcov_zval_long, opcov_zval_null, opcov_zval_stringl, spl_ce_LogicException,
-    spl_ce_RuntimeException, zend_ce_type_error, zend_ce_value_error, zend_class_entry,
-    zend_throw_exception, zval,
+    opcov_add_assoc_zval, opcov_add_index_zval, opcov_add_next_index_zval, opcov_array_init,
+    opcov_register_class, opcov_throw, opcov_zval_bool, opcov_zval_long, opcov_zval_null,
+    opcov_zval_stringl, spl_ce_LogicException, spl_ce_RuntimeException, zend_ce_type_error,
+    zend_ce_value_error, zend_class_entry, zval,
 };
 use serde_json::Value;
+
+use crate::guard::{Caught, caught, record};
 
 const CANNOT_COLLECT: &str = "opcov\\CannotCollectException";
 
@@ -49,39 +50,34 @@ pub(crate) fn throw(kind: Exception, message: &str) {
         // SAFETY: as above.
         Exception::Type => unsafe { zend_ce_type_error },
     };
-    // SAFETY: creates a request-scoped, NUL-terminated copy of the message, so no Rust value is held
-    // across the throw.
-    let copy = unsafe { opcov_string_init(message.as_ptr().cast(), message.len(), false) };
-    // SAFETY: `copy` is a live zend_string whose value is NUL-terminated; the engine copies it.
-    unsafe {
-        zend_throw_exception(class, (&raw const (*copy).val).cast(), 0);
-        opcov_string_release(copy);
-    }
+    // SAFETY: the engine copies the message into a request-scoped string before it throws; a fatal
+    // error on the way is caught inside the call and resumed by the entry point's guard.
+    record(unsafe { opcov_throw(class, message.as_ptr().cast(), message.len()) });
 }
 
-pub(crate) unsafe fn array(target: *mut zval, size: usize) {
+pub(crate) unsafe fn array(target: *mut zval, size: usize) -> Caught<()> {
     // SAFETY: the caller passes a writable zval.
-    unsafe { opcov_array_init(target, u32::try_from(size).unwrap_or(u32::MAX)) };
+    return caught(unsafe { opcov_array_init(target, u32::try_from(size).unwrap_or(u32::MAX)) });
 }
 
-pub(crate) unsafe fn string(target: *mut zval, text: &str) {
+pub(crate) unsafe fn string(target: *mut zval, text: &str) -> Caught<()> {
     // SAFETY: the caller passes a writable zval; the engine copies `text`.
-    unsafe { opcov_zval_stringl(target, text.as_ptr().cast(), text.len()) };
+    return caught(unsafe { opcov_zval_stringl(target, text.as_ptr().cast(), text.len()) });
 }
 
-pub(crate) unsafe fn set(array: *mut zval, key: &str, value: &mut zval) {
+pub(crate) unsafe fn set(array: *mut zval, key: &str, value: &mut zval) -> Caught<()> {
     // SAFETY: the caller passes a live array zval; the array takes ownership of `value`.
-    unsafe { add_assoc_zval_ex(array, key.as_ptr().cast(), key.len(), value) };
+    return caught(unsafe { opcov_add_assoc_zval(array, key.as_ptr().cast(), key.len(), value) });
 }
 
-pub(crate) unsafe fn set_index(array: *mut zval, index: u32, value: &mut zval) {
+pub(crate) unsafe fn set_index(array: *mut zval, index: u32, value: &mut zval) -> Caught<()> {
     // SAFETY: the caller passes a live array zval; the array takes ownership of `value`.
-    unsafe { opcov_add_index_zval(array, u64::from(index), value) };
+    return caught(unsafe { opcov_add_index_zval(array, u64::from(index), value) });
 }
 
-pub(crate) unsafe fn push(array: *mut zval, value: &mut zval) {
+pub(crate) unsafe fn push(array: *mut zval, value: &mut zval) -> Caught<()> {
     // SAFETY: the caller passes a live array zval; the array takes ownership of `value`.
-    unsafe { opcov_add_next_index_zval(array, value) };
+    return caught(unsafe { opcov_add_next_index_zval(array, value) });
 }
 
 pub(crate) unsafe fn bool_value(value: bool) -> zval {
@@ -91,7 +87,7 @@ pub(crate) unsafe fn bool_value(value: bool) -> zval {
     return target;
 }
 
-pub(crate) unsafe fn emit(target: *mut zval, value: &Value) {
+pub(crate) unsafe fn emit(target: *mut zval, value: &Value) -> Caught<()> {
     // SAFETY: the caller passes a writable zval; every child is moved into its parent array.
     unsafe {
         match value {
@@ -99,27 +95,28 @@ pub(crate) unsafe fn emit(target: *mut zval, value: &Value) {
             Value::Bool(flag) => opcov_zval_bool(target, *flag),
             Value::Number(number) => match number.as_i64() {
                 Some(integer) => opcov_zval_long(target, integer),
-                None => string(target, &number.to_string()),
+                None => string(target, &number.to_string())?,
             },
-            Value::String(text) => string(target, text),
+            Value::String(text) => string(target, text)?,
             Value::Array(items) => {
-                array(target, items.len());
+                array(target, items.len())?;
                 for item in items {
                     let mut child = zval::default();
-                    emit(&raw mut child, item);
-                    push(target, &mut child);
+                    emit(&raw mut child, item)?;
+                    push(target, &mut child)?;
                 }
             }
             Value::Object(entries) => {
-                array(target, entries.len());
+                array(target, entries.len())?;
                 let mut sorted: Vec<(&String, &Value)> = entries.iter().collect();
                 sorted.sort_unstable_by(|left, right| return left.0.cmp(right.0));
                 for (key, item) in sorted {
                     let mut child = zval::default();
-                    emit(&raw mut child, item);
-                    set(target, key, &mut child);
+                    emit(&raw mut child, item)?;
+                    set(target, key, &mut child)?;
                 }
             }
         }
     }
+    return Ok(());
 }

@@ -29,4 +29,4 @@ stop without start: LogicException: opcov\stop() was called without opcov\start(
 nested start: LogicException: opcov\start() was called while collecting; call opcov\stop() first
 reset while collecting: LogicException: opcov\reset() was called while collecting; call opcov\stop() first
 bool(true)
-opcov\CannotCollectException: opcov cannot collect coverage: opcov.collect_paths selected none of the 1 files compiled during this run
+opcov\CannotCollectException: opcov cannot collect coverage: opcov.collect_paths selected none of the 1 files compiled during this run (see https://github.com/stubbedev/opcov/blob/main/docs/troubleshooting.md#nothing-selected)

@@ -1,0 +1,58 @@
+name: Bug report
+description: A wrong or missing report, a refusal you cannot explain, or a crash
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Most refusals explain themselves: the exception message links an entry in
+        [docs/troubleshooting.md](https://github.com/stubbedev/opcov/blob/main/docs/troubleshooting.md).
+        If that does not help, the two outputs below let us explain a wrong or missing report without a debugger.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: For a wrong line, outcome or loop, name the file, the line and the construct.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: opcov doctor
+      description: |
+        Run `opcov doctor --php "$(command -v php)"` with the same PHP, INI files and environment as the test run
+        (for PHPUnit through the launcher, `opcov doctor` with `PHP_INI_SCAN_DIR` set as the launcher sets it) and paste
+        the whole output.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: debug-info
+    attributes:
+      label: opcov\get_debug_info() of the file in question
+      description: |
+        Run the code that should be covered with opcov collecting, then paste the output of
+        `echo json_encode(\opcov\get_debug_info('/absolute/path/to/File.php'), JSON_PRETTY_PRINT);`
+        It lists the file's control-flow graph per function, every probe with its roles and state, and the edge kinds.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: opcov\get_status() at the end of the run
+      description: Optional. `echo json_encode(\opcov\get_status(), JSON_PRETTY_PRINT);`
+      render: json
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Smallest code that reproduces it
+      description: A PHP file (and test) that shows the problem, if you can reduce it.
+      render: php
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: opcov, PHP (with ZTS or NTS), operating system and architecture, PHPUnit or Pest.
+    validations:
+      required: true

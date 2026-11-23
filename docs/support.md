@@ -62,3 +62,26 @@ Windows is not supported. `docs/install.md` lists every channel.
 Each release's notes are its section in `CHANGELOG.md`, which is written by
 hand when a change lands, plus the PHP versions it was built for and the report
 schema version it writes.
+
+## OPcache and JIT
+
+opcov checks these settings when a request starts and on every collection call.
+A refused setup installs nothing and makes `\opcov\ensure_can_collect()` throw
+with the setting, the value to use and a link to its entry in
+[troubleshooting.md](troubleshooting.md). [ADR 0004](adr/0004-opcache-jit.md)
+explains each verdict.
+
+| Setup | Supported | Use instead |
+|---|---|---|
+| OPcache off (not loaded, `opcache.enable=0`, or `opcache.enable_cli=0` in the CLI) | yes | |
+| CLI OPcache without the optimizer (`opcache.enable_cli=1`, `opcache.optimization_level=0`) | yes | |
+| Optimizer (`opcache.optimization_level` other than 0, the default is `0x7FFEBFFF`) | no | `opcache.optimization_level=0` |
+| JIT tracing (`opcache.jit=tracing`, `on`, `1`, or a `CRTO` number with trigger T 3 or 5) | no | `opcache.jit=disable` |
+| JIT function (`opcache.jit=function`, or a `CRTO` number with trigger T 0, 1 or 2) | no | `opcache.jit=disable` |
+| File cache (`opcache.file_cache`, `opcache.file_cache_only`) | no | `opcache.file_cache=` |
+| Preload (`opcache.preload`) | no | `opcache.preload=` |
+| `opcache.protect_memory=1` | no | `opcache.protect_memory=0` |
+| OPcache under FPM, CGI or another server SAPI | no | `opcache.enable=0`, or the CLI |
+
+The JIT counts as on only with `opcache.jit_buffer_size` above 0. phpdbg counts
+as the CLI. PHP 8.5 and later build OPcache in; on 8.4 it is `opcache.so`.

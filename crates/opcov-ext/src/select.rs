@@ -13,13 +13,13 @@ use opcov_core::{
     report::Settings,
 };
 use opcov_sys::{
-    opcov_read_long, opcov_string_init, opcov_string_release, pcre_cache_entry,
-    pcre_get_compiled_regex_cache, php_pcre_match_impl, php_pcre_pce_decref, php_pcre_pce_incref,
-    zval,
+    opcov_pcre_compile, opcov_pcre_match, pcre_cache_entry, php_pcre_pce_decref,
+    php_pcre_pce_incref,
 };
 
 use crate::{
     engine::{OffReason, Request, Verdict, with_engine},
+    guard::caught,
     ini, zend,
 };
 
@@ -40,15 +40,17 @@ impl Pattern {
         let error_reporting = unsafe { (*executor).error_reporting };
         // SAFETY: as above.
         unsafe { (*executor).error_reporting = 0 };
-        // SAFETY: creates a request-scoped zend_string copy of `source`.
-        let regex = unsafe { opcov_string_init(source.as_ptr().cast(), source.len(), false) };
-        // SAFETY: `regex` is a live zend_string; PCRE copies what it caches.
-        let entry = NonNull::new(unsafe { pcre_get_compiled_regex_cache(regex) });
-        // SAFETY: releases the string created above.
-        unsafe { opcov_string_release(regex) };
+        let mut entry: *mut pcre_cache_entry = ptr::null_mut();
+        // SAFETY: PCRE compiles a request-scoped copy of `source` and caches what it keeps; a fatal
+        // error on the way is caught inside the call.
+        let completed =
+            unsafe { opcov_pcre_compile(source.as_ptr().cast(), source.len(), &raw mut entry) };
         // SAFETY: restores the value read above.
         unsafe { (*executor).error_reporting = error_reporting };
-        return entry.map(|entry| {
+        if caught(completed).is_err() {
+            return None;
+        }
+        return NonNull::new(entry).map(|entry| {
             // SAFETY: keeps the cache entry alive until `release`, even if PCRE's cache evicts it.
             unsafe { php_pcre_pce_incref(entry.as_ptr()) };
             return Self(entry);
@@ -56,28 +58,23 @@ impl Pattern {
     }
 
     fn matches(self, subject: &str) -> Option<bool> {
-        // SAFETY: creates a request-scoped zend_string copy of `subject`.
-        let string = unsafe { opcov_string_init(subject.as_ptr().cast(), subject.len(), false) };
-        let mut result = zval::default();
-        // SAFETY: the pattern entry is kept alive by its reference; without sub-patterns the result
-        // is a long (or false on a matching error) and owns no memory.
-        unsafe {
-            php_pcre_match_impl(
+        let mut matched = -1;
+        // SAFETY: the pattern entry is kept alive by its reference; the engine matches a
+        // request-scoped copy of `subject` and writes -1 for a matching error.
+        let completed = unsafe {
+            opcov_pcre_match(
                 self.0.as_ptr(),
-                string,
-                &raw mut result,
-                ptr::null_mut(),
-                false,
-                0,
-                0,
-            );
+                subject.as_ptr().cast(),
+                subject.len(),
+                &raw mut matched,
+            )
         };
-        // SAFETY: releases the string created above.
-        unsafe { opcov_string_release(string) };
-        let mut count = 0;
-        // SAFETY: `result` was initialised by php_pcre_match_impl.
-        let is_long = unsafe { opcov_read_long(&raw const result, &raw mut count) };
-        return is_long.then_some(count > 0);
+        caught(completed).ok()?;
+        return match matched {
+            0 => Some(false),
+            1 => Some(true),
+            _ => None,
+        };
     }
 
     pub(crate) fn release(self) {

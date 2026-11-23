@@ -16,6 +16,7 @@ use opcov_core::report::{FileCoverage, PathBase, Report, SourcePath, merge_strea
 use opcov_syntax::SourceFile;
 
 mod changes;
+mod checkup;
 mod convert;
 mod doctor;
 mod failure;
@@ -46,7 +47,9 @@ enum Command {
     Convert(ConvertArgs),
     #[command(about = "Check the changed functions of a change set against a report")]
     Gate(GateArgs),
-    #[command(about = "Diagnose a report: list outcomes that match no source construct")]
+    #[command(
+        about = "Check that PHP can collect coverage with opcov, or with --report diagnose a report"
+    )]
     Doctor(DoctorArgs),
 }
 
@@ -127,8 +130,19 @@ struct GateArgs {
 
 #[derive(Debug, Args)]
 struct DoctorArgs {
-    #[arg(long, value_name = "REPORT", help = "opcov report to diagnose")]
-    report: PathBuf,
+    #[arg(
+        long,
+        value_name = "REPORT",
+        help = "opcov report to diagnose: list outcomes that match no source construct"
+    )]
+    report: Option<PathBuf>,
+    #[arg(
+        long,
+        value_name = "BINARY",
+        conflicts_with = "report",
+        help = "PHP binary whose INI files and extensions to check [default: php]"
+    )]
+    php: Option<PathBuf>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text, help = "Output format")]
     format: OutputFormat,
 }
@@ -262,17 +276,30 @@ fn gate_report(args: &GateArgs) -> Result<Verdict, Failure> {
     return Ok(result.verdict());
 }
 
-fn doctor_report(args: &DoctorArgs) -> Result<Verdict, Failure> {
-    let report = read_report(&args.report)?;
+fn doctor(args: &DoctorArgs) -> Result<Verdict, Failure> {
+    let Some(report) = &args.report else {
+        let php = args
+            .php
+            .clone()
+            .unwrap_or_else(|| return PathBuf::from("php"));
+        let found = checkup::run(&php)?;
+        emit_result(
+            args.format,
+            &found,
+            checkup::render_text,
+            checkup::render_json,
+        )?;
+        return Ok(found.verdict());
+    };
+    return doctor_report(report, args.format);
+}
+
+fn doctor_report(path: &Path, format: OutputFormat) -> Result<Verdict, Failure> {
+    let report = read_report(path)?;
     let paths = &report.header().paths;
     let diagnosis =
         doctor::diagnose(&report, loader(paths)).map_err(|error| return source_failure(&error))?;
-    emit_result(
-        args.format,
-        &diagnosis,
-        doctor::render_text,
-        doctor::render_json,
-    )?;
+    emit_result(format, &diagnosis, doctor::render_text, doctor::render_json)?;
     return Ok(diagnosis.verdict());
 }
 
@@ -303,7 +330,7 @@ fn main() -> ExitCode {
         Command::Merge(args) => merge(args),
         Command::Convert(args) => convert_report(args),
         Command::Gate(args) => gate_report(args),
-        Command::Doctor(args) => doctor_report(args),
+        Command::Doctor(args) => doctor(args),
     };
     return match result {
         Ok(verdict) => verdict.exit_code(),

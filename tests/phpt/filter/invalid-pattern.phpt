@@ -14,5 +14,5 @@ try {
     echo $e->getMessage(), "\n";
 }
 --EXPECT--
-off: opcov.exclude_pattern is not a valid PCRE pattern with delimiters: ~unclosed
-opcov cannot collect coverage: opcov.exclude_pattern is not a valid PCRE pattern with delimiters: ~unclosed
+off: opcov.exclude_pattern is not a valid PCRE pattern with delimiters: ~unclosed (see https://github.com/stubbedev/opcov/blob/main/docs/troubleshooting.md#invalid-exclude-pattern)
+opcov cannot collect coverage: opcov.exclude_pattern is not a valid PCRE pattern with delimiters: ~unclosed (see https://github.com/stubbedev/opcov/blob/main/docs/troubleshooting.md#invalid-exclude-pattern)

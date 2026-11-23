@@ -1,9 +1,12 @@
+use core::cell::Cell;
 use std::{
     any::Any,
     fmt,
     panic::{self, AssertUnwindSafe},
     sync::OnceLock,
 };
+
+use opcov_sys::opcov_bailout;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EntryPoint {
@@ -126,12 +129,55 @@ fn payload_message(payload: &(dyn Any + Send)) -> String {
 
 pub(crate) static COLLECTION: Collection = Collection::new();
 
-pub(crate) fn guard<R>(entry: EntryPoint, on_panic: R, body: impl FnOnce() -> R) -> R {
-    if let Some(result) = COLLECTION.run(entry, body) {
-        return result;
+thread_local! {
+    static DEPTH: Cell<u32> = const { Cell::new(0) };
+    static BAILED_OUT: Cell<bool> = const { Cell::new(false) };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Bailout;
+
+pub(crate) type Caught<T> = Result<T, Bailout>;
+
+pub(crate) fn record(completed: bool) -> bool {
+    if !completed {
+        BAILED_OUT.set(true);
     }
-    COLLECTION.run(entry, crate::engine::after_panic);
-    return on_panic;
+    return completed;
+}
+
+pub(crate) fn caught(completed: bool) -> Caught<()> {
+    return if record(completed) {
+        Ok(())
+    } else {
+        Err(Bailout)
+    };
+}
+
+fn resume_at_outermost() {
+    if DEPTH.get() == 0 && BAILED_OUT.replace(false) {
+        // SAFETY: a fatal error was caught inside a call into the engine and every Rust frame between
+        // that call and the engine's entry into opcov has returned, so the bailout continues across
+        // no frame that owns a value with a destructor.
+        unsafe { opcov_bailout() };
+    }
+}
+
+pub(crate) fn resume_bailout() {
+    BAILED_OUT.set(true);
+    resume_at_outermost();
+}
+
+pub(crate) fn guard<R: Copy>(entry: EntryPoint, on_panic: R, body: impl FnOnce() -> R) -> R {
+    let depth = DEPTH.get();
+    DEPTH.set(depth.saturating_add(1));
+    let result = COLLECTION.run(entry, body).unwrap_or_else(|| {
+        COLLECTION.run(entry, crate::engine::after_panic);
+        return on_panic;
+    });
+    DEPTH.set(depth);
+    resume_at_outermost();
+    return result;
 }
 
 #[cfg(test)]
