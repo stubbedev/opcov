@@ -35,7 +35,7 @@
         php85-zts = "8.5-zts";
         php86-zts = "8.6-cli";
       };
-      phpVmBuilds = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+      phpVmBuilds = lib.optionalAttrs (pkgs.stdenv.hostPlatform.isLinux && pkgs.stdenv.hostPlatform.isx86_64) {
         php84-call-vm = clang pkgs.php84;
         php85-tailcall-vm = clang pkgs.php85;
       };
