@@ -207,32 +207,74 @@ driver setting; use the extension and `opcov-cov` there. PHPT tests always use
 php-code-coverage's built-in driver selection (`Runner\Phpt\CodeCoverageBootstrapper`)
 and cannot use opcov.
 
-The driver collects lines: `start()` calls `\opcov\start()`; `stop()` calls
-`\opcov\stop()` and `\opcov\reset()` and returns
-`RawCodeCoverageData::fromLineCoverage()` with `1` for executed lines and `-1`
-for the other executable lines of each file the first time the driver reports
-it (`\opcov\executable()`); later tests only report their hits, which keeps the
-cost per test proportional to the code it ran. Its name is `opcov` and its
-version the extension's.
+The driver collects lines and, on request, branches: `start()` calls
+`\opcov\start()`; `stop()` calls `\opcov\stop()` and `\opcov\reset()` and
+returns `RawCodeCoverageData::fromLineAndBranchCoverage()` with `1` for executed
+lines and `-1` for the other executable lines of each file the first time the
+driver reports it (`\opcov\executable()`); later tests only report their hits,
+which keeps the cost per test proportional to the code it ran. Its name is
+`opcov` and its version the extension's.
 
-Branch coverage is not offered yet: the driver keeps php-code-coverage's
-default `canCollectBranchCoverage()` of `false`, so `--branch-coverage` and
-`--path-coverage` fail with php-code-coverage's
-`opcov X does not support branch coverage`. When branch probes exist (#6), the
-driver will return `true` from `canCollectBranchCoverage()` and report each
-function's outcomes through `RawCodeCoverageData::fromLineAndBranchCoverage()`,
-whose contract (php-code-coverage 14) fits opcov without enumeration:
+### Branch coverage
 
-- `branches`: one entry per CFG block with `line_start`/`line_end`, `op_start`
-  and `op_end` (opcode indexes; the contract allows any values that keep
-  identity and order), `hit`, and `out`/`out_hit` for the edges to successor
-  blocks, which are opcov's outcomes;
-- `paths`: php-code-coverage 14 separates `Granularity::LineAndBranch` from
-  `Granularity::LineBranchAndPath`, and branch coverage does not read `paths`.
-  The driver will keep `canCollectPathCoverage()` at `false`, so path coverage
-  is refused instead of filled with invented paths. (Should a consumer ever
-  require paths, the representation without enumeration is one path per edge,
-  `[from block, to block]`, hit when the edge's outcome was taken.)
+The driver returns `true` from `canCollectBranchCoverage()`, so
+`--branch-coverage` (or `<coverage branchCoverage="true">`) makes PHPUnit's
+reports show opcov's branch outcomes ([branch-semantics.md](branch-semantics.md)):
+
+```sh
+vendor/bin/opcov-phpunit vendor/bin/phpunit --branch-coverage --coverage-html build/html
+```
+
+php-code-coverage's branch model is Xdebug's: a function's `branches` are the
+blocks of its control-flow graph, and a report counts how many of them ran.
+opcov records edges instead (which way each decision went), so each **outcome**
+becomes one php-code-coverage branch, and the branch counts of a report are
+outcomes taken out of outcomes reported:
+
+| php-code-coverage field | Value |
+|---|---|
+| branch id | the outcome's number (`o7` is branch `7`); ids are stable per function and ordered by site |
+| `op_start`, `op_end` | the outcome's `site`, the index of the branching opcode; the outcomes of one construct share it |
+| `line_start`, `line_end` | the outcome's `line` |
+| `hit` | `1` when the test took the outcome, else `0` |
+| `out`, `out_hit` | `[]`: an outcome is an edge, not a block with successors (the contract allows empty edges) |
+
+- Only outcomes that count toward a verdict become branches, as in
+  `opcov convert`: `Engine` outcomes and the `LoopEnter`/`LoopSkip` outcomes of
+  `foreach` are left out (an array never takes `LoopSkip`, so it would always
+  show as missed). Loop findings (`zero`, `second`) have no php-code-coverage
+  counterpart and are not reported; they are in the opcov report.
+- With every branch a single line, the HTML report colours each line with
+  outcomes by how many of them were taken and lists every outcome with its
+  tests in the file's branch view. It draws no decision markers and no
+  control-flow graph, which need block successors (`out`).
+- The first report of a file carries every function's branches; later tests
+  carry only the functions they ran.
+
+Function names follow php-code-coverage's convention, which is Xdebug's. Each
+opcov function key ([report-schema.md](report-schema.md#function-keys)) maps
+as follows; `<file>` becomes the absolute path:
+
+| opcov key | php-code-coverage name | Counted in class and function totals |
+|---|---|---|
+| `{main}@<file>` | `{main}` | no (php-code-coverage has no unit for it) |
+| `App\helper` | `App\helper` | yes |
+| `App\Foo::bar` | `App\Foo->bar` | yes; a trait method is keyed by its trait, as php-code-coverage keys it |
+| `App\Foo::$name::get` | `App\Foo->$name::get`, PHP's own name for the hook | no: php-code-coverage has no unit for property hooks |
+| `{closure}@<file>:<a>-<b>` | `{closure:<file>:<a>-<b>}`, Xdebug's name | no: closures are no unit |
+| `{closure}@<file>:<a>-<b>#<n>` | `{closure:<file>:<a>-<b>}#<n>` | no; Xdebug has no counterpart, since it names every closure of one line span the same |
+| `class@anonymous@<file>:<a>-<b>[#<n>]::bar` | `class@anonymous@<file>:<a>-<b>[#<n>]->bar` | no: anonymous classes are no unit |
+
+Branches of functions that are not counted still appear in the HTML branch
+view and in the line colouring.
+
+Path coverage stays refused: the driver keeps `canCollectPathCoverage()` at
+`false`, so `--path-coverage` stops the run with php-code-coverage's
+`opcov X does not support path coverage`. php-code-coverage 14 separates
+`Granularity::LineAndBranch` from `Granularity::LineBranchAndPath`, and branch
+coverage does not read `paths`; opcov never enumerates the paths through a
+function, whose number grows exponentially with its branches, and does not
+invent them.
 
 ## Converting to php-code-coverage's `.cov`
 
@@ -261,9 +303,14 @@ How the data goes in:
   php-code-coverage therefore applies its own processing as it would to PCOV's
   data: only lines its static analysis considers executable are kept, and
   `@codeCoverageIgnore` annotations are honoured;
-- outcomes and loops are not converted: the `.cov` holds line coverage, as a
-  PCOV run would. The driver name recorded in the format-4 build information is
-  `opcov` with the version from the report's `generator.opcov`.
+- outcomes become branches exactly as in the driver
+  ([Branch coverage](#branch-coverage)), appended with the executable lines and
+  then under each test that took them, so the `.cov` holds line and branch
+  coverage as `--branch-coverage` would write it. With php-code-coverage 12.5,
+  which has no branch-only mode, they go through
+  `RawCodeCoverageData::fromXdebugWithPathCoverage()` with no paths. Loop findings are not converted. The driver
+  name recorded in the format-4 build information is `opcov` with the version
+  from the report's `generator.opcov`.
 
 The output is written to a temporary file next to the target and renamed. Exit
 code 0 on success, 2 on any error, with the input, output and cause on standard

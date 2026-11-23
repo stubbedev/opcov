@@ -49,7 +49,7 @@ break compatibility ([docs/support.md](docs/support.md)). What works today:
 - line, branch-outcome and loop collection with per-test attribution, and the
   canonical report `opcov-report/1`;
 - the PHPUnit 12/13 and Pest 4 integration, including paratest, and a
-  php-code-coverage driver for PHPUnit 13.3+ (lines only so far);
+  php-code-coverage driver for PHPUnit 13.3+ with line and branch coverage;
 - `opcov merge`, `convert` (lcov, Clover, Cobertura, HTML), `gate` and
   `doctor`;
 - OPcache under the CLI; every unsupported setup (JIT, file cache, preload,
