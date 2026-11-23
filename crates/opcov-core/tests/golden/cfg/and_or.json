@@ -1,0 +1,415 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nfunction f($a, $b, $c) {\n    if ($a && ($b || $c)) {\n        echo 1;\n    }\n    return $a and $b;\n}\n",
+  "input": {
+    "key": "f",
+    "file": "and_or.php",
+    "line_start": 2,
+    "line_end": 7,
+    "flags": [],
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RECV",
+            "line": 2
+          },
+          {
+            "opcode": "RECV",
+            "line": 2
+          },
+          {
+            "opcode": "RECV",
+            "line": 2
+          },
+          {
+            "opcode": "JMPZ_EX",
+            "line": 3
+          }
+        ],
+        "successors": [
+          4,
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "JMPNZ_EX",
+            "line": 3
+          }
+        ],
+        "successors": [
+          3,
+          2
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "BOOL",
+            "line": 3
+          }
+        ],
+        "successors": [
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "BOOL",
+            "line": 3
+          }
+        ],
+        "successors": [
+          4
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "JMPZ",
+            "line": 3
+          }
+        ],
+        "successors": [
+          6,
+          5
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "ECHO",
+            "line": 4
+          }
+        ],
+        "successors": [
+          6
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "JMPZ_EX",
+            "line": 6
+          }
+        ],
+        "successors": [
+          8,
+          7
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "BOOL",
+            "line": 6
+          }
+        ],
+        "successors": [
+          8
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RETURN",
+            "line": 6
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [],
+        "ops": [
+          {
+            "opcode": "RETURN",
+            "line": 7
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "loops": []
+  },
+  "expected": {
+    "function": {
+      "key": "f",
+      "file": "and_or.php",
+      "line_start": 2,
+      "line_end": 7,
+      "flags": [],
+      "blocks": [
+        {
+          "id": 0,
+          "op_start": 0,
+          "op_end": 3,
+          "line_start": 2,
+          "line_end": 3,
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RECV",
+              "line": 2
+            },
+            {
+              "opcode": "RECV",
+              "line": 2
+            },
+            {
+              "opcode": "RECV",
+              "line": 2
+            },
+            {
+              "opcode": "JMPZ_EX",
+              "line": 3
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "op_start": 4,
+          "op_end": 4,
+          "line_start": 3,
+          "line_end": 3,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "JMPNZ_EX",
+              "line": 3
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "op_start": 5,
+          "op_end": 5,
+          "line_start": 3,
+          "line_end": 3,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "BOOL",
+              "line": 3
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "op_start": 6,
+          "op_end": 6,
+          "line_start": 3,
+          "line_end": 3,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "BOOL",
+              "line": 3
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "op_start": 7,
+          "op_end": 7,
+          "line_start": 3,
+          "line_end": 3,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "JMPZ",
+              "line": 3
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "op_start": 8,
+          "op_end": 8,
+          "line_start": 4,
+          "line_end": 4,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "ECHO",
+              "line": 4
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "op_start": 9,
+          "op_end": 9,
+          "line_start": 6,
+          "line_end": 6,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "JMPZ_EX",
+              "line": 6
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "op_start": 10,
+          "op_end": 10,
+          "line_start": 6,
+          "line_end": 6,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "BOOL",
+              "line": 6
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "op_start": 11,
+          "op_end": 11,
+          "line_start": 6,
+          "line_end": 6,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RETURN",
+              "line": 6
+            }
+          ]
+        },
+        {
+          "id": 9,
+          "op_start": 12,
+          "op_end": 12,
+          "line_start": 7,
+          "line_end": 7,
+          "flags": [],
+          "ops": [
+            {
+              "opcode": "RETURN",
+              "line": 7
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "to": 1,
+          "kind": "Evaluate"
+        },
+        {
+          "from": 0,
+          "to": 4,
+          "kind": "ShortCircuit"
+        },
+        {
+          "from": 1,
+          "to": 2,
+          "kind": "Evaluate"
+        },
+        {
+          "from": 1,
+          "to": 3,
+          "kind": "ShortCircuit"
+        },
+        {
+          "from": 2,
+          "to": 3,
+          "kind": "Flow"
+        },
+        {
+          "from": 3,
+          "to": 4,
+          "kind": "Flow"
+        },
+        {
+          "from": 4,
+          "to": 5,
+          "kind": "IfTrue"
+        },
+        {
+          "from": 4,
+          "to": 6,
+          "kind": "IfFalse"
+        },
+        {
+          "from": 5,
+          "to": 6,
+          "kind": "Flow"
+        },
+        {
+          "from": 6,
+          "to": 7,
+          "kind": "Evaluate"
+        },
+        {
+          "from": 6,
+          "to": 8,
+          "kind": "ShortCircuit"
+        },
+        {
+          "from": 7,
+          "to": 8,
+          "kind": "Flow"
+        }
+      ],
+      "loops": []
+    },
+    "diagnostics": []
+  }
+}

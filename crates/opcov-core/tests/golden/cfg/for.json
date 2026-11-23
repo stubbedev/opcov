@@ -1,0 +1,221 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nfunction f($n) {\n    for ($i = 0; $i < $n; $i++) {\n        echo $i;\n    }\n}\n",
+  "input": {
+    "key": "f",
+    "file": "for.php",
+    "line_start": 2,
+    "line_end": 6,
+    "flags": [],
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RECV",
+            "line": 2
+          },
+          {
+            "opcode": "ASSIGN",
+            "line": 3
+          },
+          {
+            "opcode": "JMP",
+            "line": 3
+          }
+        ],
+        "successors": [
+          2
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "ECHO",
+            "line": 4
+          },
+          {
+            "opcode": "PRE_INC",
+            "line": 3
+          }
+        ],
+        "successors": [
+          2
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "IS_SMALLER",
+            "line": 3
+          },
+          {
+            "opcode": "JMPNZ",
+            "line": 3
+          }
+        ],
+        "successors": [
+          1,
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RETURN",
+            "line": 6
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "loops": [
+      {
+        "header": 2,
+        "body_blocks": [
+          1
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "function": {
+      "key": "f",
+      "file": "for.php",
+      "line_start": 2,
+      "line_end": 6,
+      "flags": [],
+      "blocks": [
+        {
+          "id": 0,
+          "op_start": 0,
+          "op_end": 2,
+          "line_start": 2,
+          "line_end": 3,
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RECV",
+              "line": 2
+            },
+            {
+              "opcode": "ASSIGN",
+              "line": 3
+            },
+            {
+              "opcode": "JMP",
+              "line": 3
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "op_start": 3,
+          "op_end": 4,
+          "line_start": 3,
+          "line_end": 4,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "ECHO",
+              "line": 4
+            },
+            {
+              "opcode": "PRE_INC",
+              "line": 3
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "op_start": 5,
+          "op_end": 6,
+          "line_start": 3,
+          "line_end": 3,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "IS_SMALLER",
+              "line": 3
+            },
+            {
+              "opcode": "JMPNZ",
+              "line": 3
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "op_start": 7,
+          "op_end": 7,
+          "line_start": 6,
+          "line_end": 6,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RETURN",
+              "line": 6
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "to": 2,
+          "kind": "Flow"
+        },
+        {
+          "from": 1,
+          "to": 2,
+          "kind": "Flow"
+        },
+        {
+          "from": 2,
+          "to": 1,
+          "kind": "LoopBack"
+        },
+        {
+          "from": 2,
+          "to": 3,
+          "kind": "LoopExit"
+        }
+      ],
+      "loops": [
+        {
+          "header": 2,
+          "body_blocks": [
+            1
+          ],
+          "kind": "PreTest"
+        }
+      ]
+    },
+    "diagnostics": []
+  }
+}

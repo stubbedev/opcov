@@ -1,0 +1,155 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nfunction f($a) {\n    if ($a) {\n        echo 1;\n    }\n    echo 2;\n}\n",
+  "input": {
+    "key": "f",
+    "file": "if_without_else.php",
+    "line_start": 2,
+    "line_end": 7,
+    "flags": [],
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RECV",
+            "line": 2
+          },
+          {
+            "opcode": "JMPZ",
+            "line": 3
+          }
+        ],
+        "successors": [
+          2,
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "ECHO",
+            "line": 4
+          }
+        ],
+        "successors": [
+          2
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "ECHO",
+            "line": 6
+          },
+          {
+            "opcode": "RETURN",
+            "line": 7
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "loops": []
+  },
+  "expected": {
+    "function": {
+      "key": "f",
+      "file": "if_without_else.php",
+      "line_start": 2,
+      "line_end": 7,
+      "flags": [],
+      "blocks": [
+        {
+          "id": 0,
+          "op_start": 0,
+          "op_end": 1,
+          "line_start": 2,
+          "line_end": 3,
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RECV",
+              "line": 2
+            },
+            {
+              "opcode": "JMPZ",
+              "line": 3
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "op_start": 2,
+          "op_end": 2,
+          "line_start": 4,
+          "line_end": 4,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "ECHO",
+              "line": 4
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "op_start": 3,
+          "op_end": 4,
+          "line_start": 6,
+          "line_end": 7,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "ECHO",
+              "line": 6
+            },
+            {
+              "opcode": "RETURN",
+              "line": 7
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "to": 1,
+          "kind": "IfTrue"
+        },
+        {
+          "from": 0,
+          "to": 2,
+          "kind": "IfFalse"
+        },
+        {
+          "from": 1,
+          "to": 2,
+          "kind": "Flow"
+        }
+      ],
+      "loops": []
+    },
+    "diagnostics": []
+  }
+}

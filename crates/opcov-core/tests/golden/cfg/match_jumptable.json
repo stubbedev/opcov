@@ -1,0 +1,278 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nfunction f($a) {\n    return match ($a) {\n        1, 2 => 'low',\n        3 => 'mid',\n        default => 'high',\n    };\n}\n",
+  "input": {
+    "key": "f",
+    "file": "match_jumptable.php",
+    "line_start": 2,
+    "line_end": 8,
+    "flags": [],
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RECV",
+            "line": 2
+          },
+          {
+            "opcode": "MATCH",
+            "line": 3
+          }
+        ],
+        "successors": [
+          1,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "QM_ASSIGN",
+            "line": 4
+          },
+          {
+            "opcode": "JMP",
+            "line": 4
+          }
+        ],
+        "successors": [
+          4
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "QM_ASSIGN",
+            "line": 5
+          },
+          {
+            "opcode": "JMP",
+            "line": 5
+          }
+        ],
+        "successors": [
+          4
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "QM_ASSIGN",
+            "line": 6
+          },
+          {
+            "opcode": "JMP",
+            "line": 6
+          }
+        ],
+        "successors": [
+          4
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RETURN",
+            "line": 6
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [],
+        "ops": [
+          {
+            "opcode": "RETURN",
+            "line": 8
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "loops": []
+  },
+  "expected": {
+    "function": {
+      "key": "f",
+      "file": "match_jumptable.php",
+      "line_start": 2,
+      "line_end": 8,
+      "flags": [],
+      "blocks": [
+        {
+          "id": 0,
+          "op_start": 0,
+          "op_end": 1,
+          "line_start": 2,
+          "line_end": 3,
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RECV",
+              "line": 2
+            },
+            {
+              "opcode": "MATCH",
+              "line": 3
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "op_start": 2,
+          "op_end": 3,
+          "line_start": 4,
+          "line_end": 4,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "QM_ASSIGN",
+              "line": 4
+            },
+            {
+              "opcode": "JMP",
+              "line": 4
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "op_start": 4,
+          "op_end": 5,
+          "line_start": 5,
+          "line_end": 5,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "QM_ASSIGN",
+              "line": 5
+            },
+            {
+              "opcode": "JMP",
+              "line": 5
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "op_start": 6,
+          "op_end": 7,
+          "line_start": 6,
+          "line_end": 6,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "QM_ASSIGN",
+              "line": 6
+            },
+            {
+              "opcode": "JMP",
+              "line": 6
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "op_start": 8,
+          "op_end": 8,
+          "line_start": 6,
+          "line_end": 6,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RETURN",
+              "line": 6
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "op_start": 9,
+          "op_end": 9,
+          "line_start": 8,
+          "line_end": 8,
+          "flags": [],
+          "ops": [
+            {
+              "opcode": "RETURN",
+              "line": 8
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "to": 1,
+          "kind": {
+            "MatchArm": 0
+          }
+        },
+        {
+          "from": 0,
+          "to": 2,
+          "kind": {
+            "MatchArm": 1
+          }
+        },
+        {
+          "from": 0,
+          "to": 3,
+          "kind": {
+            "MatchArm": 2
+          }
+        },
+        {
+          "from": 1,
+          "to": 4,
+          "kind": "Flow"
+        },
+        {
+          "from": 2,
+          "to": 4,
+          "kind": "Flow"
+        },
+        {
+          "from": 3,
+          "to": 4,
+          "kind": "Flow"
+        }
+      ],
+      "loops": []
+    },
+    "diagnostics": []
+  }
+}

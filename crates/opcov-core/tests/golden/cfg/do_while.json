@@ -1,0 +1,166 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nfunction f($n) {\n    do {\n        $n--;\n    } while ($n > 0);\n}\n",
+  "input": {
+    "key": "f",
+    "file": "do_while.php",
+    "line_start": 2,
+    "line_end": 6,
+    "flags": [],
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RECV",
+            "line": 2
+          }
+        ],
+        "successors": [
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "PRE_DEC",
+            "line": 4
+          },
+          {
+            "opcode": "IS_SMALLER",
+            "line": 5
+          },
+          {
+            "opcode": "JMPNZ",
+            "line": 5
+          }
+        ],
+        "successors": [
+          1,
+          2
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RETURN",
+            "line": 6
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "loops": [
+      {
+        "header": 1,
+        "body_blocks": []
+      }
+    ]
+  },
+  "expected": {
+    "function": {
+      "key": "f",
+      "file": "do_while.php",
+      "line_start": 2,
+      "line_end": 6,
+      "flags": [],
+      "blocks": [
+        {
+          "id": 0,
+          "op_start": 0,
+          "op_end": 0,
+          "line_start": 2,
+          "line_end": 2,
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RECV",
+              "line": 2
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "op_start": 1,
+          "op_end": 3,
+          "line_start": 4,
+          "line_end": 5,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "PRE_DEC",
+              "line": 4
+            },
+            {
+              "opcode": "IS_SMALLER",
+              "line": 5
+            },
+            {
+              "opcode": "JMPNZ",
+              "line": 5
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "op_start": 4,
+          "op_end": 4,
+          "line_start": 6,
+          "line_end": 6,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RETURN",
+              "line": 6
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "to": 1,
+          "kind": "Flow"
+        },
+        {
+          "from": 1,
+          "to": 1,
+          "kind": "LoopBack"
+        },
+        {
+          "from": 1,
+          "to": 2,
+          "kind": "LoopExit"
+        }
+      ],
+      "loops": [
+        {
+          "header": 1,
+          "body_blocks": [],
+          "kind": "PostTest"
+        }
+      ]
+    },
+    "diagnostics": []
+  }
+}

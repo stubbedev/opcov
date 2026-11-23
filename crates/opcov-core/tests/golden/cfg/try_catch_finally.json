@@ -1,0 +1,446 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nfunction f($a) {\n    try {\n        $a();\n    } catch (\\LogicException $e) {\n        echo 1;\n    } catch (\\Exception $e) {\n        echo 2;\n    } finally {\n        echo 3;\n    }\n}\n",
+  "input": {
+    "key": "f",
+    "file": "try_catch_finally.php",
+    "line_start": 2,
+    "line_end": 12,
+    "flags": [],
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RECV",
+            "line": 2
+          }
+        ],
+        "successors": [
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "INIT_DYNAMIC_CALL",
+            "line": 4
+          },
+          {
+            "opcode": "DO_FCALL",
+            "line": 4
+          },
+          {
+            "opcode": "JMP",
+            "line": 4
+          }
+        ],
+        "successors": [
+          6
+        ]
+      },
+      {
+        "flags": [
+          "Catch",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "CATCH",
+            "line": 5
+          }
+        ],
+        "successors": [
+          4,
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "ECHO",
+            "line": 6
+          },
+          {
+            "opcode": "JMP",
+            "line": 6
+          }
+        ],
+        "successors": [
+          6
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "CATCH",
+            "line": 7
+          }
+        ],
+        "successors": [
+          5
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "ECHO",
+            "line": 8
+          }
+        ],
+        "successors": [
+          6
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "FAST_CALL",
+            "line": 9
+          }
+        ],
+        "successors": [
+          8,
+          7
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "JMP",
+            "line": 9
+          }
+        ],
+        "successors": [
+          10
+        ]
+      },
+      {
+        "flags": [
+          "Finally",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "ECHO",
+            "line": 10
+          }
+        ],
+        "successors": [
+          9
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "FAST_RET",
+            "line": 10
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RETURN",
+            "line": 12
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "loops": []
+  },
+  "expected": {
+    "function": {
+      "key": "f",
+      "file": "try_catch_finally.php",
+      "line_start": 2,
+      "line_end": 12,
+      "flags": [],
+      "blocks": [
+        {
+          "id": 0,
+          "op_start": 0,
+          "op_end": 0,
+          "line_start": 2,
+          "line_end": 2,
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RECV",
+              "line": 2
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "op_start": 1,
+          "op_end": 3,
+          "line_start": 4,
+          "line_end": 4,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "INIT_DYNAMIC_CALL",
+              "line": 4
+            },
+            {
+              "opcode": "DO_FCALL",
+              "line": 4
+            },
+            {
+              "opcode": "JMP",
+              "line": 4
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "op_start": 4,
+          "op_end": 4,
+          "line_start": 5,
+          "line_end": 5,
+          "flags": [
+            "Catch",
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "CATCH",
+              "line": 5
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "op_start": 5,
+          "op_end": 6,
+          "line_start": 6,
+          "line_end": 6,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "ECHO",
+              "line": 6
+            },
+            {
+              "opcode": "JMP",
+              "line": 6
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "op_start": 7,
+          "op_end": 7,
+          "line_start": 7,
+          "line_end": 7,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "CATCH",
+              "line": 7
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "op_start": 8,
+          "op_end": 8,
+          "line_start": 8,
+          "line_end": 8,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "ECHO",
+              "line": 8
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "op_start": 9,
+          "op_end": 9,
+          "line_start": 9,
+          "line_end": 9,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "FAST_CALL",
+              "line": 9
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "op_start": 10,
+          "op_end": 10,
+          "line_start": 9,
+          "line_end": 9,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "JMP",
+              "line": 9
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "op_start": 11,
+          "op_end": 11,
+          "line_start": 10,
+          "line_end": 10,
+          "flags": [
+            "Finally",
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "ECHO",
+              "line": 10
+            }
+          ]
+        },
+        {
+          "id": 9,
+          "op_start": 12,
+          "op_end": 12,
+          "line_start": 10,
+          "line_end": 10,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "FAST_RET",
+              "line": 10
+            }
+          ]
+        },
+        {
+          "id": 10,
+          "op_start": 13,
+          "op_end": 13,
+          "line_start": 12,
+          "line_end": 12,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RETURN",
+              "line": 12
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "to": 1,
+          "kind": "Flow"
+        },
+        {
+          "from": 1,
+          "to": 6,
+          "kind": "Flow"
+        },
+        {
+          "from": 2,
+          "to": 3,
+          "kind": "Catch"
+        },
+        {
+          "from": 2,
+          "to": 4,
+          "kind": "Flow"
+        },
+        {
+          "from": 3,
+          "to": 6,
+          "kind": "Flow"
+        },
+        {
+          "from": 4,
+          "to": 5,
+          "kind": "Catch"
+        },
+        {
+          "from": 5,
+          "to": 6,
+          "kind": "Flow"
+        },
+        {
+          "from": 6,
+          "to": 7,
+          "kind": "Flow"
+        },
+        {
+          "from": 6,
+          "to": 8,
+          "kind": "Finally"
+        },
+        {
+          "from": 7,
+          "to": 10,
+          "kind": "Flow"
+        },
+        {
+          "from": 8,
+          "to": 9,
+          "kind": "Flow"
+        }
+      ],
+      "loops": []
+    },
+    "diagnostics": []
+  }
+}

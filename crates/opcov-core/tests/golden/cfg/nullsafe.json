@@ -1,0 +1,220 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nfunction f($a) {\n    return $a?->b?->c;\n}\n",
+  "input": {
+    "key": "f",
+    "file": "nullsafe.php",
+    "line_start": 2,
+    "line_end": 4,
+    "flags": [],
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RECV",
+            "line": 2
+          },
+          {
+            "opcode": "JMP_NULL",
+            "line": 3
+          }
+        ],
+        "successors": [
+          3,
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "FETCH_OBJ_R",
+            "line": 3
+          },
+          {
+            "opcode": "JMP_NULL",
+            "line": 3
+          }
+        ],
+        "successors": [
+          3,
+          2
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "FETCH_OBJ_R",
+            "line": 3
+          }
+        ],
+        "successors": [
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RETURN",
+            "line": 3
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [],
+        "ops": [
+          {
+            "opcode": "RETURN",
+            "line": 4
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "loops": []
+  },
+  "expected": {
+    "function": {
+      "key": "f",
+      "file": "nullsafe.php",
+      "line_start": 2,
+      "line_end": 4,
+      "flags": [],
+      "blocks": [
+        {
+          "id": 0,
+          "op_start": 0,
+          "op_end": 1,
+          "line_start": 2,
+          "line_end": 3,
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RECV",
+              "line": 2
+            },
+            {
+              "opcode": "JMP_NULL",
+              "line": 3
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "op_start": 2,
+          "op_end": 3,
+          "line_start": 3,
+          "line_end": 3,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "FETCH_OBJ_R",
+              "line": 3
+            },
+            {
+              "opcode": "JMP_NULL",
+              "line": 3
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "op_start": 4,
+          "op_end": 4,
+          "line_start": 3,
+          "line_end": 3,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "FETCH_OBJ_R",
+              "line": 3
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "op_start": 5,
+          "op_end": 5,
+          "line_start": 3,
+          "line_end": 3,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RETURN",
+              "line": 3
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "op_start": 6,
+          "op_end": 6,
+          "line_start": 4,
+          "line_end": 4,
+          "flags": [],
+          "ops": [
+            {
+              "opcode": "RETURN",
+              "line": 4
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "to": 1,
+          "kind": "NullsafeValue"
+        },
+        {
+          "from": 0,
+          "to": 3,
+          "kind": "NullsafeNull"
+        },
+        {
+          "from": 1,
+          "to": 2,
+          "kind": "NullsafeValue"
+        },
+        {
+          "from": 1,
+          "to": 3,
+          "kind": "NullsafeNull"
+        },
+        {
+          "from": 2,
+          "to": 3,
+          "kind": "Flow"
+        }
+      ],
+      "loops": []
+    },
+    "diagnostics": []
+  }
+}

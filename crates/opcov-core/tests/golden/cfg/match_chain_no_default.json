@@ -1,0 +1,370 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nfunction f($a, $b) {\n    return match ($a + 1) {\n        $b => 'same',\n        0 => 'zero',\n    };\n}\n",
+  "input": {
+    "key": "f",
+    "file": "match_chain_no_default.php",
+    "line_start": 2,
+    "line_end": 7,
+    "flags": [],
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RECV",
+            "line": 2
+          },
+          {
+            "opcode": "RECV",
+            "line": 2
+          },
+          {
+            "opcode": "ADD",
+            "line": 3
+          },
+          {
+            "opcode": "CASE_STRICT",
+            "line": 4
+          },
+          {
+            "opcode": "JMPNZ",
+            "line": 4
+          }
+        ],
+        "successors": [
+          4,
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "CASE_STRICT",
+            "line": 5
+          },
+          {
+            "opcode": "JMPNZ",
+            "line": 5
+          }
+        ],
+        "successors": [
+          5,
+          2
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "JMP",
+            "line": 5
+          }
+        ],
+        "successors": [
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "MATCH_ERROR",
+            "line": 5
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "QM_ASSIGN",
+            "line": 4
+          },
+          {
+            "opcode": "JMP",
+            "line": 4
+          }
+        ],
+        "successors": [
+          6
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "QM_ASSIGN",
+            "line": 5
+          },
+          {
+            "opcode": "JMP",
+            "line": 5
+          }
+        ],
+        "successors": [
+          6
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "FREE",
+            "line": 5
+          },
+          {
+            "opcode": "RETURN",
+            "line": 5
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [],
+        "ops": [
+          {
+            "opcode": "RETURN",
+            "line": 7
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "loops": []
+  },
+  "expected": {
+    "function": {
+      "key": "f",
+      "file": "match_chain_no_default.php",
+      "line_start": 2,
+      "line_end": 7,
+      "flags": [],
+      "blocks": [
+        {
+          "id": 0,
+          "op_start": 0,
+          "op_end": 4,
+          "line_start": 2,
+          "line_end": 4,
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RECV",
+              "line": 2
+            },
+            {
+              "opcode": "RECV",
+              "line": 2
+            },
+            {
+              "opcode": "ADD",
+              "line": 3
+            },
+            {
+              "opcode": "CASE_STRICT",
+              "line": 4
+            },
+            {
+              "opcode": "JMPNZ",
+              "line": 4
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "op_start": 5,
+          "op_end": 6,
+          "line_start": 5,
+          "line_end": 5,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "CASE_STRICT",
+              "line": 5
+            },
+            {
+              "opcode": "JMPNZ",
+              "line": 5
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "op_start": 7,
+          "op_end": 7,
+          "line_start": 5,
+          "line_end": 5,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "JMP",
+              "line": 5
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "op_start": 8,
+          "op_end": 8,
+          "line_start": 5,
+          "line_end": 5,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "MATCH_ERROR",
+              "line": 5
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "op_start": 9,
+          "op_end": 10,
+          "line_start": 4,
+          "line_end": 4,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "QM_ASSIGN",
+              "line": 4
+            },
+            {
+              "opcode": "JMP",
+              "line": 4
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "op_start": 11,
+          "op_end": 12,
+          "line_start": 5,
+          "line_end": 5,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "QM_ASSIGN",
+              "line": 5
+            },
+            {
+              "opcode": "JMP",
+              "line": 5
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "op_start": 13,
+          "op_end": 14,
+          "line_start": 5,
+          "line_end": 5,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "FREE",
+              "line": 5
+            },
+            {
+              "opcode": "RETURN",
+              "line": 5
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "op_start": 15,
+          "op_end": 15,
+          "line_start": 7,
+          "line_end": 7,
+          "flags": [],
+          "ops": [
+            {
+              "opcode": "RETURN",
+              "line": 7
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "to": 1,
+          "kind": "Flow"
+        },
+        {
+          "from": 0,
+          "to": 4,
+          "kind": {
+            "MatchArm": 0
+          }
+        },
+        {
+          "from": 1,
+          "to": 2,
+          "kind": "Flow"
+        },
+        {
+          "from": 1,
+          "to": 5,
+          "kind": {
+            "MatchArm": 1
+          }
+        },
+        {
+          "from": 2,
+          "to": 3,
+          "kind": "MatchNoArm"
+        },
+        {
+          "from": 4,
+          "to": 6,
+          "kind": "Flow"
+        },
+        {
+          "from": 5,
+          "to": 6,
+          "kind": "Flow"
+        }
+      ],
+      "loops": []
+    },
+    "diagnostics": []
+  }
+}

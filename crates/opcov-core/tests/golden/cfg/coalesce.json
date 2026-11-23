@@ -1,0 +1,279 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nfunction f($a, $b) {\n    $c = $a ?? $b;\n    $b ??= 1;\n    return $c;\n}\n",
+  "input": {
+    "key": "f",
+    "file": "coalesce.php",
+    "line_start": 2,
+    "line_end": 6,
+    "flags": [],
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RECV",
+            "line": 2
+          },
+          {
+            "opcode": "RECV",
+            "line": 2
+          },
+          {
+            "opcode": "COALESCE",
+            "line": 3
+          }
+        ],
+        "successors": [
+          2,
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "QM_ASSIGN",
+            "line": 3
+          }
+        ],
+        "successors": [
+          2
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "ASSIGN",
+            "line": 3
+          },
+          {
+            "opcode": "COALESCE",
+            "line": 4
+          }
+        ],
+        "successors": [
+          4,
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "ASSIGN",
+            "line": 4
+          },
+          {
+            "opcode": "QM_ASSIGN",
+            "line": 4
+          }
+        ],
+        "successors": [
+          4
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "FREE",
+            "line": 4
+          },
+          {
+            "opcode": "RETURN",
+            "line": 5
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [],
+        "ops": [
+          {
+            "opcode": "RETURN",
+            "line": 6
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "loops": []
+  },
+  "expected": {
+    "function": {
+      "key": "f",
+      "file": "coalesce.php",
+      "line_start": 2,
+      "line_end": 6,
+      "flags": [],
+      "blocks": [
+        {
+          "id": 0,
+          "op_start": 0,
+          "op_end": 2,
+          "line_start": 2,
+          "line_end": 3,
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RECV",
+              "line": 2
+            },
+            {
+              "opcode": "RECV",
+              "line": 2
+            },
+            {
+              "opcode": "COALESCE",
+              "line": 3
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "op_start": 3,
+          "op_end": 3,
+          "line_start": 3,
+          "line_end": 3,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "QM_ASSIGN",
+              "line": 3
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "op_start": 4,
+          "op_end": 5,
+          "line_start": 3,
+          "line_end": 4,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "ASSIGN",
+              "line": 3
+            },
+            {
+              "opcode": "COALESCE",
+              "line": 4
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "op_start": 6,
+          "op_end": 7,
+          "line_start": 4,
+          "line_end": 4,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "ASSIGN",
+              "line": 4
+            },
+            {
+              "opcode": "QM_ASSIGN",
+              "line": 4
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "op_start": 8,
+          "op_end": 9,
+          "line_start": 4,
+          "line_end": 5,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "FREE",
+              "line": 4
+            },
+            {
+              "opcode": "RETURN",
+              "line": 5
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "op_start": 10,
+          "op_end": 10,
+          "line_start": 6,
+          "line_end": 6,
+          "flags": [],
+          "ops": [
+            {
+              "opcode": "RETURN",
+              "line": 6
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "to": 1,
+          "kind": "CoalesceFallback"
+        },
+        {
+          "from": 0,
+          "to": 2,
+          "kind": "CoalesceValue"
+        },
+        {
+          "from": 1,
+          "to": 2,
+          "kind": "Flow"
+        },
+        {
+          "from": 2,
+          "to": 3,
+          "kind": "CoalesceFallback"
+        },
+        {
+          "from": 2,
+          "to": 4,
+          "kind": "CoalesceValue"
+        },
+        {
+          "from": 3,
+          "to": 4,
+          "kind": "Flow"
+        }
+      ],
+      "loops": []
+    },
+    "diagnostics": []
+  }
+}

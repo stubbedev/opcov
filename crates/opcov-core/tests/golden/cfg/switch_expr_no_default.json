@@ -1,0 +1,353 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nfunction f($a) {\n    switch ($a + 1) {\n        case 1:\n        case 2:\n            echo 1;\n            break;\n        case 3:\n            echo 3;\n    }\n}\n",
+  "input": {
+    "key": "f",
+    "file": "switch_expr_no_default.php",
+    "line_start": 2,
+    "line_end": 11,
+    "flags": [],
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RECV",
+            "line": 2
+          },
+          {
+            "opcode": "ADD",
+            "line": 3
+          },
+          {
+            "opcode": "CASE",
+            "line": 4
+          },
+          {
+            "opcode": "JMPNZ",
+            "line": 4
+          }
+        ],
+        "successors": [
+          4,
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "CASE",
+            "line": 5
+          },
+          {
+            "opcode": "JMPNZ",
+            "line": 5
+          }
+        ],
+        "successors": [
+          4,
+          2
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "CASE",
+            "line": 8
+          },
+          {
+            "opcode": "JMPNZ",
+            "line": 8
+          }
+        ],
+        "successors": [
+          5,
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "JMP",
+            "line": 8
+          }
+        ],
+        "successors": [
+          6
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "ECHO",
+            "line": 6
+          },
+          {
+            "opcode": "JMP",
+            "line": 7
+          }
+        ],
+        "successors": [
+          6
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "ECHO",
+            "line": 9
+          }
+        ],
+        "successors": [
+          6
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "FREE",
+            "line": 9
+          },
+          {
+            "opcode": "RETURN",
+            "line": 11
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "loops": []
+  },
+  "expected": {
+    "function": {
+      "key": "f",
+      "file": "switch_expr_no_default.php",
+      "line_start": 2,
+      "line_end": 11,
+      "flags": [],
+      "blocks": [
+        {
+          "id": 0,
+          "op_start": 0,
+          "op_end": 3,
+          "line_start": 2,
+          "line_end": 4,
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RECV",
+              "line": 2
+            },
+            {
+              "opcode": "ADD",
+              "line": 3
+            },
+            {
+              "opcode": "CASE",
+              "line": 4
+            },
+            {
+              "opcode": "JMPNZ",
+              "line": 4
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "op_start": 4,
+          "op_end": 5,
+          "line_start": 5,
+          "line_end": 5,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "CASE",
+              "line": 5
+            },
+            {
+              "opcode": "JMPNZ",
+              "line": 5
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "op_start": 6,
+          "op_end": 7,
+          "line_start": 8,
+          "line_end": 8,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "CASE",
+              "line": 8
+            },
+            {
+              "opcode": "JMPNZ",
+              "line": 8
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "op_start": 8,
+          "op_end": 8,
+          "line_start": 8,
+          "line_end": 8,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "JMP",
+              "line": 8
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "op_start": 9,
+          "op_end": 10,
+          "line_start": 6,
+          "line_end": 7,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "ECHO",
+              "line": 6
+            },
+            {
+              "opcode": "JMP",
+              "line": 7
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "op_start": 11,
+          "op_end": 11,
+          "line_start": 9,
+          "line_end": 9,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "ECHO",
+              "line": 9
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "op_start": 12,
+          "op_end": 13,
+          "line_start": 9,
+          "line_end": 11,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "FREE",
+              "line": 9
+            },
+            {
+              "opcode": "RETURN",
+              "line": 11
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "to": 1,
+          "kind": "Flow"
+        },
+        {
+          "from": 0,
+          "to": 4,
+          "kind": {
+            "SwitchCase": 0
+          }
+        },
+        {
+          "from": 1,
+          "to": 2,
+          "kind": "Flow"
+        },
+        {
+          "from": 1,
+          "to": 4,
+          "kind": {
+            "SwitchCase": 0
+          }
+        },
+        {
+          "from": 2,
+          "to": 3,
+          "kind": "Flow"
+        },
+        {
+          "from": 2,
+          "to": 5,
+          "kind": {
+            "SwitchCase": 1
+          }
+        },
+        {
+          "from": 3,
+          "to": 6,
+          "kind": "SwitchDefault"
+        },
+        {
+          "from": 4,
+          "to": 6,
+          "kind": "Flow"
+        },
+        {
+          "from": 5,
+          "to": 6,
+          "kind": "Flow"
+        }
+      ],
+      "loops": []
+    },
+    "diagnostics": []
+  }
+}

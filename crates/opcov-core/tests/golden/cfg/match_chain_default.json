@@ -1,0 +1,422 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nfunction f($a, $b) {\n    return match ($a) {\n        $b => 'same',\n        default => 'other',\n        0, 1 => 'small',\n    };\n}\n",
+  "input": {
+    "key": "f",
+    "file": "match_chain_default.php",
+    "line_start": 2,
+    "line_end": 8,
+    "flags": [],
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RECV",
+            "line": 2
+          },
+          {
+            "opcode": "RECV",
+            "line": 2
+          },
+          {
+            "opcode": "IS_IDENTICAL",
+            "line": 4
+          },
+          {
+            "opcode": "JMPNZ",
+            "line": 4
+          }
+        ],
+        "successors": [
+          4,
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "IS_IDENTICAL",
+            "line": 6
+          },
+          {
+            "opcode": "JMPNZ",
+            "line": 6
+          }
+        ],
+        "successors": [
+          6,
+          2
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "IS_IDENTICAL",
+            "line": 6
+          },
+          {
+            "opcode": "JMPNZ",
+            "line": 6
+          }
+        ],
+        "successors": [
+          6,
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "JMP",
+            "line": 6
+          }
+        ],
+        "successors": [
+          5
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "QM_ASSIGN",
+            "line": 4
+          },
+          {
+            "opcode": "JMP",
+            "line": 4
+          }
+        ],
+        "successors": [
+          7
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "QM_ASSIGN",
+            "line": 5
+          },
+          {
+            "opcode": "JMP",
+            "line": 5
+          }
+        ],
+        "successors": [
+          7
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "QM_ASSIGN",
+            "line": 6
+          },
+          {
+            "opcode": "JMP",
+            "line": 6
+          }
+        ],
+        "successors": [
+          7
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "opcode": "RETURN",
+            "line": 6
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [],
+        "ops": [
+          {
+            "opcode": "RETURN",
+            "line": 8
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "loops": []
+  },
+  "expected": {
+    "function": {
+      "key": "f",
+      "file": "match_chain_default.php",
+      "line_start": 2,
+      "line_end": 8,
+      "flags": [],
+      "blocks": [
+        {
+          "id": 0,
+          "op_start": 0,
+          "op_end": 3,
+          "line_start": 2,
+          "line_end": 4,
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RECV",
+              "line": 2
+            },
+            {
+              "opcode": "RECV",
+              "line": 2
+            },
+            {
+              "opcode": "IS_IDENTICAL",
+              "line": 4
+            },
+            {
+              "opcode": "JMPNZ",
+              "line": 4
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "op_start": 4,
+          "op_end": 5,
+          "line_start": 6,
+          "line_end": 6,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "IS_IDENTICAL",
+              "line": 6
+            },
+            {
+              "opcode": "JMPNZ",
+              "line": 6
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "op_start": 6,
+          "op_end": 7,
+          "line_start": 6,
+          "line_end": 6,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "IS_IDENTICAL",
+              "line": 6
+            },
+            {
+              "opcode": "JMPNZ",
+              "line": 6
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "op_start": 8,
+          "op_end": 8,
+          "line_start": 6,
+          "line_end": 6,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "JMP",
+              "line": 6
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "op_start": 9,
+          "op_end": 10,
+          "line_start": 4,
+          "line_end": 4,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "QM_ASSIGN",
+              "line": 4
+            },
+            {
+              "opcode": "JMP",
+              "line": 4
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "op_start": 11,
+          "op_end": 12,
+          "line_start": 5,
+          "line_end": 5,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "QM_ASSIGN",
+              "line": 5
+            },
+            {
+              "opcode": "JMP",
+              "line": 5
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "op_start": 13,
+          "op_end": 14,
+          "line_start": 6,
+          "line_end": 6,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "QM_ASSIGN",
+              "line": 6
+            },
+            {
+              "opcode": "JMP",
+              "line": 6
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "op_start": 15,
+          "op_end": 15,
+          "line_start": 6,
+          "line_end": 6,
+          "flags": [
+            "Reachable"
+          ],
+          "ops": [
+            {
+              "opcode": "RETURN",
+              "line": 6
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "op_start": 16,
+          "op_end": 16,
+          "line_start": 8,
+          "line_end": 8,
+          "flags": [],
+          "ops": [
+            {
+              "opcode": "RETURN",
+              "line": 8
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "to": 1,
+          "kind": "Flow"
+        },
+        {
+          "from": 0,
+          "to": 4,
+          "kind": {
+            "MatchArm": 0
+          }
+        },
+        {
+          "from": 1,
+          "to": 2,
+          "kind": "Flow"
+        },
+        {
+          "from": 1,
+          "to": 6,
+          "kind": {
+            "MatchArm": 2
+          }
+        },
+        {
+          "from": 2,
+          "to": 3,
+          "kind": "Flow"
+        },
+        {
+          "from": 2,
+          "to": 6,
+          "kind": {
+            "MatchArm": 2
+          }
+        },
+        {
+          "from": 3,
+          "to": 5,
+          "kind": {
+            "MatchArm": 1
+          }
+        },
+        {
+          "from": 4,
+          "to": 7,
+          "kind": "Flow"
+        },
+        {
+          "from": 5,
+          "to": 7,
+          "kind": "Flow"
+        },
+        {
+          "from": 6,
+          "to": 7,
+          "kind": "Flow"
+        }
+      ],
+      "loops": []
+    },
+    "diagnostics": []
+  }
+}
