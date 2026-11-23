@@ -36,9 +36,14 @@ test:
 build:
     cargo build --locked
 
-# Build the extension with its engine self-test and run the whole .phpt suite against php-config's PHP.
+# Build the extension with its engine self-test and the opcov CLI, and run the whole .phpt suite against php-config's PHP.
+[script]
 phpt:
-    extension="$(cargo build --locked --package opcov-ext --features engine-selftest --message-format=json-render-diagnostics | jq -r 'select(.reason == "compiler-artifact" and .target.name == "opcov_ext") | .filenames[]')" && just phpt-run "$extension" tests/phpt
+    artifacts="$(cargo build --locked --package opcov-ext --features engine-selftest --package opcov-cli --message-format=json-render-diagnostics)"
+    extension="$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "opcov_ext") | .filenames[]' <<<"$artifacts")"
+    OPCOV_CLI="$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "opcov") | .executable' <<<"$artifacts")"
+    export OPCOV_CLI
+    just phpt-run "$extension" tests/phpt
 
 # Run the .phpt tests under `paths` with php-src's run-tests.php, loading the extension at `extension`.
 [script]

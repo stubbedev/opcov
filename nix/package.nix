@@ -49,7 +49,10 @@
       release = extension php [];
       selftest = extension php ["engine-selftest"];
     in
-      pkgs.runCommand "opcov-phpt-${name}" (phptEnv php // {nativeBuildInputs = [pkgs.just];}) ''
+      pkgs.runCommand "opcov-phpt-${name}" (phptEnv php // {
+        OPCOV_CLI = lib.getExe opcov.cli;
+        nativeBuildInputs = [pkgs.just];
+      }) ''
         cp -r --no-preserve=mode ${suite} source
         cd source
         just phpt-run ${selftest}/lib/php/extensions/opcov.so tests/phpt

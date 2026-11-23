@@ -33,7 +33,6 @@
   phptEnv = php:
     phpEnv php
     // {
-      OPCOV_CLI = lib.getExe cli;
       OPCOV_PCNTL_EXTENSION = "${php.extensions.pcntl}/lib/php/extensions/pcntl.so";
     }
     // lib.optionalAttrs (!php.extensions.pcov.meta.broken) {
