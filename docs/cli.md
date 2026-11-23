@@ -308,11 +308,8 @@ Exit code 1 when a function is missing or an unmatched outcome counts toward
 verdicts; unmatched `Engine` outcomes are listed as "excluded from verdicts"
 and do not fail the run.
 
-The report does not record which opcode an outcome came from, only its kind,
-line and id. Doctor treats the n-th outcome of a kind on a line (in id order)
-as coming from the n-th branching opcode on that line, which holds because
-every branching opcode reports one outcome of each of its kinds and ids follow
-compilation order.
+Every outcome records its `site`, the index of the opcode it came from, so
+doctor groups outcomes by site and matches each group to one construct.
 
 Text output:
 

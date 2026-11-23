@@ -176,8 +176,8 @@ PHP from your own nixpkgs, build opcov against it through the overlay:
 ## From source
 
 Building needs nightly Rust, libclang and the headers of the target PHP
-(`php-config`). The flake's dev shell provides all of them; see the README's
-"The PHP extension" section:
+(`php-config`). The flake's dev shell provides all of them; see
+[Building the extension](contributing.md#building-the-extension):
 
 ```sh
 nix develop
