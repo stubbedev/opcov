@@ -31,18 +31,17 @@
         "opcov": { "type": "string" },
         "php": { "type": "string" },
         "zts": { "type": "boolean" },
-        "vm": { "enum": ["CALL", "SWITCH", "GOTO", "HYBRID"] }
+        "vm": { "enum": ["CALL", "SWITCH", "GOTO", "HYBRID", "TAILCALL"] }
       }
     },
     "settings": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["collect_paths", "exclude_paths", "exclude_pattern", "strict"],
+      "required": ["collect_paths", "exclude_paths", "exclude_pattern"],
       "properties": {
         "collect_paths": { "$ref": "#/$defs/pathList" },
         "exclude_paths": { "$ref": "#/$defs/pathList" },
-        "exclude_pattern": { "type": ["string", "null"] },
-        "strict": { "type": "boolean" }
+        "exclude_pattern": { "type": ["string", "null"] }
       }
     },
     "pathList": {

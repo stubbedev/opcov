@@ -7,8 +7,8 @@ use super::model::Line;
 
 const MAIN_PREFIX: &str = "{main}@";
 const CLOSURE_PREFIX: &str = "{closure}@";
-const ARROW_FUNCTION_PREFIX: &str = "{fn}@";
 const ANONYMOUS_CLASS_PREFIX: &str = "class@anonymous@";
+const ORDINAL_SEPARATOR: char = '#';
 const MEMBER_SEPARATOR: &str = "::";
 const NAMESPACE_SEPARATOR: char = '\\';
 const PROPERTY_SIGIL: char = '$';
@@ -22,6 +22,7 @@ pub enum KeyErrorReason {
     MissingLineSpan,
     InvalidLineNumber,
     InvertedLineSpan,
+    InvalidOrdinal,
 }
 
 impl fmt::Display for KeyErrorReason {
@@ -34,6 +35,7 @@ impl fmt::Display for KeyErrorReason {
             Self::MissingLineSpan => "the `:<start>-<end>` line span is missing",
             Self::InvalidLineNumber => "a line number is not a canonical positive integer",
             Self::InvertedLineSpan => "the line span ends before it starts",
+            Self::InvalidOrdinal => "the `#<n>` ordinal is not a canonical integer of at least 1",
         };
         return f.write_str(text);
     }
@@ -226,14 +228,15 @@ impl fmt::Display for LineSpan {
     }
 }
 
-fn parse_line(text: &str) -> Result<Line, KeyError> {
+fn parse_positive(text: &str) -> Option<u32> {
     let canonical = !text.starts_with('0')
         && !text.is_empty()
         && text.bytes().all(|b| return b.is_ascii_digit());
-    return text
-        .parse::<u32>()
-        .ok()
-        .filter(|_| return canonical)
+    return text.parse::<u32>().ok().filter(|_| return canonical);
+}
+
+fn parse_line(text: &str) -> Result<Line, KeyError> {
+    return parse_positive(text)
         .and_then(Line::new)
         .ok_or_else(|| return KeyError::new(text, KeyErrorReason::InvalidLineNumber));
 }
@@ -252,11 +255,44 @@ impl FromStr for LineSpan {
     }
 }
 
-fn parse_located(text: &str) -> Result<(FilePath, LineSpan), KeyError> {
-    let Some((file, lines)) = text.rsplit_once(':') else {
+#[derive(Debug)]
+struct Located {
+    file: FilePath,
+    lines: LineSpan,
+    ordinal: u32,
+}
+
+fn parse_located(text: &str) -> Result<Located, KeyError> {
+    let Some((file, rest)) = text.rsplit_once(':') else {
         return Err(KeyError::new(text, KeyErrorReason::MissingLineSpan));
     };
-    return Ok((file.parse()?, lines.parse()?));
+    let (lines, ordinal) = match rest.split_once(ORDINAL_SEPARATOR) {
+        None => (rest, 0),
+        Some((lines, ordinal)) => {
+            let ordinal = parse_positive(ordinal)
+                .ok_or_else(|| return KeyError::new(ordinal, KeyErrorReason::InvalidOrdinal))?;
+            (lines, ordinal)
+        }
+    };
+    return Ok(Located {
+        file: file.parse()?,
+        lines: lines.parse()?,
+        ordinal,
+    });
+}
+
+fn write_located(
+    f: &mut fmt::Formatter<'_>,
+    prefix: &str,
+    file: &FilePath,
+    lines: LineSpan,
+    ordinal: u32,
+) -> fmt::Result {
+    write!(f, "{prefix}{file}:{lines}")?;
+    if ordinal == 0 {
+        return Ok(());
+    }
+    return write!(f, "{ORDINAL_SEPARATOR}{ordinal}");
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -289,7 +325,33 @@ impl fmt::Display for HookKind {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ClassRef {
     Named(QualifiedName),
-    Anonymous { file: FilePath, lines: LineSpan },
+    Anonymous {
+        file: FilePath,
+        lines: LineSpan,
+        ordinal: u32,
+    },
+}
+
+impl ClassRef {
+    #[must_use]
+    pub const fn file(&self) -> Option<&FilePath> {
+        return match self {
+            Self::Named(_) => None,
+            Self::Anonymous { file, .. } => Some(file),
+        };
+    }
+
+    #[must_use]
+    pub fn in_file(&self, file: &FilePath) -> Self {
+        return match self {
+            Self::Named(name) => Self::Named(name.clone()),
+            Self::Anonymous { lines, ordinal, .. } => Self::Anonymous {
+                file: file.clone(),
+                lines: *lines,
+                ordinal: *ordinal,
+            },
+        };
+    }
 }
 
 impl FromStr for ClassRef {
@@ -297,8 +359,16 @@ impl FromStr for ClassRef {
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         if let Some(located) = text.strip_prefix(ANONYMOUS_CLASS_PREFIX) {
-            let (file, lines) = parse_located(located)?;
-            return Ok(Self::Anonymous { file, lines });
+            let Located {
+                file,
+                lines,
+                ordinal,
+            } = parse_located(located)?;
+            return Ok(Self::Anonymous {
+                file,
+                lines,
+                ordinal,
+            });
         }
         return Ok(Self::Named(text.parse()?));
     }
@@ -308,7 +378,11 @@ impl fmt::Display for ClassRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         return match self {
             Self::Named(name) => write!(f, "{name}"),
-            Self::Anonymous { file, lines } => write!(f, "{ANONYMOUS_CLASS_PREFIX}{file}:{lines}"),
+            Self::Anonymous {
+                file,
+                lines,
+                ordinal,
+            } => write_located(f, ANONYMOUS_CLASS_PREFIX, file, *lines, *ordinal),
         };
     }
 }
@@ -333,11 +407,45 @@ pub enum FunctionKey {
     Closure {
         file: FilePath,
         lines: LineSpan,
+        ordinal: u32,
     },
-    ArrowFunction {
-        file: FilePath,
-        lines: LineSpan,
-    },
+}
+
+impl FunctionKey {
+    #[must_use]
+    pub const fn file(&self) -> Option<&FilePath> {
+        return match self {
+            Self::Main { file } | Self::Closure { file, .. } => Some(file),
+            Self::Function { .. } => None,
+            Self::Method { class, .. } | Self::PropertyHook { class, .. } => class.file(),
+        };
+    }
+
+    #[must_use]
+    pub fn in_file(&self, file: &FilePath) -> Self {
+        return match self {
+            Self::Main { .. } => Self::Main { file: file.clone() },
+            Self::Function { name } => Self::Function { name: name.clone() },
+            Self::Method { class, method } => Self::Method {
+                class: class.in_file(file),
+                method: method.clone(),
+            },
+            Self::PropertyHook {
+                class,
+                property,
+                hook,
+            } => Self::PropertyHook {
+                class: class.in_file(file),
+                property: property.clone(),
+                hook: *hook,
+            },
+            Self::Closure { lines, ordinal, .. } => Self::Closure {
+                file: file.clone(),
+                lines: *lines,
+                ordinal: *ordinal,
+            },
+        };
+    }
 }
 
 fn parse_hook(owner: &str, member: &str) -> Option<Result<FunctionKey, KeyError>> {
@@ -363,12 +471,16 @@ fn parse_key(text: &str) -> Result<FunctionKey, KeyError> {
         });
     }
     if let Some(located) = text.strip_prefix(CLOSURE_PREFIX) {
-        let (file, lines) = parse_located(located)?;
-        return Ok(FunctionKey::Closure { file, lines });
-    }
-    if let Some(located) = text.strip_prefix(ARROW_FUNCTION_PREFIX) {
-        let (file, lines) = parse_located(located)?;
-        return Ok(FunctionKey::ArrowFunction { file, lines });
+        let Located {
+            file,
+            lines,
+            ordinal,
+        } = parse_located(located)?;
+        return Ok(FunctionKey::Closure {
+            file,
+            lines,
+            ordinal,
+        });
     }
     let Some((owner, member)) = text.rsplit_once(MEMBER_SEPARATOR) else {
         return Ok(FunctionKey::Function {
@@ -408,10 +520,11 @@ impl fmt::Display for FunctionKey {
                     "{class}{MEMBER_SEPARATOR}{PROPERTY_SIGIL}{property}{MEMBER_SEPARATOR}{hook}"
                 )
             }
-            Self::Closure { file, lines } => write!(f, "{CLOSURE_PREFIX}{file}:{lines}"),
-            Self::ArrowFunction { file, lines } => {
-                write!(f, "{ARROW_FUNCTION_PREFIX}{file}:{lines}")
-            }
+            Self::Closure {
+                file,
+                lines,
+                ordinal,
+            } => write_located(f, CLOSURE_PREFIX, file, *lines, *ordinal),
         };
     }
 }
@@ -511,20 +624,31 @@ mod tests {
                 FunctionKey::Closure {
                     file: file("/app/src/Foo.php"),
                     lines: span(12, 15),
+                    ordinal: 0,
                 },
                 "{closure}@/app/src/Foo.php:12-15",
             ),
             (
-                FunctionKey::ArrowFunction {
-                    file: file("/app/src/Foo.php"),
-                    lines: span(7, 7),
+                FunctionKey::Closure {
+                    file: file("/a.php"),
+                    lines: span(24, 24),
+                    ordinal: 1,
                 },
-                "{fn}@/app/src/Foo.php:7-7",
+                "{closure}@/a.php:24-24#1",
+            ),
+            (
+                FunctionKey::Closure {
+                    file: file("/a#b:1-2#3.php"),
+                    lines: span(7, 7),
+                    ordinal: 12,
+                },
+                "{closure}@/a#b:1-2#3.php:7-7#12",
             ),
             (
                 FunctionKey::Closure {
                     file: file("/odd:dir/a-b.php"),
                     lines: span(1, 2),
+                    ordinal: 0,
                 },
                 "{closure}@/odd:dir/a-b.php:1-2",
             ),
@@ -533,27 +657,41 @@ mod tests {
                     class: ClassRef::Anonymous {
                         file: file("/app/t.php"),
                         lines: span(3, 9),
+                        ordinal: 0,
                     },
                     method: "handle".parse().unwrap(),
                 },
                 "class@anonymous@/app/t.php:3-9::handle",
             ),
             (
+                FunctionKey::Method {
+                    class: ClassRef::Anonymous {
+                        file: file("/a.php"),
+                        lines: span(3, 9),
+                        ordinal: 1,
+                    },
+                    method: "run".parse().unwrap(),
+                },
+                "class@anonymous@/a.php:3-9#1::run",
+            ),
+            (
                 FunctionKey::PropertyHook {
                     class: ClassRef::Anonymous {
                         file: file("/x::$y.php"),
                         lines: span(3, 9),
+                        ordinal: 2,
                     },
                     property: "v".parse().unwrap(),
                     hook: HookKind::Get,
                 },
-                "class@anonymous@/x::$y.php:3-9::$v::get",
+                "class@anonymous@/x::$y.php:3-9#2::$v::get",
             ),
             (
                 FunctionKey::Method {
                     class: ClassRef::Anonymous {
                         file: file("/a::$b"),
                         lines: span(1, 2),
+                        ordinal: 0,
                     },
                     method: "get".parse().unwrap(),
                 },
@@ -612,7 +750,21 @@ mod tests {
             ("{closure}@/a.php:01-2", KeyErrorReason::InvalidLineNumber),
             ("{closure}@/a.php:+1-2", KeyErrorReason::InvalidLineNumber),
             ("{closure}@/a.php:1-x", KeyErrorReason::InvalidLineNumber),
-            ("{fn}@/a.php:5-4", KeyErrorReason::InvertedLineSpan),
+            ("{closure}@/a.php:5-4", KeyErrorReason::InvertedLineSpan),
+            ("{fn}@/a.php:5-5", KeyErrorReason::InvalidQualifiedName),
+            ("{closure}@/a.php:1-2#0", KeyErrorReason::InvalidOrdinal),
+            ("{closure}@/a.php:1-2#01", KeyErrorReason::InvalidOrdinal),
+            ("{closure}@/a.php:1-2#", KeyErrorReason::InvalidOrdinal),
+            ("{closure}@/a.php:1-2#+1", KeyErrorReason::InvalidOrdinal),
+            ("{closure}@/a.php:1-2#1#2", KeyErrorReason::InvalidOrdinal),
+            (
+                "{closure}@/a.php:1-2#4294967296",
+                KeyErrorReason::InvalidOrdinal,
+            ),
+            (
+                "class@anonymous@/a.php:3-9#0::m",
+                KeyErrorReason::InvalidOrdinal,
+            ),
             ("class@anonymous@/a.php::m", KeyErrorReason::MissingLineSpan),
             ("Foo::$bar::get::x", KeyErrorReason::InvalidQualifiedName),
         ];
@@ -631,6 +783,34 @@ mod tests {
             KeyErrorReason::InvalidQualifiedName,
             "Foo::bar is not a class name"
         );
+    }
+
+    #[test]
+    fn keys_are_moved_to_another_file_with_their_ordinal() {
+        let target = file("src/a.php");
+        let cases = [
+            ("{main}@/app/src/a.php", "{main}@src/a.php"),
+            ("App\\helper", "App\\helper"),
+            (
+                "{closure}@/app/src/a.php:3-4#2",
+                "{closure}@src/a.php:3-4#2",
+            ),
+            (
+                "class@anonymous@/app/src/a.php:3-9#1::$v::set",
+                "class@anonymous@src/a.php:3-9#1::$v::set",
+            ),
+            ("App\\Foo::bar", "App\\Foo::bar"),
+        ];
+        for (text, moved) in cases {
+            let key = text.parse::<FunctionKey>().unwrap();
+            let rebased = key.in_file(&target);
+            assert_eq!(rebased.to_string(), moved, "{text} moved to {target}");
+            assert_eq!(
+                rebased.file().is_some(),
+                key.file().is_some(),
+                "{text} keeps whether it names a file"
+            );
+        }
     }
 
     #[test]

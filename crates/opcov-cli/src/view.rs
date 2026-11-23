@@ -125,8 +125,7 @@ impl FunctionView<'_> {
             }
             other @ (FunctionKey::Main { .. }
             | FunctionKey::Function { .. }
-            | FunctionKey::Closure { .. }
-            | FunctionKey::ArrowFunction { .. }) => other.to_string(),
+            | FunctionKey::Closure { .. }) => other.to_string(),
         };
     }
 }
@@ -230,9 +229,7 @@ pub(crate) fn location(paths: &PathBase, path: &SourcePath) -> String {
 
 const fn key_lines(key: &FunctionKey) -> Option<LineSpan> {
     return match key {
-        FunctionKey::Closure { lines, .. } | FunctionKey::ArrowFunction { lines, .. } => {
-            Some(*lines)
-        }
+        FunctionKey::Closure { lines, .. } => Some(*lines),
         FunctionKey::Main { .. }
         | FunctionKey::Function { .. }
         | FunctionKey::Method { .. }
@@ -258,10 +255,7 @@ fn innermost(candidates: impl Iterator<Item = (usize, LineSpan)>) -> Option<usiz
 }
 
 pub(crate) const fn is_nested(key: &FunctionKey) -> bool {
-    return matches!(
-        key,
-        FunctionKey::Closure { .. } | FunctionKey::ArrowFunction { .. }
-    );
+    return matches!(key, FunctionKey::Closure { .. });
 }
 
 fn units<'r>(keys: &[(&'r FunctionKey, Option<LineSpan>)]) -> Vec<Unit<'r>> {
@@ -271,7 +265,7 @@ fn units<'r>(keys: &[(&'r FunctionKey, Option<LineSpan>)]) -> Vec<Unit<'r>> {
                 Some(Unit::Class(class))
             }
             FunctionKey::Main { .. } | FunctionKey::Function { .. } => Some(Unit::File),
-            FunctionKey::Closure { .. } | FunctionKey::ArrowFunction { .. } => None,
+            FunctionKey::Closure { .. } => None,
         };
     };
     return keys

@@ -19,7 +19,7 @@
         <line num="19" type="method" name="baz" complexity="0" count="0"/>
         <line num="21" type="stmt" count="0"/>
         <line num="25" type="method" name="App\helper" complexity="0" count="1"/>
-        <line num="27" type="method" name="{fn}@app/Foo.php:27-27" complexity="0" count="1"/>
+        <line num="27" type="method" name="{closure}@app/Foo.php:27-27" complexity="0" count="1"/>
         <line num="28" type="stmt" count="1"/>
       </file>
     </package>

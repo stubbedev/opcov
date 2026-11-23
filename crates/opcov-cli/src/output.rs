@@ -1,66 +1,31 @@
-use std::ffi::OsString;
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Write};
-use std::path::{Path, PathBuf};
-use std::process;
+use std::path::Path;
 
+use opcov_core::output::{self, AtomicWriteError, WriteFailure};
 use opcov_core::report::Report;
 
 use crate::failure::Failure;
-
-fn temporary_path(target: &Path) -> Result<PathBuf, Failure> {
-    let Some(name) = target.file_name() else {
-        return Err(Failure::failed(format!(
-            "output path {} has no file name",
-            target.display()
-        )));
-    };
-    let mut temporary = OsString::from(".");
-    temporary.push(name);
-    temporary.push(format!(".{}.tmp", process::id()));
-    return Ok(target.with_file_name(temporary));
-}
 
 pub(crate) fn write_atomically(
     target: &Path,
     write: impl FnOnce(BufWriter<File>) -> Result<BufWriter<File>, Failure>,
 ) -> Result<(), Failure> {
-    let temporary = temporary_path(target)?;
-    let file = File::options()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .map_err(|error| return Failure::io("create", &temporary, &error))?;
-    let written = write(BufWriter::new(file))
-        .and_then(|buffered| {
-            let file = buffered
-                .into_inner()
-                .map_err(|error| return Failure::io("write", &temporary, error.error()))?;
-            return file
-                .sync_all()
-                .map_err(|error| return Failure::io("sync", &temporary, &error));
-        })
-        .and_then(|()| {
-            return fs::rename(&temporary, target).map_err(|error| {
-                return Failure::io(
-                    &format!("rename {} to", temporary.display()),
-                    target,
-                    &error,
-                );
-            });
-        });
-    let Err(failure) = written else {
-        return Ok(());
-    };
-    return Err(match fs::remove_file(&temporary) {
-        Ok(()) => failure,
-        Err(cleanup) => Failure {
-            message: format!(
-                "{failure}; also cannot remove {}: {cleanup}",
-                temporary.display()
-            ),
-            ..failure
-        },
+    return output::write_atomically(target, write).map_err(|error| {
+        let AtomicWriteError { failure, cleanup } = *error;
+        let failure = match failure {
+            WriteFailure::Content(failure) => failure,
+            other @ (WriteFailure::NoFileName { .. } | WriteFailure::Io(_)) => {
+                Failure::failed(other.to_string())
+            }
+        };
+        return match cleanup {
+            None => failure,
+            Some(cleanup) => Failure {
+                message: format!("{failure}; also {cleanup}"),
+                ..failure
+            },
+        };
     });
 }
 

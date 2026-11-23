@@ -243,6 +243,46 @@ mod decisions {
     const NOT_COLLECTED: Decision = Decision::Skipped(SkipReason::NotInCollectPaths);
 
     #[test]
+    fn skip_reasons_describe_themselves() {
+        let cases = [
+            (SkipReason::NotInCollectPaths, "not in opcov.collect_paths"),
+            (
+                SkipReason::ExcludedByPath(PathBuf::from("/srv/app/gen")),
+                "excluded by opcov.exclude_paths entry /srv/app/gen",
+            ),
+            (
+                SkipReason::ExcludedByPattern,
+                "matched by opcov.exclude_pattern",
+            ),
+            (
+                SkipReason::StreamWrapper,
+                "loaded through a stream wrapper, which is not selectable by path",
+            ),
+            (
+                SkipReason::Unresolvable,
+                "its path cannot be resolved to an existing UTF-8 file name",
+            ),
+        ];
+        for (reason, text) in cases {
+            assert_eq!(reason.to_string(), text, "{reason:?}");
+        }
+    }
+
+    #[test]
+    fn configured_entries_are_kept_as_written_with_listfiles_expanded() {
+        let unresolved = SelectionConfig::parse(" app : src/a.php ", "@list", |_| {
+            return Ok(String::from("gen\n\n  vendor \n"));
+        })
+        .unwrap();
+        assert_eq!(
+            unresolved.collect_entries(),
+            ["app", "src/a.php"],
+            "collect"
+        );
+        assert_eq!(unresolved.exclude_entries(), ["gen", "vendor"], "exclude");
+    }
+
+    #[test]
     fn directory_matches_by_prefix_with_a_separator_boundary() {
         let selection = selection("/srv/app", "");
         assert_eq!(

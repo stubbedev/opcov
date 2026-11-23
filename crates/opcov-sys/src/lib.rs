@@ -145,6 +145,18 @@ pub const fn argument(name: &'static CStr, type_mask: u32) -> zend_internal_arg_
 }
 
 #[must_use]
+pub const fn optional_argument(
+    name: &'static CStr,
+    type_mask: u32,
+    default: &'static CStr,
+) -> zend_internal_arg_info {
+    return zend_internal_arg_info {
+        default_value: default.as_ptr(),
+        ..argument(name, type_mask)
+    };
+}
+
+#[must_use]
 pub const fn function_entry<const N: usize>(
     name: &'static CStr,
     handler: FunctionHandler,

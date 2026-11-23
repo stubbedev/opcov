@@ -25,6 +25,7 @@ pub(crate) enum EntryPoint {
     Executable,
     GetStatus,
     GetDebugInfo,
+    WriteReport,
     #[cfg(feature = "engine-selftest")]
     EngineSelftest,
     #[cfg(feature = "engine-selftest")]
@@ -54,6 +55,7 @@ impl EntryPoint {
             Self::Executable => "opcov\\executable()",
             Self::GetStatus => "opcov\\get_status()",
             Self::GetDebugInfo => "opcov\\get_debug_info()",
+            Self::WriteReport => "opcov\\write_report()",
             #[cfg(feature = "engine-selftest")]
             Self::EngineSelftest => "opcov\\engine_selftest()",
             #[cfg(feature = "engine-selftest")]

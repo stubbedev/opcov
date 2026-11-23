@@ -123,7 +123,7 @@ fn passes_a_covered_function_and_checks_its_closures() {
     assert_eq!(result["verdict"], "pass", "verdict");
     assert_eq!(
         function_keys(&result),
-        ["App\\helper", "{fn}@app/Foo.php:27-27"],
+        ["App\\helper", "{closure}@app/Foo.php:27-27"],
         "the arrow function inside the changed function is checked too"
     );
 }
@@ -139,7 +139,7 @@ fn a_change_inside_a_closure_checks_only_the_closure() {
     assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
     assert_eq!(
         function_keys(&json(&output)),
-        ["{fn}@app/Foo.php:27-27"],
+        ["{closure}@app/Foo.php:27-27"],
         "the innermost function owns the line"
     );
 }
@@ -160,7 +160,7 @@ fn a_bare_path_checks_every_function_of_the_file() {
             "App\\Foo::bar",
             "App\\Foo::baz",
             "App\\helper",
-            "{fn}@app/Foo.php:27-27"
+            "{closure}@app/Foo.php:27-27"
         ],
         "every function, in source order"
     );
@@ -228,7 +228,7 @@ fn reads_entries_from_list_files_and_standard_input() {
             "App\\Foo::bar",
             "App\\Foo::baz",
             "App\\helper",
-            "{fn}@app/Foo.php:27-27"
+            "{closure}@app/Foo.php:27-27"
         ],
         "entries from both lists are united"
     );

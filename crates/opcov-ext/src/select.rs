@@ -5,8 +5,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use opcov_core::filter::{
-    CaseSensitivity, CompiledFile, Decision, SelectionConfig, SkipReason, eval_host, stream_scheme,
+use opcov_core::{
+    filter::{
+        CaseSensitivity, CompiledFile, Decision, SelectionConfig, SkipReason, eval_host,
+        stream_scheme,
+    },
+    report::Settings,
 };
 use opcov_sys::{
     opcov_read_long, opcov_string_init, opcov_string_release, pcre_cache_entry,
@@ -85,6 +89,7 @@ impl Pattern {
 pub(crate) fn configure() -> Request {
     let mut request = Request {
         selection: None,
+        settings: None,
         pattern: None,
         decisions: BTreeMap::new(),
         problem: None,
@@ -100,12 +105,20 @@ pub(crate) fn configure() -> Request {
             return request;
         }
     };
-    let selection = SelectionConfig::parse(&collect, &exclude, |listfile| {
+    let configured = SelectionConfig::parse(&collect, &exclude, |listfile| {
         return fs::read_to_string(listfile);
     })
-    .and_then(|unresolved| return unresolved.resolve(|entry| return fs::canonicalize(entry), CASE));
-    let selection = match selection {
-        Ok(selection) => selection,
+    .and_then(|unresolved| {
+        let settings = Settings {
+            collect_paths: unresolved.collect_entries().iter().cloned().collect(),
+            exclude_paths: unresolved.exclude_entries().iter().cloned().collect(),
+            exclude_pattern: (!pattern.is_empty()).then(|| return pattern.clone()),
+        };
+        let selection = unresolved.resolve(|entry| return fs::canonicalize(entry), CASE)?;
+        return Ok((selection, settings));
+    });
+    let (selection, settings) = match configured {
+        Ok(configured) => configured,
         Err(error) => {
             request.problem = Some(OffReason::Selection(error.to_string()));
             return request;
@@ -123,6 +136,7 @@ pub(crate) fn configure() -> Request {
         request.pattern = Some(compiled);
     }
     request.selection = Some(selection);
+    request.settings = Some(settings);
     return request;
 }
 
@@ -222,20 +236,4 @@ pub(crate) fn decide(reported: &[u8]) -> Verdict {
         return verdict;
     })
     .unwrap_or(Verdict::Off);
-}
-
-pub(crate) fn skip_reason(reason: &SkipReason) -> String {
-    return match reason {
-        SkipReason::NotInCollectPaths => String::from("not in opcov.collect_paths"),
-        SkipReason::ExcludedByPath(entry) => {
-            format!("excluded by opcov.exclude_paths entry {}", entry.display())
-        }
-        SkipReason::ExcludedByPattern => String::from("matched by opcov.exclude_pattern"),
-        SkipReason::StreamWrapper => {
-            String::from("loaded through a stream wrapper, which is not selectable by path")
-        }
-        SkipReason::Unresolvable => {
-            String::from("its path cannot be resolved to an existing UTF-8 file name")
-        }
-    };
 }

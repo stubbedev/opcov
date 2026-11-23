@@ -19,8 +19,10 @@ mod guard;
 mod info;
 mod ini;
 mod lines;
+mod ordinals;
 mod php;
 mod probes;
+mod report;
 mod select;
 #[cfg(feature = "engine-selftest")]
 mod selftest;
@@ -54,7 +56,7 @@ const VERSION_FUNCTION: zend_function_entry =
     function_entry(c"opcov\\version", version, &VERSION_ARGINFO);
 
 #[cfg(not(feature = "engine-selftest"))]
-static FUNCTIONS: FunctionTable<8> = FunctionTable::new([
+static FUNCTIONS: FunctionTable<9> = FunctionTable::new([
     VERSION_FUNCTION,
     api::ENSURE_CAN_COLLECT,
     api::START,
@@ -63,10 +65,11 @@ static FUNCTIONS: FunctionTable<8> = FunctionTable::new([
     api::EXECUTABLE,
     api::GET_STATUS,
     api::GET_DEBUG_INFO,
+    api::WRITE_REPORT,
 ]);
 
 #[cfg(feature = "engine-selftest")]
-static FUNCTIONS: FunctionTable<11> = FunctionTable::new([
+static FUNCTIONS: FunctionTable<12> = FunctionTable::new([
     VERSION_FUNCTION,
     api::ENSURE_CAN_COLLECT,
     api::START,
@@ -75,6 +78,7 @@ static FUNCTIONS: FunctionTable<11> = FunctionTable::new([
     api::EXECUTABLE,
     api::GET_STATUS,
     api::GET_DEBUG_INFO,
+    api::WRITE_REPORT,
     selftest::ENGINE_SELFTEST_FUNCTION,
     selftest::SELFTEST_PANIC_FUNCTION,
     selftest::SELFTEST_PANIC_IN_PROBE_FUNCTION,

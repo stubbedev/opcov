@@ -3,11 +3,11 @@ SF:/srv/app/app/Foo.php
 FN:28,App\helper
 FN:9,App\Foo::bar
 FN:21,App\Foo::baz
-FN:27,{fn}@app/Foo.php:27-27
+FN:27,{closure}@app/Foo.php:27-27
 FNDA:1,App\helper
 FNDA:2,App\Foo::bar
 FNDA:0,App\Foo::baz
-FNDA:1,{fn}@app/Foo.php:27-27
+FNDA:1,{closure}@app/Foo.php:27-27
 FNF:4
 FNH:3
 BRDA:9,4,1,1

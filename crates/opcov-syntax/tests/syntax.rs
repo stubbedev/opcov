@@ -352,14 +352,27 @@ mod syntax {
     #[test]
     fn functions_are_keyed_like_the_engine() {
         let file = parse("functions");
-        let arrow: FunctionKey = "{fn}@functions.php:24-24".parse().unwrap();
+        for (key, line) in [
+            ("{closure}@functions.php:24-24", "24:29-24:46"),
+            ("{closure}@functions.php:24-24#1", "24:69-24:86"),
+            ("{closure}@functions.php:25-25", "25:19-25:49"),
+            ("{closure}@functions.php:25-25#1", "25:30-25:49"),
+            ("{closure}@functions.php:26-28", "26:20-28:10"),
+            ("class@anonymous@functions.php:63-63::run", "63:22-63:62"),
+            ("class@anonymous@functions.php:63-63#1::run", "63:88-63:123"),
+        ] {
+            assert_eq!(
+                function(&file, key).span().to_string(),
+                line,
+                "{key} is the one at {line}: arrow functions and closures share one key kind, \
+                 ranked by source position among the same line span"
+            );
+        }
+        let arrow: FunctionKey = "{closure}@functions.php:24-24#2".parse().unwrap();
         assert_eq!(
             file.function(&arrow),
-            Err(LookupError::Ambiguous {
-                key: arrow.clone(),
-                count: 2
-            }),
-            "two arrow functions on one line share a key until the key carries the ordinal"
+            Err(LookupError::NotFound { key: arrow.clone() }),
+            "only two closures share line 24"
         );
         let missing: FunctionKey = "App\\Models\\User::missing".parse().unwrap();
         assert_eq!(
@@ -369,14 +382,7 @@ mod syntax {
             }),
             "unknown functions are reported"
         );
-        let inner = file
-            .functions()
-            .iter()
-            .find(|candidate| {
-                return candidate.key().to_string() == "{fn}@functions.php:25-25"
-                    && candidate.ordinal() == 1;
-            })
-            .unwrap();
+        let inner = function(&file, "{closure}@functions.php:25-25#1");
         let coalesce = located(inner, outcome(0, EdgeKind::CoalesceFallback, 25));
         assert_eq!(
             spans(coalesce).0,
@@ -388,6 +394,50 @@ mod syntax {
             color.span().start().line().get(),
             52,
             "enum methods are keyed under the enum"
+        );
+    }
+
+    #[test]
+    fn same_span_declarations_are_keyed_like_the_engine_ranks_them() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/phpt/keys/fixtures/ordinals.php");
+        let source = fs::read(&path).unwrap();
+        let file = SourceFile::parse("ordinals.php".parse().unwrap(), &source).unwrap();
+        let mut keys: Vec<FunctionKey> = file
+            .functions()
+            .iter()
+            .map(|function| return function.key().clone())
+            .collect();
+        keys.sort();
+        let keys: Vec<String> = keys.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            keys,
+            [
+                "{main}@ordinals.php",
+                "holder",
+                "class@anonymous@ordinals.php:6-6::run",
+                "class@anonymous@ordinals.php:6-6#1::run",
+                "class@anonymous@ordinals.php:7-7::make",
+                "class@anonymous@ordinals.php:7-7#1::run",
+                "{closure}@ordinals.php:2-2",
+                "{closure}@ordinals.php:2-2#1",
+                "{closure}@ordinals.php:3-3",
+                "{closure}@ordinals.php:3-3#1",
+                "{closure}@ordinals.php:4-4",
+                "{closure}@ordinals.php:4-4#1",
+                "{closure}@ordinals.php:5-5",
+                "{closure}@ordinals.php:5-5#1",
+                "{closure}@ordinals.php:8-8",
+                "{closure}@ordinals.php:8-8#1",
+            ],
+            "the keys tests/phpt/keys/ordinals.phpt expects from the engine"
+        );
+        assert_eq!(
+            function(&file, "{closure}@ordinals.php:4-4")
+                .span()
+                .to_string(),
+            "4:11-4:30",
+            "the outer arrow function ranks first"
         );
     }
 

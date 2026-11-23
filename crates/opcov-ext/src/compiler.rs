@@ -1,10 +1,13 @@
 use core::{
     ffi::{c_char, c_int},
-    ptr,
+    ptr, slice,
 };
-use std::sync::OnceLock;
+use std::{fs, sync::OnceLock};
 
-use opcov_core::cfg::{FunctionFlag, Opcode};
+use opcov_core::{
+    cfg::{FunctionFlag, Opcode},
+    report::Sha256,
+};
 use opcov_sys::{
     IS_CONST, ZEND_ACC_DONE_PASS_TWO, ZEND_COMPILE_NO_JUMPTABLES, ZEND_PROPERTY_HOOK_COUNT,
     execute_ex, opcov_is_user_class, opcov_is_user_code, opcov_string_release, zend_class_entry,
@@ -16,7 +19,9 @@ use opcov_sys::{
 use crate::{
     engine::{Engine, FileId, OffReason, Probe, Reserved, Role, Roles, Unit, Verdict, with_engine},
     guard::{COLLECTION, EntryPoint, guard},
-    lines, probes,
+    lines,
+    ordinals::Ordinals,
+    probes,
     select::decide,
     snapshot::{self, PHP, Snapshot},
     threads, zend,
@@ -144,8 +149,16 @@ unsafe extern "C" fn compile_file(
     // SAFETY: as above.
     unsafe { (*globals).compiler_options = options };
     guard(EntryPoint::CompileFile, (), || {
-        // SAFETY: the op array (or null) was just compiled; the tables are live.
-        unsafe { after_compile(op_array, first_function, first_class) };
+        // SAFETY: the op array (or null) was just compiled from the live handle; the tables are
+        // live.
+        unsafe {
+            after_compile(
+                op_array,
+                Compiled::File(handle),
+                first_function,
+                first_class,
+            );
+        }
     });
     return op_array;
 }
@@ -181,8 +194,16 @@ unsafe extern "C" fn compile_string(
     // SAFETY: as above.
     unsafe { (*globals).compiler_options = options };
     guard(EntryPoint::CompileString, (), || {
-        // SAFETY: the op array (or null) was just compiled; the tables are live.
-        unsafe { after_compile(op_array, first_function, first_class) };
+        // SAFETY: the op array (or null) was just compiled from the live source; the tables are
+        // live.
+        unsafe {
+            after_compile(
+                op_array,
+                Compiled::String(source),
+                first_function,
+                first_class,
+            );
+        }
     });
     return op_array;
 }
@@ -359,7 +380,7 @@ impl Engine {
 
 use crate::engine::Handler;
 
-unsafe fn process(op_array: *mut zend_op_array) {
+unsafe fn process(op_array: *mut zend_op_array, ordinals: &Ordinals) {
     let Some(slot) = with_engine(|engine| return engine.slot) else {
         return;
     };
@@ -384,7 +405,7 @@ unsafe fn process(op_array: *mut zend_op_array) {
         return;
     }
     // SAFETY: as above.
-    let taken = unsafe { snapshot::take(op_array) };
+    let taken = unsafe { snapshot::take(op_array, ordinals) };
     with_engine(|engine| match taken {
         // SAFETY: as above.
         Ok(snapshot) => unsafe { engine.install_unit(op_array, file, snapshot) },
@@ -411,13 +432,16 @@ unsafe fn instrument(roots: impl FnOnce(&mut Vec<*mut zend_op_array>, usize)) ->
         roots(&mut engine.scratch.op_arrays, slot);
         // SAFETY: the gathered op arrays are live.
         if unsafe { engine.reset_window(start) } {
-            return Some((start, engine.scratch.op_arrays.len()));
+            let window = engine.scratch.op_arrays.get(start..).unwrap_or_default();
+            // SAFETY: as above.
+            let ordinals = unsafe { Ordinals::rank(window) };
+            return Some((start, engine.scratch.op_arrays.len(), ordinals));
         }
         engine.scratch.op_arrays.truncate(start);
         return None;
     })
     .flatten();
-    let Some((start, end)) = started else {
+    let Some((start, end, ordinals)) = started else {
         return false;
     };
     for position in start..end {
@@ -425,17 +449,74 @@ unsafe fn instrument(roots: impl FnOnce(&mut Vec<*mut zend_op_array>, usize)) ->
             with_engine(|engine| return engine.scratch.op_arrays.get(position).copied()).flatten();
         if let Some(op_array) = next {
             // SAFETY: gathered op arrays are live.
-            unsafe { process(op_array) };
+            unsafe { process(op_array, &ordinals) };
         }
     }
     with_engine(|engine| engine.scratch.op_arrays.truncate(start));
     return true;
 }
 
-unsafe fn after_compile(main: *mut zend_op_array, first_function: u32, first_class: u32) {
+#[derive(Debug, Clone, Copy)]
+enum Compiled {
+    File(*const zend_file_handle),
+    String(*const zend_string),
+}
+
+unsafe fn compiled_bytes<'a>(compiled: Compiled) -> Option<&'a [u8]> {
+    return match compiled {
+        // SAFETY: the caller passes the live source string of the compilation.
+        Compiled::String(source) => unsafe { zend::bytes(source) },
+        Compiled::File(handle) => {
+            // SAFETY: the caller passes the live handle of the compilation; after the scanner read
+            // the file, `buf` holds its `len` bytes until the handle is destroyed.
+            let (buf, len) = unsafe { ((*handle).buf, (*handle).len) };
+            // SAFETY: as above.
+            (!buf.is_null()).then(|| return unsafe { slice::from_raw_parts(buf.cast::<u8>(), len) })
+        }
+    };
+}
+
+unsafe fn record_source(main: *const zend_op_array, compiled: Compiled) {
+    // SAFETY: the caller passes a live, compiled op array.
+    let name = unsafe { zend::bytes((*main).filename) }.unwrap_or_default();
+    let Verdict::Measure(file) = decide(name) else {
+        return;
+    };
+    let path = with_engine(|engine| {
+        return engine
+            .files
+            .get(file)
+            .map(|record| return record.path.clone());
+    })
+    .flatten()
+    .unwrap_or_default();
+    // SAFETY: forwarded from the caller.
+    let hash = unsafe { compiled_bytes(compiled) }.map_or_else(
+        || {
+            return fs::read(&path)
+                .map(|bytes| return Sha256::digest(&bytes))
+                .map_err(|error| return format!("cannot read {path}: {error}"));
+        },
+        |bytes| return Ok(Sha256::digest(bytes)),
+    );
+    with_engine(|engine| {
+        if let Some(record) = engine.files.get_mut(file) {
+            record.compiled_from(hash);
+        }
+    });
+}
+
+unsafe fn after_compile(
+    main: *mut zend_op_array,
+    compiled: Compiled,
+    first_function: u32,
+    first_class: u32,
+) {
     if main.is_null() || threads::foreign() {
         return;
     }
+    // SAFETY: `main` was just compiled from `compiled`, which is still live.
+    unsafe { record_source(main, compiled) };
     // SAFETY: the compiler's tables are live; the new entries start at the given positions.
     let instrumented = unsafe {
         instrument(|list, slot| {

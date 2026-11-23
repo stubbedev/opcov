@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 use std::path::Path;
 
-use opcov_core::cfg::{FunctionKey, Line};
+use opcov_core::cfg::Line;
 use opcov_core::kind::{EdgeKind, LoopKind};
 use opcov_core::report::{
     FileCoverage, Function, Identified, LoopId, OutcomeId, Report, SourcePath, Span as ReportSpan,
@@ -14,7 +14,7 @@ use serde::Serialize;
 
 use crate::changes::{Change, ChangeSet, FileChange, resolve};
 use crate::failure::Verdict;
-use crate::source::{SourceError, key_file, rebase};
+use crate::source::SourceError;
 use crate::view::is_nested;
 
 #[derive(Debug, Serialize)]
@@ -279,12 +279,7 @@ pub(crate) fn evaluate<'r>(
     let mut files = Vec::with_capacity(targets.len());
     for (path, (file, file_changes)) in targets {
         let source = load(path, file)?;
-        let key_file = key_file(path)?;
-        let measured: BTreeMap<FunctionKey, &Function> = file
-            .functions
-            .iter()
-            .map(|(key, function)| return (rebase(key, &key_file), function))
-            .collect();
+        let measured = &file.functions;
         let functions = source.functions();
         let mut selected = BTreeSet::new();
         for change in file_changes {
@@ -295,7 +290,7 @@ pub(crate) fn evaluate<'r>(
             .filter_map(|index| {
                 let found = functions
                     .get(index)
-                    .and_then(|function| return measured.get(function.key()).copied());
+                    .and_then(|function| return measured.get(function.key()));
                 return evaluate_function(&header.tests, file, functions, index, found);
             })
             .collect();

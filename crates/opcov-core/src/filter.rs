@@ -7,6 +7,7 @@ mod error;
 mod name;
 mod path_set;
 
+use std::fmt;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
@@ -55,7 +56,7 @@ fn parse_setting(
     setting: PathSetting,
     value: &str,
     read_listfile: &mut impl FnMut(&Path) -> Result<String, io::Error>,
-) -> Result<Vec<PathBuf>, FilterError> {
+) -> Result<Vec<String>, FilterError> {
     let value = value.trim();
     let Some(listfile) = value.strip_prefix('@') else {
         return Ok(split_entries(value, ':'));
@@ -84,28 +85,34 @@ fn parse_setting(
     return Ok(entries);
 }
 
-fn split_entries(text: &str, separator: char) -> Vec<PathBuf> {
+fn split_entries(text: &str, separator: char) -> Vec<String> {
     return text
         .split(separator)
         .map(str::trim)
         .filter(|entry| return !entry.is_empty())
-        .map(PathBuf::from)
+        .map(str::to_owned)
         .collect();
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnresolvedSelection {
-    collect: Vec<PathBuf>,
-    exclude: Vec<PathBuf>,
+    collect: Vec<String>,
+    exclude: Vec<String>,
 }
 
 impl UnresolvedSelection {
     pub fn entries(&self) -> impl Iterator<Item = &Path> {
-        return self
-            .collect
-            .iter()
-            .chain(&self.exclude)
-            .map(PathBuf::as_path);
+        return self.collect.iter().chain(&self.exclude).map(Path::new);
+    }
+
+    #[must_use]
+    pub fn collect_entries(&self) -> &[String] {
+        return &self.collect;
+    }
+
+    #[must_use]
+    pub fn exclude_entries(&self) -> &[String] {
+        return &self.exclude;
     }
 
     pub fn resolve(
@@ -121,12 +128,12 @@ impl UnresolvedSelection {
 
 fn resolve_setting(
     setting: PathSetting,
-    entries: Vec<PathBuf>,
+    entries: Vec<String>,
     realpath: &mut impl FnMut(&Path) -> Result<PathBuf, io::Error>,
     case: CaseSensitivity,
 ) -> Result<PathSet, FilterError> {
     let mut set = PathSet::new(case);
-    for entry in entries {
+    for entry in entries.into_iter().map(PathBuf::from) {
         let resolved = match realpath(&entry) {
             Ok(resolved) => resolved,
             Err(source) => {
@@ -183,6 +190,29 @@ pub enum SkipReason {
     ExcludedByPattern,
     StreamWrapper,
     Unresolvable,
+}
+
+impl fmt::Display for SkipReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        return match self {
+            Self::NotInCollectPaths => {
+                write!(f, "not in {}", PathSetting::Collect.ini_name())
+            }
+            Self::ExcludedByPath(entry) => write!(
+                f,
+                "excluded by {} entry {}",
+                PathSetting::Exclude.ini_name(),
+                entry.display()
+            ),
+            Self::ExcludedByPattern => f.write_str("matched by opcov.exclude_pattern"),
+            Self::StreamWrapper => {
+                f.write_str("loaded through a stream wrapper, which is not selectable by path")
+            }
+            Self::Unresolvable => {
+                f.write_str("its path cannot be resolved to an existing UTF-8 file name")
+            }
+        };
+    }
 }
 
 impl Selection {

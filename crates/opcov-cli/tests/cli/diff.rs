@@ -126,7 +126,7 @@ fn no_newline_markers_are_skipped() {
     );
     assert_eq!(
         keys(&gate_diff("diff_no_newline", &diff, &[])),
-        ["App\\helper", "{fn}@app/Foo.php:27-27"],
+        ["App\\helper", "{closure}@app/Foo.php:27-27"],
         "line 29 closes helper"
     );
 }

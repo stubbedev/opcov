@@ -2,8 +2,8 @@ use core::{fmt, slice};
 use std::collections::{BTreeMap, BTreeSet};
 
 use opcov_core::cfg::{
-    Analysis, BlockFlags, BlockId, BlockInput, FilePath, FunctionFlags, FunctionInput, FunctionKey,
-    KeyError, Line, LoopInput, Op, Opcode, PhpVersion, SnapshotError,
+    Analysis, BlockFlags, BlockId, BlockInput, ClassRef, FilePath, FunctionFlags, FunctionInput,
+    FunctionKey, KeyError, Line, LineSpan, LoopInput, Op, Opcode, PhpVersion, SnapshotError,
 };
 use opcov_sys::{
     PHP_VERSION_ID, ZEND_ACC_ANON_CLASS, ZEND_ACC_CLOSURE, ZEND_BB_CATCH, ZEND_BB_FINALLY,
@@ -15,6 +15,7 @@ use opcov_sys::{
 
 use crate::{
     lines::{Instr, LineBlock, OperandType},
+    ordinals::Ordinals,
     zend,
 };
 
@@ -35,6 +36,8 @@ pub(crate) enum SnapshotFailure {
     Key(KeyError),
     LineZero { op: usize },
     Count { what: &'static str },
+    InvertedSpan { start: Line, end: Line },
+    Unranked { what: &'static str },
     Cfg(SnapshotError),
 }
 
@@ -45,6 +48,16 @@ impl fmt::Display for SnapshotFailure {
             Self::Key(error) => write!(f, "cannot name the function: {error}"),
             Self::LineZero { op } => write!(f, "opcode {op} has line 0"),
             Self::Count { what } => write!(f, "the engine reported an impossible {what}"),
+            Self::InvertedSpan { start, end } => {
+                write!(
+                    f,
+                    "the declaration ends on line {end} before it starts on line {start}"
+                )
+            }
+            Self::Unranked { what } => write!(
+                f,
+                "the {what} was not ranked among the declarations sharing its line span"
+            ),
             Self::Cfg(error) => write!(f, "{error}"),
         };
     }
@@ -71,7 +84,15 @@ fn count(value: impl TryInto<usize>, what: &'static str) -> Result<usize, Snapsh
         .map_err(|_overflow| return SnapshotFailure::Count { what });
 }
 
-unsafe fn class_name(op_array: &zend_op_array) -> Result<Option<String>, SnapshotFailure> {
+fn line_span(start: u32, end: u32) -> Result<LineSpan, SnapshotFailure> {
+    let (start, end) = (line(start, 0)?, line(end, 0)?);
+    return LineSpan::new(start, end).ok_or(SnapshotFailure::InvertedSpan { start, end });
+}
+
+unsafe fn class_ref(
+    op_array: &zend_op_array,
+    ordinals: &Ordinals,
+) -> Result<Option<ClassRef>, SnapshotFailure> {
     let scope = op_array.scope;
     if scope.is_null() {
         return Ok(None);
@@ -82,7 +103,9 @@ unsafe fn class_name(op_array: &zend_op_array) -> Result<Option<String>, Snapsho
         // SAFETY: a class entry's name is a live zend_string.
         let name = unsafe { zend::text(class.name) }
             .ok_or(SnapshotFailure::NotUtf8 { what: "class name" })?;
-        return Ok(Some(name.to_owned()));
+        return Ok(Some(ClassRef::Named(
+            name.parse().map_err(SnapshotFailure::Key)?,
+        )));
     }
     // SAFETY: an anonymous class is a user class, whose `info.user` arm is the active one.
     let user = unsafe { class.info.user };
@@ -90,36 +113,41 @@ unsafe fn class_name(op_array: &zend_op_array) -> Result<Option<String>, Snapsho
     let file = unsafe { zend::text(user.filename) }.ok_or(SnapshotFailure::NotUtf8 {
         what: "class file name",
     })?;
-    return Ok(Some(format!(
-        "class@anonymous@{file}:{}-{}",
-        user.line_start, user.line_end
-    )));
+    return Ok(Some(ClassRef::Anonymous {
+        file: file.parse().map_err(SnapshotFailure::Key)?,
+        lines: line_span(user.line_start, user.line_end)?,
+        ordinal: ordinals.class(scope).ok_or(SnapshotFailure::Unranked {
+            what: "anonymous class",
+        })?,
+    }));
 }
 
 unsafe fn function_key(
     op_array: &zend_op_array,
     file: &FilePath,
+    ordinals: &Ordinals,
 ) -> Result<FunctionKey, SnapshotFailure> {
-    // SAFETY: a compiled op array's function name is null or a live zend_string.
     if op_array.function_name.is_null() {
         return Ok(FunctionKey::Main { file: file.clone() });
+    }
+    if op_array.fn_flags & ZEND_ACC_CLOSURE != 0 {
+        return Ok(FunctionKey::Closure {
+            file: file.clone(),
+            lines: line_span(op_array.line_start, op_array.line_end)?,
+            ordinal: ordinals
+                .closure(op_array)
+                .ok_or(SnapshotFailure::Unranked { what: "closure" })?,
+        });
     }
     // SAFETY: checked non-null above; a compiled op array's function name is a live zend_string.
     let name = unsafe { zend::text(op_array.function_name) }.ok_or(SnapshotFailure::NotUtf8 {
         what: "function name",
     })?;
-    let text = if op_array.fn_flags & ZEND_ACC_CLOSURE != 0 {
-        format!(
-            "{{closure}}@{file}:{}-{}",
-            op_array.line_start, op_array.line_end
-        )
-    } else {
-        // SAFETY: forwarded from the caller.
-        unsafe { class_name(op_array)? }.map_or_else(
-            || return name.to_owned(),
-            |class| return format!("{class}::{name}"),
-        )
-    };
+    // SAFETY: forwarded from the caller.
+    let text = unsafe { class_ref(op_array, ordinals)? }.map_or_else(
+        || return name.to_owned(),
+        |class| return format!("{class}::{name}"),
+    );
     return text.parse().map_err(SnapshotFailure::Key);
 }
 
@@ -284,7 +312,10 @@ fn line_blocks(raw: &[RawBlock]) -> Vec<LineBlock> {
         .collect();
 }
 
-pub(crate) unsafe fn take(op_array: *const zend_op_array) -> Result<Snapshot, SnapshotFailure> {
+pub(crate) unsafe fn take(
+    op_array: *const zend_op_array,
+    ordinals: &Ordinals,
+) -> Result<Snapshot, SnapshotFailure> {
     // SAFETY: the caller passes a live, compiled op array.
     let array = unsafe { &*op_array };
     // SAFETY: a compiled op array's file name is a live zend_string.
@@ -293,7 +324,7 @@ pub(crate) unsafe fn take(op_array: *const zend_op_array) -> Result<Snapshot, Sn
         .parse()
         .map_err(SnapshotFailure::Key)?;
     // SAFETY: forwarded from the caller.
-    let key = unsafe { function_key(array, &file)? };
+    let key = unsafe { function_key(array, &file, ordinals)? };
     let op_count = count(array.last, "opcode count")?;
     let opcodes = if op_count == 0 {
         &[][..]

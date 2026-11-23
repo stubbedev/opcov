@@ -5,6 +5,7 @@ use std::num::NonZeroU32;
 
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sha2::{Digest as _, Sha256 as Hasher};
 
 use super::error::{Collection, HitSite, ModelError, SchemaError};
 use crate::cfg::{FunctionKey, Line};
@@ -249,6 +250,11 @@ impl Sha256 {
     }
 
     #[must_use]
+    pub fn digest(content: &[u8]) -> Self {
+        return Self(Hasher::digest(content).into());
+    }
+
+    #[must_use]
     pub const fn as_bytes(&self) -> &[u8; 32] {
         return &self.0;
     }
@@ -349,6 +355,25 @@ impl TestTable {
             |name| return format!("{name:?}"),
         )?;
         return Ok(Self(names));
+    }
+
+    pub fn from_unordered(names: &[String]) -> Result<(Self, Vec<TestIndex>), ModelError> {
+        let mut order: Vec<usize> = (0..names.len()).collect();
+        order.sort_unstable_by(|left, right| return names.get(*left).cmp(&names.get(*right)));
+        let mut indexes = vec![TestIndex(0); names.len()];
+        let mut sorted = Vec::with_capacity(names.len());
+        for position in order {
+            let (Some(name), Some(slot), Ok(index)) = (
+                names.get(position),
+                indexes.get_mut(position),
+                u32::try_from(sorted.len()),
+            ) else {
+                return Err(ModelError::TooManyTests { count: names.len() });
+            };
+            *slot = TestIndex(index);
+            sorted.push(name.clone());
+        }
+        return Ok((Self::new(sorted)?, indexes));
     }
 
     #[must_use]
@@ -463,6 +488,27 @@ impl HitSet {
     }
 }
 
+pub fn line_hits(
+    executable: impl IntoIterator<Item = Line>,
+    hits: impl IntoIterator<Item = (Line, TestIndex)>,
+) -> Result<BTreeMap<Line, HitSet>, ModelError> {
+    let mut lines: BTreeMap<Line, HitSet> = executable
+        .into_iter()
+        .map(|line| return (line, HitSet::default()))
+        .collect();
+    for (line, test) in hits {
+        let Some(set) = lines.get_mut(&line) else {
+            return Err(ModelError::HitOnNonExecutableLine { line, test });
+        };
+        set.0.push(test);
+    }
+    for set in lines.values_mut() {
+        set.0.sort_unstable();
+        set.0.dedup();
+    }
+    return Ok(lines);
+}
+
 impl TryFrom<Vec<TestIndex>> for HitSet {
     type Error = ModelError;
 
@@ -559,6 +605,30 @@ impl PathBase {
         };
     }
 
+    pub fn locate(&self, compiled: &str) -> Result<SourcePath, ModelError> {
+        let raw = match self {
+            Self::Absolute => compiled,
+            Self::Relative(root) => {
+                let inside = if root.0 == "/" {
+                    compiled.strip_prefix('/')
+                } else {
+                    compiled
+                        .strip_prefix(root.0.as_str())
+                        .and_then(|rest| return rest.strip_prefix('/'))
+                };
+                inside.ok_or_else(|| {
+                    return ModelError::OutsideRoot {
+                        path: compiled.to_owned(),
+                        root: root.clone(),
+                    };
+                })?
+            }
+        };
+        let path = SourcePath::new(raw.to_owned())?;
+        self.admits(&path)?;
+        return Ok(path);
+    }
+
     pub(super) fn admits(&self, path: &SourcePath) -> Result<(), ModelError> {
         let mode = self.mode();
         if path.is_absolute() != (mode == PathMode::Absolute) {
@@ -610,6 +680,7 @@ pub enum VmKind {
     Switch,
     Goto,
     Hybrid,
+    Tailcall,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -630,7 +701,6 @@ pub struct Settings {
     pub exclude_paths: BTreeSet<String>,
     #[serde(deserialize_with = "required")]
     pub exclude_pattern: Option<String>,
-    pub strict: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -987,6 +1057,16 @@ pub(super) fn validate_entry(
     file: FileCoverage,
 ) -> Result<FileCoverage, ModelError> {
     paths.admits(path)?;
+    if let Some(key) = file.functions.keys().find(|key| {
+        return key
+            .file()
+            .is_some_and(|named| return named.as_str() != path.as_str());
+    }) {
+        return Err(ModelError::KeyFileMismatch {
+            path: path.clone(),
+            key: Box::new(key.clone()),
+        });
+    }
     return file
         .resolve_tests(refs)
         .map_err(|bad| return bad.into_error(path, refs.count()));

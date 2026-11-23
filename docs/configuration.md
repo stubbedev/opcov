@@ -165,9 +165,10 @@ All functions live in the `opcov` namespace.
 |---|---|
 | `ensure_can_collect(): void` | Throws `\opcov\CannotCollectException` (a `RuntimeException`) with the reason when collection is off. After at least one `start()`/`stop()` cycle it also throws when no compiled file was selected. |
 | `start(): void` | Starts recording. Re-arms the probes that fired while collection was off (bootstrap code), so the collection sees them again. Throws `CannotCollectException` when collection is off and `LogicException` when already collecting. |
-| `stop(): array` | Stops recording and returns `[file => ['lines' => [line => true]]]` for the probes that fired since `start()`, sorted by file and line. It does not re-arm them. Throws `LogicException` without a `start()`, and `CannotCollectException` when collection went off meanwhile. |
+| `stop(?string $test = null): array` | Stops recording and returns `[file => ['lines' => [line => true]]]` for the probes that fired since `start()`, sorted by file and line. It does not re-arm them. With `$test`, the same hits are also attributed to that test id for `write_report()`. Throws `LogicException` without a `start()`, `CannotCollectException` when collection went off meanwhile, and `ValueError` (before stopping) when `$test` is empty or not UTF-8. |
 | `reset(): void` | Re-arms every probe that fired since the last `reset()`; its cost is proportional to the probes that fired, not to the probes installed. Throws `LogicException` while collecting. |
-| `executable(array $files): array` | `[file => ['lines' => [line => []], 'functions' => [key => ['span' => null, 'outcomes' => [], 'loops' => []]]]]` for the given files that were compiled, in the shape of the report schema's `lines` and `functions`. |
+| `executable(array $files): array` | `[file => ['lines' => [line => []], 'functions' => [key => ['span' => null, 'outcomes' => [], 'loops' => []]]]]` for the given files that were compiled, built by the same conversion as a report's `lines` and `functions` (function keys name the file by its resolved path). |
+| `write_report(string $path, array $options = []): void` | Writes a canonical `opcov-report/1` report (see [report-schema.md](report-schema.md)) to `$path`; see below. |
 | `get_status(): array` | `enabled`, `collecting`, `off_reason`, `selected_files`, `skipped_files` (file => reason) and `counters` (`units`, `probes_installed`, `probes_fired`, `probes_rearmed`, `jump_table_files`). |
 | `get_debug_info(string $file): array` | `skip_reason`, `executable_lines`, `functions` (function key => CFG snapshot with blocks, edges, loops and diagnostics) and `probes` (function, opcode index, line, armed roles). |
 
@@ -177,6 +178,59 @@ that fired in one test stays fired in the next.
 
 If the request ends while collecting, the pending hits are discarded at
 request shutdown.
+
+### Per-test attribution and `write_report()`
+
+A runner passes each test's id to `stop()` and writes one report at the end:
+
+```php
+foreach ($tests as $test) {
+    \opcov\start();
+    $test->run();
+    \opcov\stop($test->id());
+    \opcov\reset();
+}
+\opcov\write_report('build/coverage.json');
+```
+
+- Attribution accumulates in the extension for the life of the process: it
+  survives `reset()`, a test id stopped twice is one test whose hits are
+  united, and memory grows with the distinct (test, executable line) pairs,
+  stored as one sorted list of lines per test. `stop()` without a test id
+  attributes nothing.
+- `write_report()` writes every attributed test and every measured file
+  compiled in this process, including files no test touched: every executable
+  line is present, with the sorted indexes of the tests that ran it, or an
+  empty list. Function spans are `null` and `outcomes`/`loops` are empty until
+  branch and loop probes exist; spans come from the source when a report is
+  consumed. It may be called more than once; each call writes the state so far.
+- The report is serialised by `opcov-core`, the same writer as `opcov merge`,
+  to a temporary file next to `$path` (`.<name>.<pid>.tmp`), synced and renamed
+  into place, so `$path` is either the previous file or the complete report.
+- `sha256` is computed once per file at compile time from the bytes PHP
+  compiled (the file handle's buffer, or the `eval()`'d string). When OPCache
+  serves a file from its cache PHP reads nothing, so opcov reads the file once
+  at that point; if it changed on disk after OPCache cached it, the recorded
+  hash is that of the new content. A file compiled twice from different bytes
+  in one process (a rewritten file included again, one `eval()` site run with
+  different code) has no single hash, and `write_report()` refuses it.
+
+Options (`$options`):
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `root` | string | the working directory | Directory the `files` keys are relative to. Relative values are resolved against the working directory; symbolic links are resolved, because measured files are recorded by their real path. |
+| `absolute_paths` | bool | `false` | Key `files` by absolute path and record no root; cannot be combined with `root`. |
+
+Relative `$path` values are resolved against PHP's working directory.
+
+| Situation | Exception |
+|---|---|
+| unknown option key, empty `$path` or `root`, `root` with `absolute_paths` | `ValueError` naming the argument |
+| an option of the wrong type | `TypeError` naming the key |
+| collection is off | `\opcov\CannotCollectException` |
+| called while collecting | `LogicException` |
+| a measured file outside `root`, a file compiled from different sources, the root cannot be resolved, the report cannot be written | `RuntimeException` naming the path and the reason |
 
 ## Processes and threads
 

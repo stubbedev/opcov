@@ -10,7 +10,7 @@ mod refusals {
     const BASE: &str = concat!(
         r#"{"schema":"opcov-report/1","#,
         r#""generator":{"opcov":"1.0.0","php":"8.5.12","zts":true,"vm":"HYBRID"},"#,
-        r#""settings":{"collect_paths":["app"],"exclude_paths":[],"exclude_pattern":null,"strict":true},"#,
+        r#""settings":{"collect_paths":["app"],"exclude_paths":[],"exclude_pattern":null},"#,
         r#""paths":{"mode":"relative","root":"/srv/app"},"#,
         r#""tests":["Tests\\FooTest::test_a"],"#,
         r#""files":{"app/Foo.php":{"#,
@@ -68,8 +68,8 @@ mod refusals {
     fn differing_settings_and_paths_are_refused() {
         let cases = [
             (
-                variant(r#""strict":true"#, r#""strict":false"#),
-                HeaderField::SettingsStrict,
+                variant(r#""exclude_pattern":null"#, r#""exclude_pattern":"~x~""#),
+                HeaderField::SettingsExcludePattern,
             ),
             (
                 variant(

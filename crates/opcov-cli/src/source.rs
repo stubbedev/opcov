@@ -3,10 +3,9 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
-use opcov_core::cfg::{ClassRef, FilePath, FunctionKey, KeyError};
+use opcov_core::cfg::{FilePath, KeyError};
 use opcov_core::report::{FileCoverage, PathBase, Sha256, SourcePath};
 use opcov_syntax::{SourceFile, SyntaxError};
-use sha2::{Digest as _, Sha256 as Hasher};
 
 use crate::view::location;
 
@@ -64,7 +63,7 @@ pub(crate) fn read_verified(
         Ok(bytes) => bytes,
         Err(error) => return Err(SourceError::Read { path: disk, error }),
     };
-    let found = Sha256::from_bytes(Hasher::digest(&bytes).into());
+    let found = Sha256::digest(&bytes);
     if found != file.sha256 {
         return Err(SourceError::Stale {
             path: disk,
@@ -86,42 +85,4 @@ pub(crate) fn key_file(path: &SourcePath) -> Result<FilePath, SourceError> {
 
 pub(crate) fn parse(path: &SourcePath, source: &[u8]) -> Result<SourceFile, SourceError> {
     return SourceFile::parse(key_file(path)?, source).map_err(SourceError::Syntax);
-}
-
-fn rebase_class(class: &ClassRef, file: &FilePath) -> ClassRef {
-    return match class {
-        ClassRef::Named(name) => ClassRef::Named(name.clone()),
-        ClassRef::Anonymous { lines, .. } => ClassRef::Anonymous {
-            file: file.clone(),
-            lines: *lines,
-        },
-    };
-}
-
-pub(crate) fn rebase(key: &FunctionKey, file: &FilePath) -> FunctionKey {
-    return match key {
-        FunctionKey::Main { .. } => FunctionKey::Main { file: file.clone() },
-        FunctionKey::Function { name } => FunctionKey::Function { name: name.clone() },
-        FunctionKey::Method { class, method } => FunctionKey::Method {
-            class: rebase_class(class, file),
-            method: method.clone(),
-        },
-        FunctionKey::PropertyHook {
-            class,
-            property,
-            hook,
-        } => FunctionKey::PropertyHook {
-            class: rebase_class(class, file),
-            property: property.clone(),
-            hook: *hook,
-        },
-        FunctionKey::Closure { lines, .. } => FunctionKey::Closure {
-            file: file.clone(),
-            lines: *lines,
-        },
-        FunctionKey::ArrowFunction { lines, .. } => FunctionKey::ArrowFunction {
-            file: file.clone(),
-            lines: *lines,
-        },
-    };
 }

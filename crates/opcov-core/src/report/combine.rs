@@ -44,7 +44,6 @@ pub enum HeaderField {
     SettingsCollectPaths,
     SettingsExcludePaths,
     SettingsExcludePattern,
-    SettingsStrict,
     Paths,
 }
 
@@ -58,7 +57,6 @@ impl fmt::Display for HeaderField {
             Self::SettingsCollectPaths => "settings.collect_paths",
             Self::SettingsExcludePaths => "settings.exclude_paths",
             Self::SettingsExcludePattern => "settings.exclude_pattern",
-            Self::SettingsStrict => "settings.strict",
             Self::Paths => "paths",
         });
     }
@@ -255,7 +253,6 @@ fn first_difference(left: &Header, right: &Header) -> Option<(HeaderField, Strin
                 collect_paths,
                 exclude_paths,
                 exclude_pattern,
-                strict,
             },
         paths,
         tests: _,
@@ -285,7 +282,6 @@ fn first_difference(left: &Header, right: &Header) -> Option<(HeaderField, Strin
                 &right.settings.exclude_pattern,
             );
         })
-        .or_else(|| return differ(HeaderField::SettingsStrict, strict, &right.settings.strict))
         .or_else(|| return differ(HeaderField::Paths, paths, &right.paths));
 }
 
@@ -421,18 +417,22 @@ fn clash_if<T: PartialEq + Serialize>(
     left: &T,
     right: &T,
     site: impl FnOnce() -> ConflictSite,
-) -> Result<(), Clash> {
+) -> Result<(), Box<Clash>> {
     if left == right {
         return Ok(());
     }
-    return Err(Clash {
+    return Err(Box::new(Clash {
         site: site(),
         left: render(left),
         right: render(right),
-    });
+    }));
 }
 
-fn union_outcomes(function: &FunctionKey, left: Outcome, right: Outcome) -> Result<Outcome, Clash> {
+fn union_outcomes(
+    function: &FunctionKey,
+    left: Outcome,
+    right: Outcome,
+) -> Result<Outcome, Box<Clash>> {
     let site = |field| {
         return move || {
             return ConflictSite::Outcome {
@@ -451,7 +451,7 @@ fn union_outcomes(function: &FunctionKey, left: Outcome, right: Outcome) -> Resu
     });
 }
 
-fn union_loops(function: &FunctionKey, left: Loop, right: Loop) -> Result<Loop, Clash> {
+fn union_loops(function: &FunctionKey, left: Loop, right: Loop) -> Result<Loop, Box<Clash>> {
     let site = |field| {
         return move || {
             return ConflictSite::Loop {
@@ -470,7 +470,11 @@ fn union_loops(function: &FunctionKey, left: Loop, right: Loop) -> Result<Loop, 
     });
 }
 
-fn union_functions(key: &FunctionKey, left: Function, right: Function) -> Result<Function, Clash> {
+fn union_functions(
+    key: &FunctionKey,
+    left: Function,
+    right: Function,
+) -> Result<Function, Box<Clash>> {
     clash_if(&left.span, &right.span, || {
         return ConflictSite::FunctionSpan {
             function: key.clone(),
@@ -495,10 +499,10 @@ fn union_functions(key: &FunctionKey, left: Function, right: Function) -> Result
     });
 }
 
-fn union_files(left: FileCoverage, right: FileCoverage) -> Result<FileCoverage, Clash> {
+fn union_files(left: FileCoverage, right: FileCoverage) -> Result<FileCoverage, Box<Clash>> {
     clash_if(&left.sha256, &right.sha256, || return ConflictSite::Sha256)?;
     let lines = union_maps(left.lines, right.lines, |_line, kept, other| {
-        return Ok::<_, Clash>(union_hits(kept, other));
+        return Ok::<_, Box<Clash>>(union_hits(kept, other));
     })?;
     let functions = union_maps(left.functions, right.functions, union_functions)?;
     return Ok(FileCoverage {

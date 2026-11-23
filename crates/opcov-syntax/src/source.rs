@@ -5,9 +5,7 @@ use mago_allocator::prelude::LocalArena;
 use mago_database::file::FileId;
 use mago_span::HasSpan;
 use mago_syntax::parser::parse_file_content;
-use opcov_core::cfg::{
-    ClassRef, FilePath, FunctionKey, HookKind, Identifier, KeyError, Line, LineSpan,
-};
+use opcov_core::cfg::{ClassRef, FilePath, FunctionKey, HookKind, KeyError, Line, LineSpan};
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
@@ -125,7 +123,6 @@ impl std::error::Error for LookupError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionSource {
     key: FunctionKey,
-    ordinal: u32,
     span: Span,
     constructs: Vec<Construct>,
     sites: Vec<Site<Span, LineRange>>,
@@ -135,11 +132,6 @@ impl FunctionSource {
     #[must_use]
     pub const fn key(&self) -> &FunctionKey {
         return &self.key;
-    }
-
-    #[must_use]
-    pub const fn ordinal(&self) -> u32 {
-        return self.ordinal;
     }
 
     #[must_use]
@@ -160,9 +152,8 @@ impl FunctionSource {
 
 impl Serialize for FunctionSource {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("FunctionSource", 4)?;
+        let mut state = serializer.serialize_struct("FunctionSource", 3)?;
         state.serialize_field("key", &self.key)?;
-        state.serialize_field("ordinal", &self.ordinal)?;
         state.serialize_field("span", &self.span)?;
         state.serialize_field("constructs", &self.constructs)?;
         return state.end();
@@ -191,8 +182,12 @@ fn ordinal_in<K: Ord>(sorted: &[(K, u32)], key: &K, start: u32) -> usize {
 
 struct Keyed {
     key: FunctionKey,
-    ordinal: Option<u32>,
     raw: RawFunction,
+}
+
+struct Ranks {
+    anonymous: Vec<(LineSpan, u32)>,
+    closures: Vec<(LineSpan, u32)>,
 }
 
 impl Builder<'_> {
@@ -266,23 +261,20 @@ impl Builder<'_> {
         &self,
         class: Option<&RawClass>,
         at: u32,
-        anonymous: &[(LineSpan, u32)],
-    ) -> Result<(ClassRef, Option<u32>), SyntaxError> {
+        ranks: &Ranks,
+    ) -> Result<ClassRef, SyntaxError> {
         return match class {
             None => Err(self.fail(SyntaxErrorKind::MemberOutsideClass {
                 line: self.line(at)?,
             })),
-            Some(RawClass::Named(name)) => Ok((ClassRef::Named(self.name(name)?), None)),
+            Some(RawClass::Named(name)) => Ok(ClassRef::Named(self.name(name)?)),
             Some(RawClass::Anonymous(span)) => {
                 let lines = self.line_span(*span)?;
-                let ordinal = self.count(ordinal_in(anonymous, &lines, span.start))?;
-                Ok((
-                    ClassRef::Anonymous {
-                        file: self.path.clone(),
-                        lines,
-                    },
-                    Some(ordinal),
-                ))
+                Ok(ClassRef::Anonymous {
+                    file: self.path.clone(),
+                    lines,
+                    ordinal: self.count(ordinal_in(&ranks.anonymous, &lines, span.start))?,
+                })
             }
         };
     }
@@ -306,56 +298,66 @@ impl Builder<'_> {
         });
     }
 
-    fn key(
-        &self,
-        raw: &RawKey,
-        anonymous: &[(LineSpan, u32)],
-    ) -> Result<(FunctionKey, Option<u32>), SyntaxError> {
-        let file = self.path.clone();
+    fn closure_span(&self, raw: &RawKey) -> Result<Option<ByteSpan>, SyntaxError> {
         return Ok(match raw {
-            RawKey::Main => (FunctionKey::Main { file }, None),
-            RawKey::Function { name } => (
-                FunctionKey::Function {
-                    name: self.name(name)?,
-                },
-                None,
-            ),
-            RawKey::Method { class, method, at } => {
-                let (class, ordinal) = self.class(class.as_ref(), *at, anonymous)?;
-                let method: Identifier = self.name(method)?;
-                (FunctionKey::Method { class, method }, ordinal)
+            RawKey::Closure { start, end } => Some(ByteSpan::new(*start, *end)),
+            RawKey::Arrow { start, body_end } => {
+                Some(ByteSpan::new(*start, self.arrow_end(*body_end)?))
             }
+            RawKey::Main
+            | RawKey::Function { .. }
+            | RawKey::Method { .. }
+            | RawKey::Hook { .. } => None,
+        });
+    }
+
+    fn closure(&self, span: ByteSpan, ranks: &Ranks) -> Result<FunctionKey, SyntaxError> {
+        let lines = self.line_span(span)?;
+        return Ok(FunctionKey::Closure {
+            file: self.path.clone(),
+            lines,
+            ordinal: self.count(ordinal_in(&ranks.closures, &lines, span.start))?,
+        });
+    }
+
+    fn key(&self, raw: &RawKey, ranks: &Ranks) -> Result<FunctionKey, SyntaxError> {
+        return Ok(match raw {
+            RawKey::Main => FunctionKey::Main {
+                file: self.path.clone(),
+            },
+            RawKey::Function { name } => FunctionKey::Function {
+                name: self.name(name)?,
+            },
+            RawKey::Method { class, method, at } => FunctionKey::Method {
+                class: self.class(class.as_ref(), *at, ranks)?,
+                method: self.name(method)?,
+            },
             RawKey::Hook {
                 class,
                 property,
                 hook,
                 at,
             } => {
-                let (class, ordinal) = self.class(class.as_ref(), *at, anonymous)?;
+                let class = self.class(class.as_ref(), *at, ranks)?;
                 let Some(property) = property else {
                     return Err(self.fail(SyntaxErrorKind::HookOutsideProperty {
                         line: self.line(*at)?,
                     }));
                 };
-                let key = FunctionKey::PropertyHook {
+                FunctionKey::PropertyHook {
                     class,
                     property: self.name(property)?,
                     hook: self.hook(hook, *at)?,
-                };
-                (key, ordinal)
+                }
             }
-            RawKey::Closure { start, end } => {
-                let lines = self.line_span(ByteSpan::new(*start, *end))?;
-                (FunctionKey::Closure { file, lines }, None)
-            }
+            RawKey::Closure { start, end } => self.closure(ByteSpan::new(*start, *end), ranks)?,
             RawKey::Arrow { start, body_end } => {
-                let lines = self.line_span(ByteSpan::new(*start, self.arrow_end(*body_end)?))?;
-                (FunctionKey::ArrowFunction { file, lines }, None)
+                self.closure(ByteSpan::new(*start, self.arrow_end(*body_end)?), ranks)?
             }
         });
     }
 
-    fn function(&self, keyed: Keyed, ordinal: u32) -> Result<FunctionSource, SyntaxError> {
+    fn function(&self, keyed: Keyed) -> Result<FunctionSource, SyntaxError> {
         let mut constructs = keyed
             .raw
             .constructs
@@ -381,7 +383,6 @@ impl Builder<'_> {
             .collect::<Result<Vec<_>, SyntaxError>>()?;
         return Ok(FunctionSource {
             key: keyed.key,
-            ordinal,
             span: self.span(keyed.raw.span)?,
             constructs,
             sites,
@@ -393,16 +394,27 @@ impl Builder<'_> {
         functions: Vec<RawFunction>,
         anonymous: &[ByteSpan],
     ) -> Result<Vec<FunctionSource>, SyntaxError> {
-        let mut anonymous_lines = anonymous
+        let mut anonymous = anonymous
             .iter()
             .map(|span| return Ok((self.line_span(*span)?, span.start)))
             .collect::<Result<Vec<(LineSpan, u32)>, SyntaxError>>()?;
-        anonymous_lines.sort_unstable();
+        anonymous.sort_unstable();
+        let mut closures = Vec::new();
+        for function in &functions {
+            if let Some(span) = self.closure_span(&function.key)? {
+                closures.push((self.line_span(span)?, span.start));
+            }
+        }
+        closures.sort_unstable();
+        let ranks = Ranks {
+            anonymous,
+            closures,
+        };
         let mut keyed = functions
             .into_iter()
             .map(|raw| {
-                let (key, ordinal) = self.key(&raw.key, &anonymous_lines)?;
-                return Ok(Keyed { key, ordinal, raw });
+                let key = self.key(&raw.key, &ranks)?;
+                return Ok(Keyed { key, raw });
             })
             .collect::<Result<Vec<Keyed>, SyntaxError>>()?;
         keyed.sort_by(|left, right| {
@@ -412,29 +424,9 @@ impl Builder<'_> {
                 &right.key,
             ));
         });
-        let mut located: Vec<(FunctionKey, u32)> = keyed
-            .iter()
-            .filter(|function| {
-                return matches!(
-                    function.key,
-                    FunctionKey::Closure { .. } | FunctionKey::ArrowFunction { .. }
-                );
-            })
-            .map(|function| return (function.key.clone(), function.raw.span.start))
-            .collect();
-        located.sort_unstable();
         return keyed
             .into_iter()
-            .map(|function| {
-                let ordinal = function.ordinal.map_or_else(
-                    || {
-                        let rank = ordinal_in(&located, &function.key, function.raw.span.start);
-                        return self.count(rank);
-                    },
-                    Ok,
-                )?;
-                return self.function(function, ordinal);
-            })
+            .map(|function| return self.function(function))
             .collect();
     }
 }

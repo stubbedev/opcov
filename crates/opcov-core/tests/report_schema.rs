@@ -19,7 +19,7 @@ mod schema {
     const EXAMPLE: &str = concat!(
         r#"{"schema":"opcov-report/1","#,
         r#""generator":{"opcov":"1.0.0","php":"8.5.12","zts":true,"vm":"HYBRID"},"#,
-        r#""settings":{"collect_paths":["app"],"exclude_paths":[],"exclude_pattern":null,"strict":true},"#,
+        r#""settings":{"collect_paths":["app"],"exclude_paths":[],"exclude_pattern":null},"#,
         r#""paths":{"mode":"relative","root":"/srv/app"},"#,
         r#""tests":["Tests\\Unit\\FooTest::test_bar","Tests\\Unit\\FooTest::test_baz"],"#,
         r#""files":{"app/Foo.php":{"#,
@@ -116,6 +116,13 @@ mod schema {
                 mutate(r#""vm":"HYBRID""#, r#""vm":"HYBRID","jit":true"#),
             ),
             ("unknown vm", mutate(r#""vm":"HYBRID""#, r#""vm":"JIT""#)),
+            (
+                "the removed strict setting",
+                mutate(
+                    r#""exclude_pattern":null"#,
+                    r#""exclude_pattern":null,"strict":true"#,
+                ),
+            ),
             ("uppercase sha256", mutate(sha, &sha.to_uppercase())),
             ("short sha256", mutate(sha, "e3b0")),
             ("padded outcome id", mutate(r#""id":"o7""#, r#""id":"o07""#)),
@@ -159,7 +166,7 @@ mod schema {
             ("negative hit", mutate("[0,1]", "[-1,1]")),
             (
                 "missing exclude_pattern",
-                mutate(r#""exclude_pattern":null,"#, ""),
+                mutate(r#","exclude_pattern":null"#, ""),
             ),
             ("missing span", mutate(r#""span":null,"#, "")),
             (
@@ -210,6 +217,25 @@ mod schema {
                 mutate(r#""App\\Foo::bar""#, r#""{closure}@/srv/app/Foo.php""#),
             ),
             (
+                "closure key naming another file",
+                mutate(r#""App\\Foo::bar""#, r#""{closure}@app/Bar.php:3-4""#),
+            ),
+            (
+                "main key with the absolute path in relative mode",
+                mutate(r#""App\\Foo::bar""#, r#""{main}@/srv/app/app/Foo.php""#),
+            ),
+            (
+                "anonymous class naming another file",
+                mutate(
+                    r#""App\\Foo::bar""#,
+                    r#""class@anonymous@app/Bar.php:3-9#1::run""#,
+                ),
+            ),
+            (
+                "closure ordinal zero",
+                mutate(r#""App\\Foo::bar""#, r#""{closure}@app/Foo.php:3-4#0""#),
+            ),
+            (
                 "members out of order",
                 mutate(
                     r#"{"schema":"opcov-report/1","#,
@@ -232,6 +258,29 @@ mod schema {
             assert_parser_rejects(name, &document);
         }
         assert_parser_rejects("trailing data", &format!("{EXAMPLE}{{}}"));
+    }
+
+    #[test]
+    fn every_vm_kind_and_keys_in_the_entry_file_are_accepted() {
+        let cases = [
+            mutate(r#""vm":"HYBRID""#, r#""vm":"TAILCALL""#),
+            mutate(r#""vm":"HYBRID""#, r#""vm":"CALL""#),
+            mutate(r#""App\\Foo::bar""#, r#""{closure}@app/Foo.php:3-4#1""#),
+            mutate(r#""App\\Foo::bar""#, r#""{main}@app/Foo.php""#),
+            mutate(
+                r#""App\\Foo::bar""#,
+                r#""class@anonymous@app/Foo.php:3-9#2::$v::get""#,
+            ),
+        ];
+        for document in cases {
+            assert!(schema_accepts(&document), "the schema accepts {document}");
+            let report = Report::read(document.as_bytes()).unwrap();
+            assert_eq!(
+                String::from_utf8(bytes(&report)).unwrap(),
+                document,
+                "round trip is byte-identical"
+            );
+        }
     }
 
     #[test]

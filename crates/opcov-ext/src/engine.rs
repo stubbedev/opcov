@@ -8,6 +8,7 @@ use std::{
 use opcov_core::{
     cfg::{Analysis, FunctionKey, Line},
     filter::{Selection, SkipReason},
+    report::{Settings, Sha256},
 };
 use opcov_sys::{zend_op, zend_op_array};
 
@@ -326,11 +327,36 @@ pub(crate) enum FiredList {
     Stopped,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Source {
+    Hashed(Sha256),
+    Changed { first: Sha256, then: Sha256 },
+    Unreadable(String),
+}
+
+impl Source {
+    fn next(current: Option<Self>, compiled: Result<Sha256, String>) -> Self {
+        return match (current, compiled) {
+            (None, Ok(hash)) => Self::Hashed(hash),
+            (None | Some(Self::Hashed(_)), Err(error)) => Self::Unreadable(error),
+            (Some(Self::Hashed(first)), Ok(then)) if first != then => Self::Changed { first, then },
+            (Some(kept), _) => kept,
+        };
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct FileRecord {
     pub(crate) path: String,
+    pub(crate) source: Option<Source>,
     pub(crate) lines: BTreeSet<Line>,
     pub(crate) functions: BTreeMap<FunctionKey, Analysis>,
+}
+
+impl FileRecord {
+    pub(crate) fn compiled_from(&mut self, compiled: Result<Sha256, String>) {
+        self.source = Some(Source::next(self.source.take(), compiled));
+    }
 }
 
 #[derive(Debug, Default)]
@@ -347,6 +373,7 @@ impl Files {
         let id = FileId(self.records.len());
         self.records.push(FileRecord {
             path: path.to_owned(),
+            source: None,
             lines: BTreeSet::new(),
             functions: BTreeMap::new(),
         });
@@ -365,6 +392,52 @@ impl Files {
     pub(crate) fn find(&self, path: &str) -> Option<FileId> {
         return self.by_path.get(path).copied();
     }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (FileId, &FileRecord)> {
+        return self
+            .records
+            .iter()
+            .enumerate()
+            .map(|(index, record)| return (FileId(index), record));
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct AttributedTest {
+    pub(crate) name: String,
+    pub(crate) lines: Vec<(FileId, Line)>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct Attribution {
+    tests: Vec<AttributedTest>,
+    by_name: HashMap<String, usize>,
+}
+
+impl Attribution {
+    pub(crate) fn attribute(&mut self, name: &str, lines: &[(FileId, Line)]) {
+        let position = if let Some(&position) = self.by_name.get(name) {
+            position
+        } else {
+            self.tests.push(AttributedTest {
+                name: name.to_owned(),
+                lines: Vec::new(),
+            });
+            let position = self.tests.len().saturating_sub(1);
+            self.by_name.insert(name.to_owned(), position);
+            position
+        };
+        let Some(test) = self.tests.get_mut(position) else {
+            return;
+        };
+        test.lines.extend_from_slice(lines);
+        test.lines.sort_unstable();
+        test.lines.dedup();
+    }
+
+    pub(crate) fn tests(&self) -> &[AttributedTest] {
+        return &self.tests;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -377,6 +450,7 @@ pub(crate) enum Verdict {
 #[derive(Debug)]
 pub(crate) struct Request {
     pub(crate) selection: Option<Selection>,
+    pub(crate) settings: Option<Settings>,
     pub(crate) pattern: Option<Pattern>,
     pub(crate) decisions: BTreeMap<String, Verdict>,
     pub(crate) problem: Option<OffReason>,
@@ -405,6 +479,7 @@ pub(crate) struct Engine {
     pub(crate) request: Option<Request>,
     pub(crate) units: Units,
     pub(crate) files: Files,
+    pub(crate) attribution: Attribution,
     pub(crate) fired: Fired,
     pub(crate) collecting: bool,
     pub(crate) completed_cycles: u64,
@@ -420,6 +495,7 @@ impl Engine {
             request: None,
             units: Units::default(),
             files: Files::default(),
+            attribution: Attribution::default(),
             fired: Fired::default(),
             collecting: false,
             completed_cycles: 0,

@@ -8,7 +8,7 @@ use opcov_syntax::{OutcomeRef, SourceFile};
 use serde::Serialize;
 
 use crate::failure::Verdict;
-use crate::source::{SourceError, key_file, rebase};
+use crate::source::SourceError;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct UnmatchedOutcome<'r> {
@@ -84,8 +84,7 @@ fn diagnose_file<'r>(
     path: &'r SourcePath,
     file: &'r FileCoverage,
     source: &SourceFile,
-) -> Result<(FileDiagnosis<'r>, usize), SourceError> {
-    let key_file = key_file(path)?;
+) -> (FileDiagnosis<'r>, usize) {
     let mut diagnosis = FileDiagnosis {
         path,
         missing_functions: Vec::new(),
@@ -94,7 +93,7 @@ fn diagnose_file<'r>(
     let mut outcomes = 0_usize;
     for (key, function) in &file.functions {
         outcomes = outcomes.saturating_add(function.outcomes.as_slice().len());
-        let located = match source.function(&rebase(key, &key_file)) {
+        let located = match source.function(key) {
             Ok(located) => located,
             Err(error) => {
                 diagnosis.missing_functions.push(MissingFunction {
@@ -121,7 +120,7 @@ fn diagnose_file<'r>(
             });
         }
     }
-    return Ok((diagnosis, outcomes));
+    return (diagnosis, outcomes);
 }
 
 pub(crate) fn diagnose(
@@ -135,7 +134,7 @@ pub(crate) fn diagnose(
     };
     for (path, file) in report.files() {
         let source = load(path, file)?;
-        let (found, outcomes) = diagnose_file(path, file, &source)?;
+        let (found, outcomes) = diagnose_file(path, file, &source);
         diagnosis.outcomes = diagnosis.outcomes.saturating_add(outcomes);
         diagnosis.unmatched = diagnosis
             .unmatched

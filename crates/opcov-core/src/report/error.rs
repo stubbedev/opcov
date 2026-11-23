@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use super::model::{LoopId, OutcomeId, PathMode, SourcePath, Span, TestIndex, schema_id};
+use super::model::{LoopId, OutcomeId, PathMode, Root, SourcePath, Span, TestIndex, schema_id};
 use crate::cfg::{FunctionKey, KeyError, Line};
 use crate::kind::EdgeKind;
 
@@ -120,6 +120,18 @@ pub enum ModelError {
         index: TestIndex,
         tests: usize,
     },
+    OutsideRoot {
+        path: String,
+        root: Root,
+    },
+    KeyFileMismatch {
+        path: SourcePath,
+        key: Box<FunctionKey>,
+    },
+    HitOnNonExecutableLine {
+        line: Line,
+        test: TestIndex,
+    },
 }
 
 impl fmt::Display for ModelError {
@@ -188,6 +200,19 @@ impl fmt::Display for ModelError {
             } => write!(
                 formatter,
                 "{path}: {site} references test {index}, but the report has {tests} tests"
+            ),
+            Self::OutsideRoot { path, root } => write!(
+                formatter,
+                "measured file {path} lies outside the report root {}",
+                root.as_str()
+            ),
+            Self::KeyFileMismatch { path, key } => write!(
+                formatter,
+                "{path}: function key `{key}` names a different file than its entry"
+            ),
+            Self::HitOnNonExecutableLine { line, test } => write!(
+                formatter,
+                "test {test} hit line {line}, which is not an executable line of its file"
             ),
         };
     }

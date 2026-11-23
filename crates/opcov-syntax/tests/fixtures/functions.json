@@ -1,7 +1,6 @@
 [
   {
     "key": "{main}@functions.php",
-    "ordinal": 0,
     "span": [
       1,
       1,
@@ -12,7 +11,6 @@
   },
   {
     "key": "App\\Models\\User::$email::get",
-    "ordinal": 0,
     "span": [
       10,
       9,
@@ -23,7 +21,6 @@
   },
   {
     "key": "App\\Models\\User::$email::set",
-    "ordinal": 0,
     "span": [
       11,
       9,
@@ -64,7 +61,6 @@
   },
   {
     "key": "App\\Models\\User::__construct",
-    "ordinal": 0,
     "span": [
       16,
       5,
@@ -75,7 +71,6 @@
   },
   {
     "key": "App\\Models\\User::$name::set",
-    "ordinal": 0,
     "span": [
       18,
       31,
@@ -86,7 +81,6 @@
   },
   {
     "key": "App\\Models\\User::filter",
-    "ordinal": 0,
     "span": [
       22,
       5,
@@ -96,8 +90,7 @@
     "constructs": []
   },
   {
-    "key": "{fn}@functions.php:24-24",
-    "ordinal": 0,
+    "key": "{closure}@functions.php:24-24",
     "span": [
       24,
       29,
@@ -107,8 +100,7 @@
     "constructs": []
   },
   {
-    "key": "{fn}@functions.php:24-24",
-    "ordinal": 1,
+    "key": "{closure}@functions.php:24-24#1",
     "span": [
       24,
       69,
@@ -118,8 +110,7 @@
     "constructs": []
   },
   {
-    "key": "{fn}@functions.php:25-25",
-    "ordinal": 0,
+    "key": "{closure}@functions.php:25-25",
     "span": [
       25,
       19,
@@ -129,8 +120,7 @@
     "constructs": []
   },
   {
-    "key": "{fn}@functions.php:25-25",
-    "ordinal": 1,
+    "key": "{closure}@functions.php:25-25#1",
     "span": [
       25,
       30,
@@ -171,7 +161,6 @@
   },
   {
     "key": "{closure}@functions.php:26-28",
-    "ordinal": 0,
     "span": [
       26,
       20,
@@ -211,8 +200,7 @@
     ]
   },
   {
-    "key": "{fn}@functions.php:29-30",
-    "ordinal": 0,
+    "key": "{closure}@functions.php:29-30",
     "span": [
       29,
       32,
@@ -223,7 +211,6 @@
   },
   {
     "key": "App\\Models\\Shape::area",
-    "ordinal": 0,
     "span": [
       37,
       5,
@@ -234,7 +221,6 @@
   },
   {
     "key": "App\\Models\\Greets::greet",
-    "ordinal": 0,
     "span": [
       42,
       5,
@@ -275,7 +261,6 @@
   },
   {
     "key": "App\\Models\\Suit::color",
-    "ordinal": 0,
     "span": [
       52,
       5,
@@ -316,7 +301,6 @@
   },
   {
     "key": "App\\Models\\helper",
-    "ordinal": 0,
     "span": [
       58,
       1,
@@ -327,7 +311,6 @@
   },
   {
     "key": "class@anonymous@functions.php:63-63::run",
-    "ordinal": 0,
     "span": [
       63,
       22,
@@ -367,8 +350,7 @@
     ]
   },
   {
-    "key": "class@anonymous@functions.php:63-63::run",
-    "ordinal": 1,
+    "key": "class@anonymous@functions.php:63-63#1::run",
     "span": [
       63,
       88,

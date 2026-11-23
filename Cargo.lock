@@ -1074,7 +1074,6 @@ dependencies = [
  "roxmltree",
  "serde",
  "serde_json",
- "sha2",
 ]
 
 [[package]]
@@ -1085,6 +1084,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

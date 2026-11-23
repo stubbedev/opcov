@@ -1,4 +1,5 @@
 #include "shim.h"
+#include "php_main.h"
 
 const char opcov_module_build_id[] = ZEND_MODULE_BUILD_ID;
 
@@ -78,6 +79,33 @@ bool opcov_parse_array(zend_execute_data *execute_data, HashTable **array)
 	return true;
 }
 
+bool opcov_parse_optional_string(zend_execute_data *execute_data, const char **str, size_t *len)
+{
+	char *value = NULL;
+	size_t length = 0;
+	ZEND_PARSE_PARAMETERS_START(0, 1)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_STRING_OR_NULL(value, length)
+	ZEND_PARSE_PARAMETERS_END_EX(return false);
+	*str = value;
+	*len = length;
+	return true;
+}
+
+bool opcov_parse_path_and_array(zend_execute_data *execute_data, const char **path, size_t *len, HashTable **array)
+{
+	char *value;
+	HashTable *options = NULL;
+	ZEND_PARSE_PARAMETERS_START(1, 2)
+		Z_PARAM_PATH(value, *len)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_ARRAY_HT(options)
+	ZEND_PARSE_PARAMETERS_END_EX(return false);
+	*path = value;
+	*array = options;
+	return true;
+}
+
 bool opcov_is_user_code(const zend_function *function)
 {
 	return ZEND_USER_CODE(function->type);
@@ -137,6 +165,55 @@ zval *opcov_array_value_at(HashTable *array, uint32_t index)
 	}
 	ZVAL_DEREF(value);
 	return value;
+}
+
+bool opcov_array_entry_at(HashTable *array, uint32_t index, zend_string **key, zend_ulong *number, zval **value)
+{
+	zval *found;
+	if (HT_IS_PACKED(array)) {
+		found = array->arPacked + index;
+		*key = NULL;
+		*number = index;
+	} else {
+		Bucket *bucket = array->arData + index;
+		found = &bucket->val;
+		*key = bucket->key;
+		*number = bucket->h;
+	}
+	if (Z_TYPE_P(found) == IS_UNDEF) {
+		return false;
+	}
+	ZVAL_DEREF(found);
+	*value = found;
+	return true;
+}
+
+bool opcov_read_bool(const zval *value, bool *flag)
+{
+	if (Z_TYPE_P(value) == IS_TRUE) {
+		*flag = true;
+		return true;
+	}
+	if (Z_TYPE_P(value) == IS_FALSE) {
+		*flag = false;
+		return true;
+	}
+	return false;
+}
+
+const char *opcov_type_name(const zval *value)
+{
+	return zend_zval_value_name(value);
+}
+
+const char *opcov_getcwd(char *buffer, size_t size)
+{
+	return VCWD_GETCWD(buffer, size);
+}
+
+const char *opcov_php_version(void)
+{
+	return php_version();
 }
 
 bool opcov_read_string(const zval *value, const char **str, size_t *len)

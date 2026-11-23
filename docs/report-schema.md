@@ -11,7 +11,7 @@ The schema id is `opcov-report/1`. The JSON Schema (draft 2020-12) is
 {
   "schema": "opcov-report/1",
   "generator": {"opcov": "1.0.0", "php": "8.5.12", "zts": true, "vm": "HYBRID"},
-  "settings": {"collect_paths": ["app"], "exclude_paths": [], "exclude_pattern": null, "strict": true},
+  "settings": {"collect_paths": ["app"], "exclude_paths": [], "exclude_pattern": null},
   "paths": {"mode": "relative", "root": "/srv/app"},
   "tests": ["Tests\\Unit\\FooTest::test_bar", "Tests\\Unit\\FooTest::test_baz"],
   "files": {
@@ -58,7 +58,7 @@ newline.
 | `opcov` | string | Version of the opcov extension that collected the data. |
 | `php` | string | PHP version, as `PHP_VERSION` reports it. |
 | `zts` | boolean | Whether PHP was built thread-safe. |
-| `vm` | `"CALL"`, `"SWITCH"`, `"GOTO"` or `"HYBRID"` | The Zend VM kind PHP was built with. |
+| `vm` | `"CALL"`, `"SWITCH"`, `"GOTO"`, `"HYBRID"` or `"TAILCALL"` | The Zend VM kind PHP was built with (`TAILCALL` is what clang builds of PHP 8.5 and later use). |
 
 Outcome ids are derived from the opcodes PHP compiled, which depend on the PHP
 build and the opcov version, so reports with different generators are never
@@ -68,10 +68,9 @@ merged.
 
 | Member | Type | Meaning |
 |---|---|---|
-| `collect_paths` | array of strings | `opcov.collect_paths`, as a sorted set. |
-| `exclude_paths` | array of strings | `opcov.exclude_paths`, as a sorted set. |
+| `collect_paths` | array of strings | The entries of `opcov.collect_paths` as configured (a listfile is expanded to its entries; entries are not resolved), as a sorted set. |
+| `exclude_paths` | array of strings | The entries of `opcov.exclude_paths`, recorded the same way. |
 | `exclude_pattern` | string or `null` | `opcov.exclude_pattern`, or `null` when unset. |
-| `strict` | boolean | The collector's strict flag, recorded as the producer set it. |
 
 `exclude_paths` and `exclude_pattern` are recorded next to `collect_paths`
 because together they decide which files a run measures; runs whose selections
@@ -102,18 +101,45 @@ array and fits in an unsigned 32-bit integer.
 
 | Member | Type | Meaning |
 |---|---|---|
-| `sha256` | string | SHA-256 of the measured source file, 64 lowercase hex digits, so a report never applies to a different version of the file. |
+| `sha256` | string | SHA-256 of the measured source as PHP compiled it, 64 lowercase hex digits, so a report never applies to a different version of the file. |
 | `lines` | object | Executable lines, keyed by line number (a decimal string without leading zeros), each mapped to the hit list of the tests that executed it. |
-| `functions` | object | Functions of the file, keyed by their stable function key: `Class::method`, `function`, `Class::$property::get` or `::set`, `{main}@<file>`, `{closure}@<file>:<start>-<end>`, `{fn}@<file>:<start>-<end>`, with `class@anonymous@<file>:<start>-<end>` as the class of an anonymous class. Keys are parsed into opcov's typed function key, so a malformed key is rejected. |
+| `functions` | object | Functions of the file, keyed by their stable function key (see below). Keys are parsed into opcov's typed function key, so a malformed key is rejected. |
 
 Every executable line, outcome and loop is present, including the ones nothing
 hit: an empty hit list means "uncovered".
+
+### Function keys
+
+| Key | Function |
+|---|---|
+| `{main}@<file>` | the top-level code of the file |
+| `function` | a function, with its namespace: `App\Support\helper` |
+| `Class::method` | a method, with the class's namespace |
+| `Class::$property::get`, `Class::$property::set` | a property hook |
+| `{closure}@<file>:<start>-<end>` | a closure or an arrow function declared on lines `<start>` to `<end>` |
+| `class@anonymous@<file>:<start>-<end>` | in place of `Class`: an anonymous class declared on lines `<start>` to `<end>` |
+
+- `<file>` is exactly the `files` key the function is listed under: relative to
+  `paths.root` in `relative` mode, absolute in `absolute` mode. A key that names
+  another file is rejected.
+- Closures and arrow functions share the `{closure}` form: PHP compiles both to
+  the same kind of function (`fn () => $x` and `function () { return $x; }`
+  produce the same opcodes and flags), so nothing that reads compiled code can
+  tell them apart.
+- When several closures (or several anonymous classes) of one file share the
+  same line span, all but the first carry `#<n>`, their rank in source order
+  among them, counted from 0 and written only from 1:
+  `{closure}@a.php:24-24` and `{closure}@a.php:24-24#1` for
+  `[fn () => 1, fn () => 2]`, `class@anonymous@a.php:3-9#1::run` for the run
+  method of the second anonymous class on lines 3-9. A nested declaration ranks
+  after the one that contains it. `#0` and numbers with leading zeros are
+  rejected.
 
 ### `files.<path>.functions.<key>`
 
 | Member | Type | Meaning |
 |---|---|---|
-| `span` | span or `null` | Source range of the function, or `null` when it is not known. |
+| `span` | span or `null` | Source range of the function, or `null` when it is not known. The extension writes `null`: it sees compiled code, which has no columns. Spans come from parsing the source (`opcov-syntax`) when a report is consumed, matched by function key. |
 | `outcomes` | array | Branch outcomes of the function, sorted by id. |
 | `loops` | array | Loops of the function, sorted by id. |
 
@@ -169,7 +195,9 @@ readers check and producers must emit:
   `lines` strictly ascending by number;
 - the keys of `functions` unique (any order is accepted; opcov writes them in
   the order of its typed function key: `{main}`, functions, methods, property
-  hooks, closures, arrow functions, each by its parts);
+  hooks, closures, each by its parts);
+- the `<file>` of every function key equal to the `files` key it is listed
+  under;
 - outcomes and loops strictly ascending by the number in their id;
 - every test index within the test table;
 - every `files` key relative in `relative` mode and absolute in `absolute` mode;

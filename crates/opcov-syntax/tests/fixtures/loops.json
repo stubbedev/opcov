@@ -1,7 +1,6 @@
 [
   {
     "key": "{main}@loops.php",
-    "ordinal": 0,
     "span": [
       1,
       1,
@@ -12,7 +11,6 @@
   },
   {
     "key": "loops",
-    "ordinal": 0,
     "span": [
       2,
       1,

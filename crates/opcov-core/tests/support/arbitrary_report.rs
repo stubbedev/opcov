@@ -211,7 +211,6 @@ pub(super) fn header(tests: Vec<String>) -> Header {
             collect_paths: BTreeSet::from(["src".to_owned()]),
             exclude_paths: BTreeSet::from(["src/generated".to_owned()]),
             exclude_pattern: Some("~Stub\\.php$~".to_owned()),
-            strict: true,
         },
         paths: PathBase::Relative(Root::new("/srv/app".to_owned()).unwrap()),
         tests: TestTable::new(tests).unwrap(),

@@ -14,7 +14,7 @@
                 <line number="28" hits="1" branch="false"/>
               </lines>
             </method>
-            <method name="{fn}@app/Foo.php:27-27" signature="" line-rate="1" branch-rate="1" complexity="0">
+            <method name="{closure}@app/Foo.php:27-27" signature="" line-rate="1" branch-rate="1" complexity="0">
               <lines>
                 <line number="27" hits="1" branch="false"/>
               </lines>

@@ -13,7 +13,7 @@ mod key {
     }
 
     fn path() -> impl Strategy<Value = String> {
-        return "/[a-z0-9:@$_. -]{0,12}\\.php";
+        return "/[a-z0-9:@$#_. -]{0,12}\\.php";
     }
 
     fn lines() -> impl Strategy<Value = LineSpan> {
@@ -23,12 +23,19 @@ mod key {
         });
     }
 
+    fn ordinal() -> impl Strategy<Value = u32> {
+        return prop_oneof![Just(0_u32), 1_u32..4, Just(u32::MAX)];
+    }
+
     fn class() -> impl Strategy<Value = ClassRef> {
         return prop_oneof![
             qualified_name().prop_map(|name| return ClassRef::Named(name.parse().unwrap())),
-            (path(), lines()).prop_map(|(file, lines)| return ClassRef::Anonymous {
-                file: file.parse().unwrap(),
-                lines
+            (path(), lines(), ordinal()).prop_map(|(file, lines, ordinal)| {
+                return ClassRef::Anonymous {
+                    file: file.parse().unwrap(),
+                    lines,
+                    ordinal,
+                };
             }),
         ];
     }
@@ -55,13 +62,12 @@ mod key {
                     property: property.parse().unwrap(),
                     hook,
                 }),
-            (path(), lines()).prop_map(|(file, lines)| return FunctionKey::Closure {
-                file: file.parse().unwrap(),
-                lines
-            }),
-            (path(), lines()).prop_map(|(file, lines)| return FunctionKey::ArrowFunction {
-                file: file.parse().unwrap(),
-                lines
+            (path(), lines(), ordinal()).prop_map(|(file, lines, ordinal)| {
+                return FunctionKey::Closure {
+                    file: file.parse().unwrap(),
+                    lines,
+                    ordinal,
+                };
             }),
         ];
     }
