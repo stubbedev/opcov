@@ -2,14 +2,12 @@
 
 ## What is versioned
 
-opcov has three version numbers, each following
-[Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) and each moving
-independently:
+opcov has two version numbers, each following
+[Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html):
 
 | Artifact | Version | Where it is defined |
 |---|---|---|
-| The extension (`opcov.so`) and the `opcov` CLI | `<major>.<minor>.<patch>`, one number for both | `[workspace.package] version` in `Cargo.toml`; a release is the tag `v<version>` |
-| The PHP package `opcov/phpunit` (PHPUnit and Pest integration) | its own `<major>.<minor>.<patch>` | not published yet (#9) |
+| The extension (`opcov.so`), the `opcov` CLI and the PHP package `opcov/phpunit` | `<major>.<minor>.<patch>`, one number for all three | `[workspace.package] version` in `Cargo.toml`; a release is the tag `v<version>`; the PHP package's version constant is checked against it by its own tests |
 | The report schema | `opcov-report/<major>` | `docs/report-schema.md`, section "Version policy" |
 
 For the extension and the CLI, a major version changes when an existing user
@@ -23,8 +21,10 @@ The report schema records only its major version; additive changes keep it, and
 readers reject a major version they do not know. The schema version does not
 follow the extension's version. `docs/report-schema.md` holds the details.
 
-The extension and the PHP package will refuse each other across major
-versions. That handshake needs the PHP package (#9) and is not implemented yet.
+The PHP package checks the loaded extension at startup and refuses to run
+unless both are on the same compatibility line: the same major version, or
+the same minor version before 1.0.0. After writing a report it also checks
+that the file declares `opcov-report/1`.
 
 ## Supported PHP versions
 
