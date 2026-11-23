@@ -1,0 +1,29 @@
+{
+    "outcomes": [],
+    "loops": [
+        {
+            "function": "consume",
+            "line": 26,
+            "flag": "zero",
+            "hit": true
+        },
+        {
+            "function": "consume",
+            "line": 26,
+            "flag": "second",
+            "hit": true
+        },
+        {
+            "function": "numbers",
+            "line": 7,
+            "flag": "zero",
+            "hit": true
+        },
+        {
+            "function": "numbers",
+            "line": 7,
+            "flag": "second",
+            "hit": true
+        }
+    ]
+}

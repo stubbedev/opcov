@@ -1,0 +1,59 @@
+{
+    "outcomes": [],
+    "loops": [
+        {
+            "function": "iterate",
+            "line": 60,
+            "flag": "zero",
+            "hit": true
+        },
+        {
+            "function": "iterate",
+            "line": 60,
+            "flag": "second",
+            "hit": true
+        },
+        {
+            "function": "matrix",
+            "line": 43,
+            "flag": "zero",
+            "hit": false
+        },
+        {
+            "function": "matrix",
+            "line": 43,
+            "flag": "second",
+            "hit": true
+        },
+        {
+            "function": "matrix",
+            "line": 44,
+            "flag": "zero",
+            "hit": false
+        },
+        {
+            "function": "matrix",
+            "line": 44,
+            "flag": "second",
+            "hit": true
+        },
+        {
+            "function": "retry",
+            "line": 87,
+            "flag": "second",
+            "hit": true
+        },
+        {
+            "function": "search",
+            "line": 70,
+            "flag": "zero",
+            "hit": false
+        },
+        {
+            "function": "search",
+            "line": 70,
+            "flag": "second",
+            "hit": true
+        }
+    ]
+}

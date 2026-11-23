@@ -1,0 +1,17 @@
+{
+    "outcomes": [
+        {
+            "function": "render",
+            "line": 7,
+            "kind": "CoalesceFallback",
+            "hit": false
+        },
+        {
+            "function": "render",
+            "line": 7,
+            "kind": "CoalesceValue",
+            "hit": true
+        }
+    ],
+    "loops": []
+}

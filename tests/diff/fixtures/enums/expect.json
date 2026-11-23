@@ -1,0 +1,17 @@
+{
+    "outcomes": [
+        {
+            "function": "Suit::fromChar",
+            "line": 29,
+            "kind": "CoalesceFallback",
+            "hit": true
+        },
+        {
+            "function": "Suit::fromChar",
+            "line": 29,
+            "kind": "CoalesceValue",
+            "hit": true
+        }
+    ],
+    "loops": []
+}

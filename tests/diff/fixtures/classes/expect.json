@@ -1,0 +1,29 @@
+{
+    "outcomes": [
+        {
+            "function": "Point::origin",
+            "line": 41,
+            "kind": "CoalesceFallback",
+            "hit": true
+        },
+        {
+            "function": "Point::origin",
+            "line": 41,
+            "kind": "CoalesceValue",
+            "hit": false
+        },
+        {
+            "function": "Team::name",
+            "line": 61,
+            "kind": "CoalesceFallback",
+            "hit": false
+        },
+        {
+            "function": "Team::name",
+            "line": 61,
+            "kind": "CoalesceValue",
+            "hit": true
+        }
+    ],
+    "loops": []
+}

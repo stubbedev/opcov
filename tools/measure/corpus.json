@@ -1,0 +1,59 @@
+[
+    {
+        "name": "carbon",
+        "repository": "briannesbitt/Carbon",
+        "version": "3.15.1",
+        "commit": "ce0e5636fae7d1e99856eb70cae4c719a284aa08",
+        "measure": [
+            "src/Carbon"
+        ],
+        "exclude": [],
+        "runner": "vendor/bin/phpunit",
+        "configuration": "phpunit.xml.dist",
+        "require-dev": {},
+        "environment": {},
+        "arguments": [],
+        "xdebug": "lines"
+    },
+    {
+        "name": "symfony-string",
+        "repository": "symfony/string",
+        "version": "v8.1.10",
+        "commit": "6c6110979c0150393bbb336170e286d51ab4d76c",
+        "measure": [
+            "."
+        ],
+        "exclude": [
+            "Tests",
+            "vendor"
+        ],
+        "runner": "vendor/bin/phpunit",
+        "configuration": "phpunit.xml.dist",
+        "require-dev": {
+            "phpunit/phpunit": "^12.5",
+            "symfony/phpunit-bridge": "^8.0"
+        },
+        "environment": {},
+        "arguments": [],
+        "xdebug": "branch"
+    },
+    {
+        "name": "laravel-query-builder",
+        "repository": "spatie/laravel-query-builder",
+        "version": "7.3.9",
+        "commit": "cc3c04129a87bb910570d97d9c44fe0ca9ef6656",
+        "measure": [
+            "src"
+        ],
+        "exclude": [],
+        "runner": "vendor/bin/pest",
+        "configuration": "phpunit.xml.dist",
+        "require-dev": {},
+        "environment": {
+            "DB_CONNECTION": "sqlite",
+            "DB_DATABASE": ":memory:"
+        },
+        "arguments": [],
+        "xdebug": "lines"
+    }
+]

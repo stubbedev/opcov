@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+    echo "usage: tools/measure/measure parity|bench|lock [options]" >&2
+    exit 2
+fi
+command="$1"
+shift
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+php_attribute="${OPCOV_MEASURE_PHP:-php85}"
+cache="$root/target/measure-cache"
+environment="$cache/env-$php_attribute"
+
+nix build --impure --file "$root/tools/measure/env.nix" --argstr php "$php_attribute" --out-link "$environment"
+
+if [[ -n "${OPCOV_EXTENSION:-}" ]]; then
+    extension="$OPCOV_EXTENSION"
+else
+    target="$cache/cargo-$php_attribute"
+    nix develop "$root" --command env PHP_CONFIG="$environment/bin/php-config" CARGO_TARGET_DIR="$target" \
+        cargo build --locked --release --package opcov-ext
+    extension="$target/release/libopcov_ext.so"
+fi
+
+exec "$environment/bin/php" "$root/tools/measure/php/main.php" "$command" --env "$environment" --opcov "$extension" "$@"

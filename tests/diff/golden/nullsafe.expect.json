@@ -1,0 +1,29 @@
+{
+    "outcomes": [
+        {
+            "function": "f",
+            "line": 3,
+            "kind": "NullsafeValue",
+            "hit": true
+        },
+        {
+            "function": "f",
+            "line": 3,
+            "kind": "NullsafeNull",
+            "hit": true
+        },
+        {
+            "function": "f",
+            "line": 3,
+            "kind": "NullsafeValue",
+            "hit": true
+        },
+        {
+            "function": "f",
+            "line": 3,
+            "kind": "NullsafeNull",
+            "hit": false
+        }
+    ],
+    "loops": []
+}

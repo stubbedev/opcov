@@ -1,0 +1,176 @@
+{
+    "rules": [
+        {
+            "rule": "declarations-only-return",
+            "reason": "A file whose main code only declares compiles to declaration opcodes and a constant `return`; opcov reports no executable line for it (ADR 0003, docs/adr/0003-declarations-only-files.md), PCOV and Xdebug report the `return` line at the end of the file.",
+            "issue": "https://github.com/stubbedev/opcov/issues/13"
+        }
+    ],
+    "entries": [
+        {
+            "file": "fixtures/hooks/hooks.php",
+            "line": 17,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "A property hook that never ran is invisible to PCOV and Xdebug (neither walks property hooks); opcov reports its line as executable and not covered.",
+            "issue": "https://github.com/stubbedev/opcov/issues/5"
+        },
+        {
+            "file": "fixtures/hooks/hooks.php",
+            "line": 26,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Precision case: the unexecuted `default` arm of a multi-line match carries the expression's consuming opcode; Xdebug marks it covered, opcov does not probe consumer lines. PCOV does not see property hooks at all.",
+            "issue": "https://github.com/stubbedev/opcov/issues/5"
+        },
+        {
+            "file": "fixtures/matches/matches.php",
+            "line": 21,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Precision case: the unexecuted last arm of a multi-line match shares its line with the `return` that consumes the match result; PCOV and Xdebug mark it covered whenever the match ran, opcov does not probe consumer lines.",
+            "issue": "https://github.com/stubbedev/opcov/issues/5"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/CarbonInterval.php",
+            "line": 3681,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Precision case: the `: Carbon::make(...)` alternative of a multi-line ternary never ran; the line carries the `return` that consumes the ternary. PCOV and Xdebug mark the line covered whenever the expression ran; opcov does not probe consumer opcodes (docs/configuration.md, Executable lines).",
+            "issue": "https://github.com/stubbedev/opcov/issues/5"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/CarbonPeriod.php",
+            "line": 877,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Precision case: the `default` arm of a multi-line match never ran; the line carries the opcode that consumes the match result. PCOV and Xdebug mark the line covered whenever the expression ran; opcov does not probe consumer opcodes (docs/configuration.md, Executable lines).",
+            "issue": "https://github.com/stubbedev/opcov/issues/5"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/CarbonPeriod.php",
+            "line": 2744,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Precision case: the `: $this->resolveCarbon(...)` alternative of a multi-line ternary never ran; the line carries the `return` that consumes the ternary. PCOV and Xdebug mark the line covered whenever the expression ran; opcov does not probe consumer opcodes (docs/configuration.md, Executable lines).",
+            "issue": "https://github.com/stubbedev/opcov/issues/5"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/Laravel/ServiceProvider.php",
+            "line": 176,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Precision case: the last `||` operand of a multi-line condition never ran; the line carries the `return` that consumes the condition. PCOV and Xdebug mark the line covered whenever the expression ran; opcov does not probe consumer opcodes (docs/configuration.md, Executable lines).",
+            "issue": "https://github.com/stubbedev/opcov/issues/5"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/Traits/Converter.php",
+            "line": 92,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Precision case: the last alternative of a multi-line nested ternary never ran; the line carries the opcode that consumes its value. PCOV and Xdebug mark the line covered whenever the expression ran; opcov does not probe consumer opcodes (docs/configuration.md, Executable lines).",
+            "issue": "https://github.com/stubbedev/opcov/issues/5"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/Traits/Localization.php",
+            "line": 297,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Precision case: the `: []` alternative of a multi-line ternary never ran; the line carries only the value's consumer. PCOV and Xdebug mark the line covered whenever the expression ran; opcov does not probe consumer opcodes (docs/configuration.md, Executable lines).",
+            "issue": "https://github.com/stubbedev/opcov/issues/5"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/Traits/Localization.php",
+            "line": 300,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Precision case: the `: []` alternative of a multi-line ternary never ran; the line carries only the value's consumer. PCOV and Xdebug mark the line covered whenever the expression ran; opcov does not probe consumer opcodes (docs/configuration.md, Executable lines).",
+            "issue": "https://github.com/stubbedev/opcov/issues/5"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/Traits/Localization.php",
+            "line": 307,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Precision case: the `: []` alternative of a multi-line ternary never ran; the line carries only the value's consumer. PCOV and Xdebug mark the line covered whenever the expression ran; opcov does not probe consumer opcodes (docs/configuration.md, Executable lines).",
+            "issue": "https://github.com/stubbedev/opcov/issues/5"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/Traits/Localization.php",
+            "line": 310,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Precision case: the `: []` alternative of a multi-line ternary never ran; the line carries only the value's consumer. PCOV and Xdebug mark the line covered whenever the expression ran; opcov does not probe consumer opcodes (docs/configuration.md, Executable lines).",
+            "issue": "https://github.com/stubbedev/opcov/issues/5"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/Traits/Localization.php",
+            "line": 735,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Precision case: the `: $catalogue->get(...)` alternative (marked @codeCoverageIgnore upstream) never ran; the line carries the `return` that consumes the ternary. PCOV and Xdebug mark the line covered whenever the expression ran; opcov does not probe consumer opcodes (docs/configuration.md, Executable lines).",
+            "issue": "https://github.com/stubbedev/opcov/issues/5"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/Traits/Modifiers.php",
+            "line": 443,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Precision case: the `?: throw` fallback never ran; the line carries the `return` that consumes the short ternary. PCOV and Xdebug mark the line covered whenever the expression ran; opcov does not probe consumer opcodes (docs/configuration.md, Executable lines).",
+            "issue": "https://github.com/stubbedev/opcov/issues/5"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/WrapperClock.php",
+            "line": 112,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Precision case: the `: new Carbon(...)` alternative of a multi-line ternary never ran; the line carries the `return` that consumes the ternary. PCOV and Xdebug mark the line covered whenever the expression ran; opcov does not probe consumer opcodes (docs/configuration.md, Executable lines).",
+            "issue": "https://github.com/stubbedev/opcov/issues/5"
+        }
+    ]
+}

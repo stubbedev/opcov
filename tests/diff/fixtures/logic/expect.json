@@ -1,0 +1,53 @@
+{
+    "outcomes": [
+        {
+            "function": "describe",
+            "line": 19,
+            "kind": "TernaryFallback",
+            "hit": true
+        },
+        {
+            "function": "describe",
+            "line": 19,
+            "kind": "TernaryValue",
+            "hit": true
+        },
+        {
+            "function": "eligible",
+            "line": 7,
+            "kind": "CoalesceFallback",
+            "hit": true
+        },
+        {
+            "function": "eligible",
+            "line": 7,
+            "kind": "CoalesceValue",
+            "hit": true
+        },
+        {
+            "function": "eligible",
+            "line": 9,
+            "kind": "CoalesceFallback",
+            "hit": true
+        },
+        {
+            "function": "eligible",
+            "line": 9,
+            "kind": "CoalesceValue",
+            "hit": false
+        },
+        {
+            "function": "eligible",
+            "line": 13,
+            "kind": "TernaryFallback",
+            "hit": true
+        },
+        {
+            "function": "eligible",
+            "line": 13,
+            "kind": "TernaryValue",
+            "hit": false
+        }
+    ],
+    "loops": []
+}

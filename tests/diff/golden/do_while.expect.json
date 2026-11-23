@@ -1,0 +1,11 @@
+{
+    "outcomes": [],
+    "loops": [
+        {
+            "function": "f",
+            "line": 4,
+            "flag": "second",
+            "hit": true
+        }
+    ]
+}

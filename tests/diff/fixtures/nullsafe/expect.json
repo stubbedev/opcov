@@ -1,0 +1,77 @@
+{
+    "outcomes": [
+        {
+            "function": "city",
+            "line": 26,
+            "kind": "NullsafeValue",
+            "hit": true
+        },
+        {
+            "function": "city",
+            "line": 26,
+            "kind": "NullsafeNull",
+            "hit": true
+        },
+        {
+            "function": "city",
+            "line": 26,
+            "kind": "NullsafeValue",
+            "hit": true
+        },
+        {
+            "function": "city",
+            "line": 26,
+            "kind": "NullsafeNull",
+            "hit": false
+        },
+        {
+            "function": "city",
+            "line": 26,
+            "kind": "CoalesceFallback",
+            "hit": true
+        },
+        {
+            "function": "city",
+            "line": 26,
+            "kind": "CoalesceValue",
+            "hit": true
+        },
+        {
+            "function": "cityLength",
+            "line": 31,
+            "kind": "NullsafeValue",
+            "hit": true
+        },
+        {
+            "function": "cityLength",
+            "line": 31,
+            "kind": "NullsafeNull",
+            "hit": false
+        },
+        {
+            "function": "cityLength",
+            "line": 32,
+            "kind": "NullsafeValue",
+            "hit": false
+        },
+        {
+            "function": "cityLength",
+            "line": 32,
+            "kind": "NullsafeNull",
+            "hit": true
+        },
+        {
+            "function": "cityLength",
+            "line": 33,
+            "kind": "CoalesceFallback",
+            "hit": true
+        },
+        {
+            "function": "cityLength",
+            "line": 33,
+            "kind": "CoalesceValue",
+            "hit": false
+        }
+    ],
+    "loops": []
+}

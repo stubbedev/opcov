@@ -1,0 +1,17 @@
+{
+    "outcomes": [
+        {
+            "function": "f",
+            "line": 3,
+            "kind": "TernaryFallback",
+            "hit": true
+        },
+        {
+            "function": "f",
+            "line": 3,
+            "kind": "TernaryValue",
+            "hit": false
+        }
+    ],
+    "loops": []
+}
