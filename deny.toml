@@ -15,6 +15,7 @@ allow = [
   "Apache-2.0",
   "BSD-2-Clause",
   "BSD-3-Clause",
+  "CC0-1.0",
   "CC-BY-4.0",
   "ISC",
   "MIT",
@@ -22,11 +23,15 @@ allow = [
   "MPL-2.0",
   "Unicode-3.0",
   "Unlicense",
+  "Zlib",
 ]
 
 [bans]
 multiple-versions = "deny"
 wildcards = "deny"
+skip = [
+  { crate = "syn@2", reason = "mago-syntax 1.61 reaches syn 2 through strum_macros and tracing-attributes while bindgen and clap use syn 3" },
+]
 allow-wildcard-paths = true
 
 [sources]

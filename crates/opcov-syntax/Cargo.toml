@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[lib]
+doctest = false
+
 [dependencies]
 mago-allocator = "=1.61.0"
 mago-database = "=1.61.0"

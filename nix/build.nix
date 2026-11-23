@@ -4,7 +4,8 @@
 }: pkgs: let
   inherit (pkgs) lib;
   inherit (pkgs.stdenv) hostPlatform;
-  inherit ((lib.importTOML ../Cargo.toml).workspace.package) description repository version;
+  inherit ((lib.importTOML ../Cargo.toml).workspace.package) repository version;
+  description = "Opcode-level line, branch-outcome and loop coverage for PHP";
 
   rustToolchain = (rust-overlay.lib.mkRustBin {} pkgs).selectLatestNightlyWith (toolchain:
     toolchain.default.override {

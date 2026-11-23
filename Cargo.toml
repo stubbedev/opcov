@@ -5,7 +5,6 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-description = "Opcode-level line, branch-outcome and loop coverage for PHP"
 license = "MIT"
 repository = "https://github.com/stubbedev/opcov"
 publish = false
