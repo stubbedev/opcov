@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/stubbedev/opcov/main/schema/opcov-report.v1.json",
+  "title": "opcov report, schema opcov-report/1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "generator", "settings", "paths", "tests", "files"],
+  "properties": {
+    "schema": { "const": "opcov-report/1" },
+    "generator": { "$ref": "#/$defs/generator" },
+    "settings": { "$ref": "#/$defs/settings" },
+    "paths": { "$ref": "#/$defs/paths" },
+    "tests": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 4294967295,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "files": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/sourcePath" },
+      "additionalProperties": { "$ref": "#/$defs/file" }
+    }
+  },
+  "$defs": {
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["opcov", "php", "zts", "vm"],
+      "properties": {
+        "opcov": { "type": "string" },
+        "php": { "type": "string" },
+        "zts": { "type": "boolean" },
+        "vm": { "enum": ["CALL", "SWITCH", "GOTO", "HYBRID"] }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["collect_paths", "exclude_paths", "exclude_pattern", "strict"],
+      "properties": {
+        "collect_paths": { "$ref": "#/$defs/pathList" },
+        "exclude_paths": { "$ref": "#/$defs/pathList" },
+        "exclude_pattern": { "type": ["string", "null"] },
+        "strict": { "type": "boolean" }
+      }
+    },
+    "pathList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string" }
+    },
+    "paths": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "root"],
+          "properties": {
+            "mode": { "const": "relative" },
+            "root": {
+              "type": "string",
+              "pattern": "^/$|^(/([^/.][^/]*|\\.[^/.][^/]*|\\.\\.[^/]+))+$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": {
+            "mode": { "const": "absolute" }
+          }
+        }
+      ]
+    },
+    "sourcePath": {
+      "type": "string",
+      "pattern": "^/?([^/.][^/]*|\\.[^/.][^/]*|\\.\\.[^/]+)(/([^/.][^/]*|\\.[^/.][^/]*|\\.\\.[^/]+))*$"
+    },
+    "testIndex": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "hits": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/testIndex" }
+    },
+    "line": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "span": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/line" }
+        }
+      ]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "lines", "functions"],
+      "properties": {
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "lines": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[1-9][0-9]*$" },
+          "additionalProperties": { "$ref": "#/$defs/hits" }
+        },
+        "functions": {
+          "type": "object",
+          "propertyNames": { "minLength": 1 },
+          "additionalProperties": { "$ref": "#/$defs/function" }
+        }
+      }
+    },
+    "function": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["span", "outcomes", "loops"],
+      "properties": {
+        "span": { "$ref": "#/$defs/span" },
+        "outcomes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/outcome" }
+        },
+        "loops": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/loop" }
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "line", "span", "hits"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^o(0|[1-9][0-9]*)$" },
+        "kind": { "$ref": "#/$defs/outcomeKind" },
+        "line": { "$ref": "#/$defs/line" },
+        "span": { "$ref": "#/$defs/span" },
+        "hits": { "$ref": "#/$defs/hits" }
+      }
+    },
+    "outcomeKind": {
+      "oneOf": [
+        {
+          "enum": [
+            "IfTrue",
+            "IfFalse",
+            "ShortCircuit",
+            "Evaluate",
+            "CoalesceValue",
+            "CoalesceFallback",
+            "TernaryValue",
+            "TernaryFallback",
+            "NullsafeNull",
+            "NullsafeValue",
+            "MatchNoArm",
+            "SwitchDefault",
+            "LoopEnter",
+            "LoopSkip",
+            "LoopBack",
+            "LoopExit",
+            "Catch",
+            "Finally",
+            "Engine",
+            "Jump"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["MatchArm"],
+          "properties": {
+            "MatchArm": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["SwitchCase"],
+          "properties": {
+            "SwitchCase": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+          }
+        }
+      ]
+    },
+    "loop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "line", "zero", "second"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^l(0|[1-9][0-9]*)$" },
+        "kind": { "enum": ["Foreach", "For", "While", "DoWhile"] },
+        "line": { "$ref": "#/$defs/line" },
+        "zero": { "$ref": "#/$defs/hits" },
+        "second": { "$ref": "#/$defs/hits" }
+      }
+    }
+  }
+}
