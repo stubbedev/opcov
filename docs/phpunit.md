@@ -219,7 +219,7 @@ which keeps the cost per test proportional to the code it ran. Its name is
 
 The driver returns `true` from `canCollectBranchCoverage()`, so
 `--branch-coverage` (or `<coverage branchCoverage="true">`) makes PHPUnit's
-reports show opcov's branch outcomes ([branch-semantics.md](branch-semantics.md)):
+reports show opcov's branch outcomes and loop findings ([branch-semantics.md](branch-semantics.md)):
 
 ```sh
 vendor/bin/opcov-phpunit vendor/bin/phpunit --branch-coverage --coverage-html build/html
@@ -228,24 +228,30 @@ vendor/bin/opcov-phpunit vendor/bin/phpunit --branch-coverage --coverage-html bu
 php-code-coverage's branch model is Xdebug's: a function's `branches` are the
 blocks of its control-flow graph, and a report counts how many of them ran.
 opcov records edges instead (which way each decision went), so each **outcome**
-becomes one php-code-coverage branch, and the branch counts of a report are
-outcomes taken out of outcomes reported:
+becomes one php-code-coverage branch, and so does each **loop finding**
+([branch-semantics.md](branch-semantics.md#loop-findings-as-branches)); the
+branch counts of a report are outcomes and loop findings taken out of those
+reported:
 
-| php-code-coverage field | Value |
-|---|---|
-| branch id | the outcome's number (`o7` is branch `7`); ids are stable per function and ordered by site |
-| `op_start`, `op_end` | the outcome's `site`, the index of the branching opcode; the outcomes of one construct share it |
-| `line_start`, `line_end` | the outcome's `line` |
-| `hit` | `1` when the test took the outcome, else `0` |
-| `out`, `out_hit` | `[]`: an outcome is an edge, not a block with successors (the contract allows empty edges) |
+| php-code-coverage field | Outcome `o<k>` | Loop `l<n>` |
+|---|---|---|
+| branch id | `k`; ids are stable per function and ordered by site | `N + 2n` (ran zero times) and `N + 2n + 1` (ran two or more times), where `N` is one more than the function's largest outcome number (0 when it has none) |
+| `op_start`, `op_end` | the outcome's `site`, the index of the branching opcode; the outcomes of one construct share it | the loop's `site`, the opcode that tests the loop |
+| `line_start`, `line_end` | the outcome's `line` | the loop's `line` |
+| `hit` | `1` when the test took the outcome, else `0` | `1` when, in the test, the loop ran zero times (`N + 2n`) or one activation ran its body two or more times (`N + 2n + 1`), else `0` |
+| `out`, `out_hit` | `[]`: an outcome is an edge, not a block with successors (the contract allows empty edges) | `[]` |
 
 - Only outcomes that count toward a verdict become branches, as in
   `opcov convert`: `Engine` outcomes and the `LoopEnter`/`LoopSkip` outcomes of
   `foreach` are left out (an array never takes `LoopSkip`, so it would always
-  show as missed). Loop findings (`zero`, `second`) have no php-code-coverage
-  counterpart and are not reported; they are in the opcov report.
+  show as missed); whether a `foreach` ran zero times is its loop's "ran zero
+  times" branch. A loop whose `zero` is `null` (a `do-while`, `while (true)`,
+  `for (;;)`) has only the "ran two or more times" branch. A `foreach` over
+  `[]`, `[a]` and `[a, b]` in three tests takes all four of its branches:
+  `LoopExit` in each, `LoopBack` with one and two elements, "ran zero times"
+  with none and "ran two or more times" with two.
 - With every branch a single line, the HTML report colours each line with
-  outcomes by how many of them were taken and lists every outcome with its
+  branches by how many of them were taken and lists every branch with its
   tests in the file's branch view. It draws no decision markers and no
   control-flow graph, which need block successors (`out`).
 - The first report of a file carries every function's branches; later tests
@@ -303,13 +309,14 @@ How the data goes in:
   php-code-coverage therefore applies its own processing as it would to PCOV's
   data: only lines its static analysis considers executable are kept, and
   `@codeCoverageIgnore` annotations are honoured;
-- outcomes become branches exactly as in the driver
-  ([Branch coverage](#branch-coverage)), appended with the executable lines and
+- outcomes and loop findings become branches exactly as in the driver
+  ([Branch coverage](#branch-coverage)), taken by the tests in an outcome's
+  `hits` and a loop's `zero` and `second` lists, appended with the executable lines and
   then under each test that took them, so the `.cov` holds line and branch
   coverage as `--branch-coverage` would write it. With php-code-coverage 12.5,
   which has no branch-only mode, they go through
-  `RawCodeCoverageData::fromXdebugWithPathCoverage()` with no paths. Loop findings are not converted. The driver
-  name recorded in the format-4 build information is `opcov` with the version
+  `RawCodeCoverageData::fromXdebugWithPathCoverage()` with no paths. The
+  driver name recorded in the format-4 build information is `opcov` with the version
   from the report's `generator.opcov`.
 
 The output is written to a temporary file next to the target and renamed. Exit
