@@ -213,3 +213,32 @@ file.
 4. Validate reports from outside opcov against the JSON Schema. The Rust model
    in `opcov-core` (`opcov_core::report::Report::read`) checks the schema and
    every canonical-form rule above.
+
+## Merging
+
+`opcov merge <inputs>... -o <out>` combines the reports of parallel workers,
+for example one `<out>.<TEST_TOKEN>.json` per paratest worker:
+
+- The test tables are united, deduplicated and sorted, and every hit list is
+  re-indexed into the merged table.
+- Files, lines, functions, outcomes, loops and hit lists are united.
+- The output is canonical, so it is byte-for-byte the same for any order of the
+  inputs; merging is commutative, associative and idempotent.
+- The merge refuses, with exit code 1: reports whose `generator`, `settings` or
+  `paths` differ, naming the field and both values; a file whose `sha256`
+  differs between inputs, naming the path; a function, outcome or loop whose
+  model (span, kind, line) differs between inputs; an unknown schema version.
+- Invalid input, unreadable inputs and write errors exit with code 2. The
+  output is written to a temporary file next to it and renamed into place, so a
+  failed merge never leaves a partial report.
+
+Memory: the merge reads every input twice. The first pass reads only the
+headers, skipping the file entries without keeping them, and builds the merged
+test table. The second pass streams all inputs at once in path order: it holds
+one pending path per input and parses an input's next file entry only when the
+merge consumes it. Peak memory is the merged test table plus one index per
+input test, the largest merged file entry, one file entry being parsed, and per
+input one reader thread with its read buffer and one path. It grows with the
+number of inputs only through that per-input constant (one thread and one open
+file per input), never with the size of the inputs. Inputs must not change
+while a merge runs.
