@@ -1,0 +1,22 @@
+[package]
+name = "opcov-syntax"
+version.workspace = true
+edition.workspace = true
+description = "Maps opcode-level outcomes and function ranges to PHP source constructs"
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+mago-allocator = "=1.61.0"
+mago-database = "=1.61.0"
+mago-span = "=1.61.0"
+mago-syntax = "=1.61.0"
+opcov-core.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -1042,13 +1042,16 @@ dependencies = [
 name = "opcov-ext"
 version = "0.1.0"
 dependencies = [
+ "opcov-core",
  "opcov-sys",
+ "serde_json",
 ]
 
 [[package]]
 name = "opcov-syntax"
 version = "0.1.0"
 dependencies = [
+ "mago-allocator",
  "mago-database",
  "mago-span",
  "mago-syntax",

@@ -1,0 +1,237 @@
+[
+  {
+    "key": "{main}@arms.php",
+    "ordinal": 0,
+    "span": [
+      1,
+      1,
+      37,
+      1
+    ],
+    "constructs": []
+  },
+  {
+    "key": "arms",
+    "ordinal": 0,
+    "span": [
+      2,
+      1,
+      36,
+      2
+    ],
+    "constructs": [
+      {
+        "kind": "Match",
+        "span": [
+          4,
+          10,
+          8,
+          6
+        ],
+        "outcomes": [
+          {
+            "kind": {
+              "MatchArm": 0
+            },
+            "span": [
+              5,
+              9,
+              5,
+              22
+            ]
+          },
+          {
+            "kind": {
+              "MatchArm": 1
+            },
+            "span": [
+              6,
+              9,
+              6,
+              27
+            ]
+          },
+          {
+            "kind": {
+              "MatchArm": 2
+            },
+            "span": [
+              7,
+              9,
+              7,
+              20
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Match",
+        "span": [
+          9,
+          10,
+          12,
+          6
+        ],
+        "outcomes": [
+          {
+            "kind": {
+              "MatchArm": 0
+            },
+            "span": [
+              10,
+              9,
+              10,
+              24
+            ]
+          },
+          {
+            "kind": {
+              "MatchArm": 1
+            },
+            "span": [
+              11,
+              9,
+              11,
+              18
+            ]
+          },
+          {
+            "kind": "MatchNoArm",
+            "span": [
+              9,
+              10,
+              12,
+              6
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Switch",
+        "span": [
+          13,
+          5,
+          22,
+          6
+        ],
+        "outcomes": [
+          {
+            "kind": {
+              "SwitchCase": 0
+            },
+            "span": [
+              14,
+              9,
+              17,
+              19
+            ]
+          },
+          {
+            "kind": {
+              "SwitchCase": 1
+            },
+            "span": [
+              18,
+              9,
+              20,
+              22
+            ]
+          },
+          {
+            "kind": {
+              "SwitchCase": 2
+            },
+            "span": [
+              21,
+              9,
+              21,
+              16
+            ]
+          },
+          {
+            "kind": "SwitchDefault",
+            "span": [
+              18,
+              9,
+              18,
+              17
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Switch",
+        "span": [
+          23,
+          5,
+          27,
+          6
+        ],
+        "outcomes": [
+          {
+            "kind": {
+              "SwitchCase": 0
+            },
+            "span": [
+              24,
+              9,
+              26,
+              19
+            ]
+          },
+          {
+            "kind": "SwitchDefault",
+            "span": [
+              23,
+              5,
+              27,
+              6
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Switch",
+        "span": [
+          28,
+          5,
+          34,
+          6
+        ],
+        "outcomes": [
+          {
+            "kind": {
+              "SwitchCase": 0
+            },
+            "span": [
+              29,
+              9,
+              31,
+              19
+            ]
+          },
+          {
+            "kind": {
+              "SwitchCase": 1
+            },
+            "span": [
+              32,
+              9,
+              33,
+              22
+            ]
+          },
+          {
+            "kind": "SwitchDefault",
+            "span": [
+              28,
+              5,
+              34,
+              6
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

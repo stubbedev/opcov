@@ -1,0 +1,257 @@
+[
+  {
+    "key": "{main}@loops.php",
+    "ordinal": 0,
+    "span": [
+      1,
+      1,
+      29,
+      1
+    ],
+    "constructs": []
+  },
+  {
+    "key": "loops",
+    "ordinal": 0,
+    "span": [
+      2,
+      1,
+      28,
+      2
+    ],
+    "constructs": [
+      {
+        "kind": "For",
+        "span": [
+          4,
+          5,
+          6,
+          6
+        ],
+        "outcomes": [
+          {
+            "kind": "LoopBack",
+            "span": [
+              4,
+              5,
+              6,
+              6
+            ]
+          },
+          {
+            "kind": "LoopExit",
+            "span": [
+              4,
+              5,
+              6,
+              6
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "For",
+        "span": [
+          7,
+          5,
+          9,
+          6
+        ],
+        "outcomes": [
+          {
+            "kind": "LoopBack",
+            "span": [
+              7,
+              5,
+              9,
+              6
+            ]
+          },
+          {
+            "kind": "LoopExit",
+            "span": [
+              7,
+              5,
+              9,
+              6
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "While",
+        "span": [
+          10,
+          5,
+          12,
+          6
+        ],
+        "outcomes": [
+          {
+            "kind": "LoopBack",
+            "span": [
+              10,
+              5,
+              12,
+              6
+            ]
+          },
+          {
+            "kind": "LoopExit",
+            "span": [
+              10,
+              5,
+              12,
+              6
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "DoWhile",
+        "span": [
+          13,
+          5,
+          15,
+          22
+        ],
+        "outcomes": [
+          {
+            "kind": "LoopBack",
+            "span": [
+              13,
+              5,
+              15,
+              22
+            ]
+          },
+          {
+            "kind": "LoopExit",
+            "span": [
+              13,
+              5,
+              15,
+              22
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Foreach",
+        "span": [
+          16,
+          5,
+          18,
+          6
+        ],
+        "outcomes": [
+          {
+            "kind": "LoopEnter",
+            "span": [
+              16,
+              5,
+              18,
+              6
+            ]
+          },
+          {
+            "kind": "LoopSkip",
+            "span": [
+              16,
+              5,
+              18,
+              6
+            ]
+          },
+          {
+            "kind": "LoopBack",
+            "span": [
+              16,
+              5,
+              18,
+              6
+            ]
+          },
+          {
+            "kind": "LoopExit",
+            "span": [
+              16,
+              5,
+              18,
+              6
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Finally",
+        "span": [
+          19,
+          5,
+          27,
+          6
+        ],
+        "outcomes": [
+          {
+            "kind": "Finally",
+            "span": [
+              25,
+              7,
+              27,
+              6
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Catch",
+        "span": [
+          21,
+          7,
+          23,
+          6
+        ],
+        "outcomes": [
+          {
+            "kind": "Catch",
+            "span": [
+              21,
+              14,
+              21,
+              29
+            ]
+          },
+          {
+            "kind": "Catch",
+            "span": [
+              21,
+              32,
+              21,
+              49
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Catch",
+        "span": [
+          23,
+          7,
+          25,
+          6
+        ],
+        "outcomes": [
+          {
+            "kind": "Catch",
+            "span": [
+              23,
+              14,
+              23,
+              24
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

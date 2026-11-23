@@ -1,0 +1,489 @@
+[
+  {
+    "key": "{main}@branches.php",
+    "ordinal": 0,
+    "span": [
+      1,
+      1,
+      25,
+      1
+    ],
+    "constructs": []
+  },
+  {
+    "key": "branches",
+    "ordinal": 0,
+    "span": [
+      2,
+      1,
+      24,
+      2
+    ],
+    "constructs": [
+      {
+        "kind": "If",
+        "span": [
+          4,
+          9,
+          4,
+          11
+        ],
+        "outcomes": [
+          {
+            "kind": "IfTrue",
+            "span": [
+              4,
+              9,
+              4,
+              11
+            ]
+          },
+          {
+            "kind": "IfFalse",
+            "span": [
+              4,
+              9,
+              4,
+              11
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "ElseIf",
+        "span": [
+          6,
+          15,
+          6,
+          23
+        ],
+        "outcomes": [
+          {
+            "kind": "IfTrue",
+            "span": [
+              6,
+              15,
+              6,
+              23
+            ]
+          },
+          {
+            "kind": "IfFalse",
+            "span": [
+              6,
+              15,
+              6,
+              23
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "And",
+        "span": [
+          6,
+          15,
+          6,
+          23
+        ],
+        "outcomes": [
+          {
+            "kind": "Evaluate",
+            "span": [
+              6,
+              15,
+              6,
+              23
+            ]
+          },
+          {
+            "kind": "ShortCircuit",
+            "span": [
+              6,
+              15,
+              6,
+              23
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "If",
+        "span": [
+          11,
+          9,
+          11,
+          17
+        ],
+        "outcomes": [
+          {
+            "kind": "IfTrue",
+            "span": [
+              11,
+              9,
+              11,
+              17
+            ]
+          },
+          {
+            "kind": "IfFalse",
+            "span": [
+              11,
+              9,
+              11,
+              17
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Or",
+        "span": [
+          11,
+          9,
+          11,
+          17
+        ],
+        "outcomes": [
+          {
+            "kind": "Evaluate",
+            "span": [
+              11,
+              9,
+              11,
+              17
+            ]
+          },
+          {
+            "kind": "ShortCircuit",
+            "span": [
+              11,
+              9,
+              11,
+              17
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Ternary",
+        "span": [
+          14,
+          10,
+          14,
+          22
+        ],
+        "outcomes": [
+          {
+            "kind": "IfTrue",
+            "span": [
+              14,
+              10,
+              14,
+              22
+            ]
+          },
+          {
+            "kind": "IfFalse",
+            "span": [
+              14,
+              10,
+              14,
+              22
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "ShortTernary",
+        "span": [
+          15,
+          10,
+          15,
+          18
+        ],
+        "outcomes": [
+          {
+            "kind": "TernaryValue",
+            "span": [
+              15,
+              10,
+              15,
+              18
+            ]
+          },
+          {
+            "kind": "TernaryFallback",
+            "span": [
+              15,
+              10,
+              15,
+              18
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Coalesce",
+        "span": [
+          16,
+          10,
+          16,
+          24
+        ],
+        "outcomes": [
+          {
+            "kind": "CoalesceValue",
+            "span": [
+              16,
+              10,
+              16,
+              24
+            ]
+          },
+          {
+            "kind": "CoalesceFallback",
+            "span": [
+              16,
+              10,
+              16,
+              24
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Coalesce",
+        "span": [
+          16,
+          16,
+          16,
+          24
+        ],
+        "outcomes": [
+          {
+            "kind": "CoalesceValue",
+            "span": [
+              16,
+              16,
+              16,
+              24
+            ]
+          },
+          {
+            "kind": "CoalesceFallback",
+            "span": [
+              16,
+              16,
+              16,
+              24
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "CoalesceAssign",
+        "span": [
+          17,
+          5,
+          17,
+          14
+        ],
+        "outcomes": [
+          {
+            "kind": "CoalesceValue",
+            "span": [
+              17,
+              5,
+              17,
+              14
+            ]
+          },
+          {
+            "kind": "CoalesceFallback",
+            "span": [
+              17,
+              5,
+              17,
+              14
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "NullsafeProperty",
+        "span": [
+          18,
+          10,
+          18,
+          16
+        ],
+        "outcomes": [
+          {
+            "kind": "NullsafeValue",
+            "span": [
+              18,
+              10,
+              18,
+              16
+            ]
+          },
+          {
+            "kind": "NullsafeNull",
+            "span": [
+              18,
+              10,
+              18,
+              16
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "NullsafeMethodCall",
+        "span": [
+          18,
+          10,
+          18,
+          22
+        ],
+        "outcomes": [
+          {
+            "kind": "NullsafeValue",
+            "span": [
+              18,
+              10,
+              18,
+              22
+            ]
+          },
+          {
+            "kind": "NullsafeNull",
+            "span": [
+              18,
+              10,
+              18,
+              22
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "LogicalOr",
+        "span": [
+          19,
+          11,
+          19,
+          28
+        ],
+        "outcomes": [
+          {
+            "kind": "Evaluate",
+            "span": [
+              19,
+              11,
+              19,
+              28
+            ]
+          },
+          {
+            "kind": "ShortCircuit",
+            "span": [
+              19,
+              11,
+              19,
+              28
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "LogicalAnd",
+        "span": [
+          19,
+          12,
+          19,
+          21
+        ],
+        "outcomes": [
+          {
+            "kind": "Evaluate",
+            "span": [
+              19,
+              12,
+              19,
+              21
+            ]
+          },
+          {
+            "kind": "ShortCircuit",
+            "span": [
+              19,
+              12,
+              19,
+              21
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Ternary",
+        "span": [
+          20,
+          10,
+          22,
+          12
+        ],
+        "outcomes": [
+          {
+            "kind": "IfTrue",
+            "span": [
+              20,
+              10,
+              22,
+              12
+            ]
+          },
+          {
+            "kind": "IfFalse",
+            "span": [
+              20,
+              10,
+              22,
+              12
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Ternary",
+        "span": [
+          21,
+          12,
+          21,
+          22
+        ],
+        "outcomes": [
+          {
+            "kind": "IfTrue",
+            "span": [
+              21,
+              12,
+              21,
+              22
+            ]
+          },
+          {
+            "kind": "IfFalse",
+            "span": [
+              21,
+              12,
+              21,
+              22
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

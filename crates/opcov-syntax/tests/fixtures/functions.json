@@ -1,0 +1,380 @@
+[
+  {
+    "key": "{main}@functions.php",
+    "ordinal": 0,
+    "span": [
+      1,
+      1,
+      64,
+      1
+    ],
+    "constructs": []
+  },
+  {
+    "key": "App\\Models\\User::$email::get",
+    "ordinal": 0,
+    "span": [
+      10,
+      9,
+      10,
+      41
+    ],
+    "constructs": []
+  },
+  {
+    "key": "App\\Models\\User::$email::set",
+    "ordinal": 0,
+    "span": [
+      11,
+      9,
+      13,
+      10
+    ],
+    "constructs": [
+      {
+        "kind": "ShortTernary",
+        "span": [
+          12,
+          28,
+          12,
+          44
+        ],
+        "outcomes": [
+          {
+            "kind": "TernaryValue",
+            "span": [
+              12,
+              28,
+              12,
+              44
+            ]
+          },
+          {
+            "kind": "TernaryFallback",
+            "span": [
+              12,
+              28,
+              12,
+              44
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "key": "App\\Models\\User::__construct",
+    "ordinal": 0,
+    "span": [
+      16,
+      5,
+      20,
+      6
+    ],
+    "constructs": []
+  },
+  {
+    "key": "App\\Models\\User::$name::set",
+    "ordinal": 0,
+    "span": [
+      18,
+      31,
+      18,
+      51
+    ],
+    "constructs": []
+  },
+  {
+    "key": "App\\Models\\User::filter",
+    "ordinal": 0,
+    "span": [
+      22,
+      5,
+      32,
+      6
+    ],
+    "constructs": []
+  },
+  {
+    "key": "{fn}@functions.php:24-24",
+    "ordinal": 0,
+    "span": [
+      24,
+      29,
+      24,
+      46
+    ],
+    "constructs": []
+  },
+  {
+    "key": "{fn}@functions.php:24-24",
+    "ordinal": 1,
+    "span": [
+      24,
+      69,
+      24,
+      86
+    ],
+    "constructs": []
+  },
+  {
+    "key": "{fn}@functions.php:25-25",
+    "ordinal": 0,
+    "span": [
+      25,
+      19,
+      25,
+      49
+    ],
+    "constructs": []
+  },
+  {
+    "key": "{fn}@functions.php:25-25",
+    "ordinal": 1,
+    "span": [
+      25,
+      30,
+      25,
+      49
+    ],
+    "constructs": [
+      {
+        "kind": "Coalesce",
+        "span": [
+          25,
+          41,
+          25,
+          49
+        ],
+        "outcomes": [
+          {
+            "kind": "CoalesceValue",
+            "span": [
+              25,
+              41,
+              25,
+              49
+            ]
+          },
+          {
+            "kind": "CoalesceFallback",
+            "span": [
+              25,
+              41,
+              25,
+              49
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "key": "{closure}@functions.php:26-28",
+    "ordinal": 0,
+    "span": [
+      26,
+      20,
+      28,
+      10
+    ],
+    "constructs": [
+      {
+        "kind": "ShortTernary",
+        "span": [
+          27,
+          20,
+          27,
+          32
+        ],
+        "outcomes": [
+          {
+            "kind": "TernaryValue",
+            "span": [
+              27,
+              20,
+              27,
+              32
+            ]
+          },
+          {
+            "kind": "TernaryFallback",
+            "span": [
+              27,
+              20,
+              27,
+              32
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "key": "{fn}@functions.php:29-30",
+    "ordinal": 0,
+    "span": [
+      29,
+      32,
+      30,
+      22
+    ],
+    "constructs": []
+  },
+  {
+    "key": "App\\Models\\Shape::area",
+    "ordinal": 0,
+    "span": [
+      37,
+      5,
+      37,
+      35
+    ],
+    "constructs": []
+  },
+  {
+    "key": "App\\Models\\Greets::greet",
+    "ordinal": 0,
+    "span": [
+      42,
+      5,
+      45,
+      6
+    ],
+    "constructs": [
+      {
+        "kind": "Coalesce",
+        "span": [
+          44,
+          16,
+          44,
+          42
+        ],
+        "outcomes": [
+          {
+            "kind": "CoalesceValue",
+            "span": [
+              44,
+              16,
+              44,
+              42
+            ]
+          },
+          {
+            "kind": "CoalesceFallback",
+            "span": [
+              44,
+              16,
+              44,
+              42
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "key": "App\\Models\\Suit::color",
+    "ordinal": 0,
+    "span": [
+      52,
+      5,
+      55,
+      6
+    ],
+    "constructs": [
+      {
+        "kind": "Ternary",
+        "span": [
+          54,
+          16,
+          54,
+          56
+        ],
+        "outcomes": [
+          {
+            "kind": "IfTrue",
+            "span": [
+              54,
+              16,
+              54,
+              56
+            ]
+          },
+          {
+            "kind": "IfFalse",
+            "span": [
+              54,
+              16,
+              54,
+              56
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "key": "App\\Models\\helper",
+    "ordinal": 0,
+    "span": [
+      58,
+      1,
+      61,
+      2
+    ],
+    "constructs": []
+  },
+  {
+    "key": "class@anonymous@functions.php:63-63::run",
+    "ordinal": 0,
+    "span": [
+      63,
+      22,
+      63,
+      62
+    ],
+    "constructs": [
+      {
+        "kind": "ShortTernary",
+        "span": [
+          63,
+          53,
+          63,
+          59
+        ],
+        "outcomes": [
+          {
+            "kind": "TernaryValue",
+            "span": [
+              63,
+              53,
+              63,
+              59
+            ]
+          },
+          {
+            "kind": "TernaryFallback",
+            "span": [
+              63,
+              53,
+              63,
+              59
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "key": "class@anonymous@functions.php:63-63::run",
+    "ordinal": 1,
+    "span": [
+      63,
+      88,
+      63,
+      123
+    ],
+    "constructs": []
+  }
+]

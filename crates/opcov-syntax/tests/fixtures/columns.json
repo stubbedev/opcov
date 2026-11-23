@@ -1,0 +1,170 @@
+[
+  {
+    "key": "{main}@columns.php",
+    "ordinal": 0,
+    "span": [
+      1,
+      1,
+      13,
+      1
+    ],
+    "constructs": []
+  },
+  {
+    "key": "columns",
+    "ordinal": 0,
+    "span": [
+      2,
+      1,
+      12,
+      2
+    ],
+    "constructs": [
+      {
+        "kind": "Coalesce",
+        "span": [
+          6,
+          15,
+          6,
+          26
+        ],
+        "outcomes": [
+          {
+            "kind": "CoalesceValue",
+            "span": [
+              6,
+              15,
+              6,
+              26
+            ]
+          },
+          {
+            "kind": "CoalesceFallback",
+            "span": [
+              6,
+              15,
+              6,
+              26
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "ShortTernary",
+        "span": [
+          9,
+          15,
+          9,
+          25
+        ],
+        "outcomes": [
+          {
+            "kind": "TernaryValue",
+            "span": [
+              9,
+              15,
+              9,
+              25
+            ]
+          },
+          {
+            "kind": "TernaryFallback",
+            "span": [
+              9,
+              15,
+              9,
+              25
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Coalesce",
+        "span": [
+          10,
+          21,
+          10,
+          31
+        ],
+        "outcomes": [
+          {
+            "kind": "CoalesceValue",
+            "span": [
+              10,
+              21,
+              10,
+              31
+            ]
+          },
+          {
+            "kind": "CoalesceFallback",
+            "span": [
+              10,
+              21,
+              10,
+              31
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Coalesce",
+        "span": [
+          10,
+          36,
+          10,
+          45
+        ],
+        "outcomes": [
+          {
+            "kind": "CoalesceValue",
+            "span": [
+              10,
+              36,
+              10,
+              45
+            ]
+          },
+          {
+            "kind": "CoalesceFallback",
+            "span": [
+              10,
+              36,
+              10,
+              45
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Coalesce",
+        "span": [
+          11,
+          12,
+          11,
+          37
+        ],
+        "outcomes": [
+          {
+            "kind": "CoalesceValue",
+            "span": [
+              11,
+              12,
+              11,
+              37
+            ]
+          },
+          {
+            "kind": "CoalesceFallback",
+            "span": [
+              11,
+              12,
+              11,
+              37
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]
