@@ -68,18 +68,29 @@ pub(crate) struct XmlWriter<W: Write> {
 }
 
 impl<W: Write> XmlWriter<W> {
-    pub(crate) fn document(
-        mut out: W,
-        doctype: Option<&str>,
-        body: impl FnOnce(&mut Self) -> Result<(), XmlError>,
-    ) -> Result<W, XmlError> {
+    pub(crate) fn begin(mut out: W, doctype: Option<&str>) -> Result<Self, XmlError> {
         out.write_all(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")?;
         if let Some(doctype) = doctype {
             writeln!(out, "{doctype}")?;
         }
-        let mut writer = Self { out, depth: 0 };
-        body(&mut writer)?;
-        return Ok(writer.out);
+        return Ok(Self { out, depth: 0 });
+    }
+
+    pub(crate) const fn fragment(out: W, depth: usize) -> Self {
+        return Self { out, depth };
+    }
+
+    pub(crate) const fn depth(&self) -> usize {
+        return self.depth;
+    }
+
+    pub(crate) fn finish(self) -> W {
+        return self.out;
+    }
+
+    pub(crate) fn raw(&mut self, bytes: &[u8]) -> Result<(), XmlError> {
+        self.out.write_all(bytes)?;
+        return Ok(());
     }
 
     fn indent(&mut self) -> Result<(), XmlError> {
@@ -102,20 +113,33 @@ impl<W: Write> XmlWriter<W> {
         return Ok(());
     }
 
+    pub(crate) fn open(
+        &mut self,
+        name: &'static str,
+        attributes: &[Attribute<'_>],
+    ) -> Result<(), XmlError> {
+        self.tag(name, attributes)?;
+        self.out.write_all(b">\n")?;
+        self.depth = self.depth.saturating_add(1);
+        return Ok(());
+    }
+
+    pub(crate) fn close(&mut self, name: &'static str) -> Result<(), XmlError> {
+        self.depth = self.depth.saturating_sub(1);
+        self.indent()?;
+        writeln!(self.out, "</{name}>")?;
+        return Ok(());
+    }
+
     pub(crate) fn element(
         &mut self,
         name: &'static str,
         attributes: &[Attribute<'_>],
         body: impl FnOnce(&mut Self) -> Result<(), XmlError>,
     ) -> Result<(), XmlError> {
-        self.tag(name, attributes)?;
-        self.out.write_all(b">\n")?;
-        self.depth = self.depth.saturating_add(1);
+        self.open(name, attributes)?;
         body(self)?;
-        self.depth = self.depth.saturating_sub(1);
-        self.indent()?;
-        writeln!(self.out, "</{name}>")?;
-        return Ok(());
+        return self.close(name);
     }
 
     pub(crate) fn empty(

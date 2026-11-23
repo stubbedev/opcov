@@ -1,8 +1,9 @@
 use std::io::Write;
 
-use opcov_core::report::{PathBase, Report};
+use opcov_core::report::PathBase;
 
-use crate::view::{FileView, LineView, Tally, Totals, Unit, file_view, line_totals};
+use super::{Context, ConvertError};
+use crate::view::{FileView, LineView, Tally, Totals, Unit, line_totals};
 use crate::xml::{Value, XmlError, XmlWriter};
 
 const DOCTYPE: &str =
@@ -118,66 +119,69 @@ fn class_element<W: Write>(
     );
 }
 
-pub(crate) fn write<W: Write>(report: &Report, out: W) -> Result<W, XmlError> {
-    let paths = &report.header().paths;
-    let views: Vec<FileView<'_>> = report
-        .files()
-        .iter()
-        .map(|(path, file)| return file_view(paths, path, file))
-        .collect();
+fn package_element<W: Write>(xml: &mut XmlWriter<W>, view: &FileView<'_>) -> Result<(), XmlError> {
+    let filename = view.path.as_str();
+    let (line_rate, branch_rate) = rates(view.totals(None));
+    return xml.element(
+        "package",
+        &[
+            ("name", Value::Text(filename)),
+            ("line-rate", Value::Text(&line_rate)),
+            ("branch-rate", Value::Text(&branch_rate)),
+            ("complexity", Value::Text(COMPLEXITY)),
+        ],
+        |xml| {
+            return xml.element("classes", &[], |xml| {
+                for unit in view.units() {
+                    class_element(xml, view, unit, filename)?;
+                }
+                return Ok(());
+            });
+        },
+    );
+}
+
+pub(super) fn write<W: Write>(context: &Context<'_>, out: W) -> Result<W, ConvertError> {
     let mut totals = Totals::default();
-    for view in &views {
-        totals.absorb(view.totals(None));
-    }
+    context.each(&|_, view, _| return Ok(view.totals(None)), &mut |file| {
+        totals.absorb(file);
+        return Ok(());
+    })?;
     let (line_rate, branch_rate) = rates(totals);
     let lines: Tally = totals.lines;
     let branches: Tally = totals.branches;
     let version = env!("CARGO_PKG_VERSION");
-    return XmlWriter::document(out, Some(DOCTYPE), |xml| {
-        return xml.element(
-            "coverage",
-            &[
-                ("line-rate", Value::Text(&line_rate)),
-                ("branch-rate", Value::Text(&branch_rate)),
-                ("lines-covered", Value::Display(&lines.covered)),
-                ("lines-valid", Value::Display(&lines.total)),
-                ("branches-covered", Value::Display(&branches.covered)),
-                ("branches-valid", Value::Display(&branches.total)),
-                ("complexity", Value::Text(COMPLEXITY)),
-                ("version", Value::Text(version)),
-                ("timestamp", Value::Text(TIMESTAMP)),
-            ],
-            |xml| {
-                if let PathBase::Relative(root) = paths {
-                    xml.element("sources", &[], |xml| {
-                        return xml.text_element("source", root.as_str());
-                    })?;
-                }
-                return xml.element("packages", &[], |xml| {
-                    for view in &views {
-                        let filename = view.path.as_str();
-                        let (line_rate, branch_rate) = rates(view.totals(None));
-                        xml.element(
-                            "package",
-                            &[
-                                ("name", Value::Text(filename)),
-                                ("line-rate", Value::Text(&line_rate)),
-                                ("branch-rate", Value::Text(&branch_rate)),
-                                ("complexity", Value::Text(COMPLEXITY)),
-                            ],
-                            |xml| {
-                                return xml.element("classes", &[], |xml| {
-                                    for unit in view.units() {
-                                        class_element(xml, view, unit, filename)?;
-                                    }
-                                    return Ok(());
-                                });
-                            },
-                        )?;
-                    }
-                    return Ok(());
-                });
-            },
-        );
-    });
+    let mut xml = XmlWriter::begin(out, Some(DOCTYPE))?;
+    xml.open(
+        "coverage",
+        &[
+            ("line-rate", Value::Text(&line_rate)),
+            ("branch-rate", Value::Text(&branch_rate)),
+            ("lines-covered", Value::Display(&lines.covered)),
+            ("lines-valid", Value::Display(&lines.total)),
+            ("branches-covered", Value::Display(&branches.covered)),
+            ("branches-valid", Value::Display(&branches.total)),
+            ("complexity", Value::Text(COMPLEXITY)),
+            ("version", Value::Text(version)),
+            ("timestamp", Value::Text(TIMESTAMP)),
+        ],
+    )?;
+    if let PathBase::Relative(root) = &context.header().paths {
+        xml.element("sources", &[], |xml| {
+            return xml.text_element("source", root.as_str());
+        })?;
+    }
+    xml.open("packages", &[])?;
+    let depth = xml.depth();
+    context.each(
+        &|_, view, _| {
+            let mut fragment = XmlWriter::fragment(Vec::new(), depth);
+            package_element(&mut fragment, view)?;
+            return Ok(fragment.finish());
+        },
+        &mut |bytes| return Ok(xml.raw(&bytes)?),
+    )?;
+    xml.close("packages")?;
+    xml.close("coverage")?;
+    return Ok(xml.finish());
 }

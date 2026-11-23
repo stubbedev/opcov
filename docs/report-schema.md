@@ -26,8 +26,8 @@ The schema id is `opcov-report/1`. The JSON Schema (draft 2020-12) is
             {"id": "o8", "site": 25, "kind": {"MatchArm": 2}, "line": 15, "span": null, "hits": []}
           ],
           "loops": [
-            {"id": "l1", "kind": "Foreach", "line": 18, "zero": [], "second": [1]},
-            {"id": "l2", "kind": "PostTest", "line": 20, "zero": null, "second": []}
+            {"id": "l1", "site": 29, "kind": "Foreach", "line": 18, "zero": [], "second": [1]},
+            {"id": "l2", "site": 33, "kind": "PostTest", "line": 20, "zero": null, "second": []}
           ]
         }
       }
@@ -197,6 +197,7 @@ never take `LoopSkip`.
 | Member | Type | Meaning |
 |---|---|---|
 | `id` | string | `l` followed by a decimal number without leading zeros, unique within the function; loops are numbered from `l0` in the order of their header block. |
+| `site` | integer | Index of the opcode that tests the loop, in the function's op array, from 0: the `FE_FETCH_R`/`FE_FETCH_RW` of a `foreach`, the conditional jump of `for`, `while` and `do-while`. It is the `site` of the loop's `LoopBack` outcome, stable for a given compiled function, and anchors the loop's two findings as branches where a format needs an opcode (see [branch-semantics.md](branch-semantics.md#loop-findings-as-branches)). |
 | `kind` | `"Foreach"`, `"PreTest"` or `"PostTest"` | The loop's shape in the compiled code: `foreach`; a loop that tests before the body (`for`, `while`); a loop that tests after it (`do-while`). Which source keyword it was comes from the source when a report is consumed (`opcov-syntax`). Loops built from `goto` have no shape and are not reported. |
 | `line` | integer | Line of the loop header, from 1. |
 | `zero` | hit list or `null` | Tests in which the loop ran zero times, or `null` when it cannot: a `do-while`, and a loop whose condition is a constant true (`while (true)`, `for (;;)`). |
@@ -293,7 +294,7 @@ for example one `<out>.<TEST_TOKEN>.json` per paratest worker:
 - The merge refuses, with exit code 1: reports whose `generator`, `settings` or
   `paths` differ, naming the field and both values; a file whose `sha256`
   differs between inputs, naming the path; a function, outcome or loop whose
-  model (span; site, kind, line; or whether `zero` is `null`) differs between
+  model (span; site, kind, line; or for a loop site, kind, line or whether `zero` is `null`) differs between
   inputs; an unknown schema version.
 - Invalid input, unreadable inputs and write errors exit with code 2. The
   output is written to a temporary file next to it and renamed into place, so a

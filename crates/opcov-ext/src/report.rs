@@ -1,18 +1,28 @@
-use std::{collections::BTreeMap, ffi::CStr, fmt};
+use std::{
+    collections::BTreeMap,
+    ffi::CStr,
+    fmt,
+    io::{self, Write},
+    path::Path,
+};
 
 use opcov_core::{
-    cfg::{FilePath, FunctionKey, KeyError, Line},
+    cfg::{FilePath, FunctionKey, KeyError, Line, LoopSite, LoopTest, OpIndex},
+    output::{AtomicWriteError, WriteFailure},
     report::{
-        FileCoverage, Function, Generator, Header, HitSet, IdSorted, Loop, MeasuredShape,
-        ModelError, Outcome, OutcomeKind, PathBase, Report, Sha256, SourcePath, TestIndex,
-        TestTable, VmKind, line_hits,
+        FileCoverage, Function, Generator, Header, HitSet, IdSorted, Loop, LoopId, MeasuredShape,
+        ModelError, Outcome, OutcomeKind, PathBase, ReportWriter, Sha256, SourcePath, TestIndex,
+        TestTable, VmKind, WriteError, line_hits,
     },
 };
 use opcov_sys::{ZTS, opcov_php_version, zend_vm_kind};
 
 use crate::{
     VERSION,
-    engine::{Covered, Engine, FileId, FileRecord, Files, FunctionId, FunctionRecord, Source},
+    engine::{
+        AttributedTest, Covered, Engine, FileId, FileRecord, Files, FunctionId, FunctionRecord,
+        Source,
+    },
 };
 
 #[derive(Debug)]
@@ -37,6 +47,11 @@ pub(crate) enum ReportError {
     VmKind(i32),
     PhpVersion,
     NotConfigured,
+    LoopWithoutTest {
+        function: FunctionKey,
+        id: LoopId,
+    },
+    Io(io::Error),
 }
 
 impl fmt::Display for ReportError {
@@ -59,6 +74,11 @@ impl fmt::Display for ReportError {
             Self::VmKind(raw) => write!(f, "the Zend VM kind {raw} is unknown to opcov"),
             Self::PhpVersion => f.write_str("the PHP version is not valid UTF-8"),
             Self::NotConfigured => f.write_str("no file selection is configured for this request"),
+            Self::LoopWithoutTest { function, id } => write!(
+                f,
+                "loop {id} of `{function}` has no planned test outcome to anchor its site"
+            ),
+            Self::Io(error) => write!(f, "{error}"),
         };
     }
 }
@@ -87,10 +107,26 @@ struct FunctionTests {
     second: BTreeMap<u32, Vec<TestIndex>>,
 }
 
+fn loop_site(record: &FunctionRecord, planned: &LoopSite) -> Result<OpIndex, ReportError> {
+    let (LoopTest::Foreach { back, .. }
+    | LoopTest::PreTest { back, .. }
+    | LoopTest::PostTest { back, .. }) = &planned.test;
+    return record
+        .plan
+        .outcome(*back)
+        .map(|outcome| return outcome.site)
+        .ok_or_else(|| {
+            return ReportError::LoopWithoutTest {
+                function: record.key.clone(),
+                id: planned.id,
+            };
+        });
+}
+
 fn function_model(
     record: &FunctionRecord,
     mut tests: FunctionTests,
-) -> Result<Function, ModelError> {
+) -> Result<Function, ReportError> {
     let outcomes = record
         .plan
         .outcomes()
@@ -122,13 +158,14 @@ fn function_model(
             let zero = hit_set(tests.zero.remove(&number).unwrap_or_default())?;
             return Ok(Loop::new(
                 planned.id,
+                loop_site(record, planned)?,
                 MeasuredShape::new(planned.test.shape())?,
                 planned.line,
                 zero_possible.then_some(zero),
                 hit_set(tests.second.remove(&number).unwrap_or_default())?,
             ));
         })
-        .collect::<Result<Vec<_>, ModelError>>()?;
+        .collect::<Result<Vec<_>, ReportError>>()?;
     return Ok(Function {
         span: None,
         outcomes: IdSorted::new(outcomes)?,
@@ -141,7 +178,7 @@ pub(crate) fn entry(
     record: &FileRecord,
     key_file: &FilePath,
     hits: &[(Covered, TestIndex)],
-) -> Result<Entry, ModelError> {
+) -> Result<Entry, ReportError> {
     let mut by_function: BTreeMap<FunctionId, FunctionTests> = BTreeMap::new();
     let mut lines = Vec::new();
     for &(covered, test) in hits {
@@ -229,41 +266,149 @@ fn hashed(record: &FileRecord) -> Result<Option<Sha256>, ReportError> {
     };
 }
 
-impl Engine {
-    pub(crate) fn report(&self, paths: PathBase) -> Result<Report, ReportError> {
-        let settings = self
-            .request
-            .as_ref()
-            .and_then(|request| return request.settings.clone())
-            .ok_or(ReportError::NotConfigured)?;
-        let attributed = self.attribution.tests();
-        let names: Vec<String> = attributed
-            .iter()
-            .map(|test| return test.name.clone())
-            .collect();
-        let (tests, indexes) = TestTable::from_unordered(&names)?;
-        let mut hits: BTreeMap<FileId, Vec<(Covered, TestIndex)>> = BTreeMap::new();
-        for (test, index) in attributed.iter().zip(indexes) {
-            for &covered in &test.covered {
-                let file = match covered {
-                    Covered::Line(file, _) => Some(file),
-                    Covered::Outcome(function, _)
-                    | Covered::Zero(function, _)
-                    | Covered::Second(function, _) => self
-                        .files
-                        .function(function)
-                        .map(|record| return record.file),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Owner {
+    File(FileId),
+    Function(FunctionId),
+}
+
+const fn owner(covered: Covered) -> Owner {
+    return match covered {
+        Covered::Line(file, _) => Owner::File(file),
+        Covered::Outcome(function, _)
+        | Covered::Zero(function, _)
+        | Covered::Second(function, _) => Owner::Function(function),
+    };
+}
+
+const BATCH_HITS: usize = 1 << 24;
+
+struct Attributed<'e> {
+    files: &'e Files,
+    ids: Vec<FileId>,
+    tests: &'e [AttributedTest],
+    indexes: Vec<TestIndex>,
+}
+
+impl Attributed<'_> {
+    fn slot(&self, owner: Owner) -> Option<usize> {
+        let file = match owner {
+            Owner::File(file) => file,
+            Owner::Function(function) => self.files.function(function)?.file,
+        };
+        return self.ids.binary_search(&file).ok();
+    }
+
+    fn runs(&self, mut visit: impl FnMut(usize, &[Covered], TestIndex)) {
+        for (test, &index) in self.tests.iter().zip(&self.indexes) {
+            for run in test
+                .covered
+                .chunk_by(|left, right| return owner(*left) == owner(*right))
+            {
+                let Some(&first) = run.first() else {
+                    continue;
                 };
-                if let Some(file) = file {
-                    hits.entry(file).or_default().push((covered, index));
+                if let Some(slot) = self.slot(owner(first)) {
+                    visit(slot, run, index);
                 }
             }
         }
-        let mut files = BTreeMap::new();
-        for (file, record) in self.files.iter() {
-            let file_hits = hits.remove(&file).unwrap_or_default();
+    }
+
+    fn counts(&self) -> Vec<usize> {
+        let mut counts = vec![0_usize; self.ids.len()];
+        self.runs(|slot, run, _| {
+            if let Some(count) = counts.get_mut(slot) {
+                *count = count.saturating_add(run.len());
+            }
+        });
+        return counts;
+    }
+
+    fn gather(&self, batch: &[Planned<'_>], counts: &[usize]) -> Vec<Vec<(Covered, TestIndex)>> {
+        let mut position = vec![None; self.ids.len()];
+        let mut buckets = Vec::with_capacity(batch.len());
+        for (at, planned) in batch.iter().enumerate() {
+            if let Some(marker) = position.get_mut(planned.slot) {
+                *marker = Some(at);
+            }
+            buckets.push(Vec::with_capacity(
+                counts.get(planned.slot).copied().unwrap_or_default(),
+            ));
+        }
+        self.runs(|slot, run, test| {
+            let bucket = position
+                .get(slot)
+                .copied()
+                .flatten()
+                .and_then(|at| return buckets.get_mut(at));
+            if let Some(bucket) = bucket {
+                bucket.extend(run.iter().map(|&covered| return (covered, test)));
+            }
+        });
+        return buckets;
+    }
+}
+
+struct Planned<'e> {
+    path: SourcePath,
+    slot: usize,
+    record: &'e FileRecord,
+    key_file: FilePath,
+    sha256: Sha256,
+}
+
+fn batch_lengths(sizes: impl IntoIterator<Item = usize>, budget: usize) -> Vec<usize> {
+    let mut lengths = Vec::new();
+    let mut length = 0_usize;
+    let mut total = 0_usize;
+    for size in sizes {
+        if length > 0 && total.saturating_add(size) > budget {
+            lengths.push(length);
+            length = 0;
+            total = 0;
+        }
+        length = length.saturating_add(1);
+        total = total.saturating_add(size);
+    }
+    if length > 0 {
+        lengths.push(length);
+    }
+    return lengths;
+}
+
+impl From<WriteError> for ReportError {
+    fn from(error: WriteError) -> Self {
+        return match error {
+            WriteError::Model(error) => Self::Model(*error),
+            WriteError::Io(error) => Self::Io(error),
+        };
+    }
+}
+
+pub(crate) fn write_failure(target: &Path, error: &AtomicWriteError<ReportError>) -> String {
+    let action = match &error.failure {
+        WriteFailure::Content(content) if !matches!(content, ReportError::Io(_)) => {
+            "cannot build the report for"
+        }
+        WriteFailure::Content(_) | WriteFailure::NoFileName { .. } | WriteFailure::Io(_) => {
+            "cannot write the report to"
+        }
+    };
+    return format!("{action} {}: {error}", target.display());
+}
+
+impl Engine {
+    fn plan<'e>(
+        &'e self,
+        paths: &PathBase,
+        counts: &[usize],
+    ) -> Result<Vec<Planned<'e>>, ReportError> {
+        let mut planned = Vec::new();
+        for (slot, (_, record)) in self.files.iter().enumerate() {
             let Some(sha256) = hashed(record)? else {
-                if record.lines.is_empty() && file_hits.is_empty() {
+                let hit = counts.get(slot).is_some_and(|&count| return count > 0);
+                if record.lines.is_empty() && !hit {
                     continue;
                 }
                 return Err(ReportError::SourceUnknown {
@@ -277,22 +422,99 @@ impl Engine {
                     error,
                 };
             })?;
-            let Entry { lines, functions } = entry(&self.files, record, &key_file, &file_hits)?;
-            files.insert(
+            planned.push(Planned {
                 path,
-                FileCoverage {
-                    sha256,
-                    lines,
-                    functions,
-                },
-            );
+                slot,
+                record,
+                key_file,
+                sha256,
+            });
         }
+        planned.sort_unstable_by(|left, right| return left.path.cmp(&right.path));
+        return Ok(planned);
+    }
+
+    pub(crate) fn write_report<W: Write>(&self, paths: PathBase, out: W) -> Result<W, ReportError> {
+        let settings = self
+            .request
+            .as_ref()
+            .and_then(|request| return request.settings.clone())
+            .ok_or(ReportError::NotConfigured)?;
+        let tests = self.attribution.tests();
+        let names: Vec<String> = tests.iter().map(|test| return test.name.clone()).collect();
+        let (table, indexes) = TestTable::from_unordered(&names)?;
+        drop(names);
+        let attributed = Attributed {
+            files: &self.files,
+            ids: self.files.iter().map(|(id, _)| return id).collect(),
+            tests,
+            indexes,
+        };
+        let counts = attributed.counts();
+        let planned = self.plan(&paths, &counts)?;
         let header = Header {
             generator: generator()?,
             settings,
             paths,
-            tests,
+            tests: table,
         };
-        return Ok(Report::new(header, files)?);
+        let mut writer = ReportWriter::begin(out, &header).map_err(ReportError::Io)?;
+        let sizes = planned
+            .iter()
+            .map(|file| return counts.get(file.slot).copied().unwrap_or_default());
+        let mut rest = planned.as_slice();
+        for length in batch_lengths(sizes, BATCH_HITS) {
+            let (batch, remaining) = rest.split_at(length.min(rest.len()));
+            rest = remaining;
+            let buckets = attributed.gather(batch, &counts);
+            for (file, hits) in batch.iter().zip(buckets) {
+                let Entry { lines, functions } =
+                    entry(&self.files, file.record, &file.key_file, &hits)?;
+                drop(hits);
+                writer.entry(
+                    &file.path,
+                    &FileCoverage {
+                        sha256: file.sha256,
+                        lines,
+                        functions,
+                    },
+                )?;
+            }
+        }
+        return writer.finish().map_err(ReportError::Io);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::batch_lengths;
+
+    #[test]
+    fn batches_stay_within_the_budget_and_keep_every_file() {
+        assert_eq!(
+            batch_lengths([3, 3, 3, 3], 6),
+            [2, 2],
+            "two files fit each batch"
+        );
+        assert_eq!(
+            batch_lengths([1, 2, 3], 6),
+            [3],
+            "everything fits one batch"
+        );
+        assert_eq!(batch_lengths([], 6), [0_usize; 0], "no files, no batches");
+    }
+
+    #[test]
+    fn a_file_larger_than_the_budget_gets_a_batch_of_its_own() {
+        assert_eq!(
+            batch_lengths([1, 10, 1], 4),
+            [1, 1, 1],
+            "the large file stands alone"
+        );
+        assert_eq!(
+            batch_lengths([0, 0, 9], 4),
+            [2, 1],
+            "empty files join the batch before"
+        );
     }
 }

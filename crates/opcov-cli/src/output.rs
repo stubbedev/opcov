@@ -1,9 +1,8 @@
 use std::fs::File;
-use std::io::{self, BufReader, BufWriter, Write};
+use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
 use opcov_core::output::{self, AtomicWriteError, WriteFailure};
-use opcov_core::report::Report;
 
 use crate::failure::Failure;
 
@@ -39,11 +38,4 @@ pub(crate) fn write_stdout(
         .map_err(|error| {
             return Failure::failed(format!("cannot write to standard output: {error}"));
         });
-}
-
-pub(crate) fn read_report(path: &Path) -> Result<Report, Failure> {
-    let file = File::open(path).map_err(|error| return Failure::io("open", path, &error))?;
-    return Report::read(BufReader::new(file)).map_err(|error| {
-        return Failure::failed(format!("cannot read report {}: {error}", path.display()));
-    });
 }

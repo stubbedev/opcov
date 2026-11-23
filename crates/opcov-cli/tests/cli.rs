@@ -17,3 +17,7 @@ mod diff;
 #[cfg(test)]
 #[path = "cli/doctor.rs"]
 mod doctor;
+
+#[cfg(test)]
+#[path = "cli/many.rs"]
+mod many;

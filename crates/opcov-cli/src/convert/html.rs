@@ -1,11 +1,11 @@
 use std::fmt;
 use std::io::{self, Write};
 
-use opcov_core::report::Report;
+use opcov_core::report::SourcePath;
 
-use super::ConvertError;
+use super::{Context, ConvertError};
 use crate::source::read_verified;
-use crate::view::{FileView, LineView, Tally, Totals, file_view};
+use crate::view::{FileView, LineView, Tally, Totals};
 
 const STYLE: &str = "body{font-family:system-ui,sans-serif;margin:1rem;color:#1f2328;background:#fff}\
 table{border-collapse:collapse}\
@@ -69,13 +69,13 @@ fn row_class(line: Option<&LineView<'_>>) -> &'static str {
 fn summary_row(
     out: &mut impl Write,
     index: usize,
-    file: &FileView<'_>,
+    path: &SourcePath,
     totals: Totals,
 ) -> io::Result<()> {
     return writeln!(
         out,
         "<tr><td><a href=\"#f{index}\">{}</a></td><td>{}</td><td>{}</td><td>{}</td></tr>",
-        Escaped(file.path.as_str()),
+        Escaped(path.as_str()),
         Share(totals.lines),
         Share(totals.branches),
         Share(totals.functions)
@@ -114,18 +114,17 @@ fn source_section(
     return writeln!(out, "</table></section>");
 }
 
-pub(crate) fn write<W: Write>(report: &Report, mut out: W) -> Result<W, ConvertError> {
-    let paths = &report.header().paths;
-    let mut pages = Vec::with_capacity(report.files().len());
-    for (path, file) in report.files() {
-        let source = read_verified(paths, path, file).map_err(ConvertError::Source)?;
-        let text = String::from_utf8_lossy(&source).into_owned();
-        pages.push((file_view(paths, path, file), text));
-    }
+pub(super) fn write<W: Write>(context: &Context<'_>, mut out: W) -> Result<W, ConvertError> {
+    let mut files: Vec<(SourcePath, Totals)> = Vec::new();
     let mut all = Totals::default();
-    for (view, _) in &pages {
-        all.absorb(view.totals(None));
-    }
+    context.each(
+        &|_, view, _| return Ok((view.path.clone(), view.totals(None))),
+        &mut |(path, totals)| {
+            all.absorb(totals);
+            files.push((path, totals));
+            return Ok(());
+        },
+    )?;
     writeln!(
         out,
         "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>opcov coverage</title><style>{STYLE}</style></head><body>"
@@ -141,13 +140,27 @@ pub(crate) fn write<W: Write>(report: &Report, mut out: W) -> Result<W, ConvertE
         out,
         "<table class=\"summary\"><thead><tr><th>File</th><th>Lines</th><th>Branches</th><th>Functions</th></tr></thead><tbody>"
     )?;
-    for (index, (view, _)) in pages.iter().enumerate() {
-        summary_row(&mut out, index, view, view.totals(None))?;
+    for (index, (path, totals)) in files.iter().enumerate() {
+        summary_row(&mut out, index, path, *totals)?;
     }
     writeln!(out, "</tbody></table>")?;
-    for (index, (view, text)) in pages.iter().enumerate() {
-        source_section(&mut out, index, view, text)?;
-    }
+    let paths = &context.header().paths;
+    context.each(
+        &|index, view, file| {
+            if files
+                .get(index)
+                .is_none_or(|(path, _)| return path != view.path)
+            {
+                return Err(context.changed());
+            }
+            let source = read_verified(paths, view.path, file).map_err(ConvertError::Source)?;
+            let text = String::from_utf8_lossy(&source);
+            let mut bytes = Vec::new();
+            source_section(&mut bytes, index, view, &text)?;
+            return Ok(bytes);
+        },
+        &mut |bytes| return Ok(out.write_all(&bytes)?),
+    )?;
     writeln!(out, "</body></html>")?;
     return Ok(out);
 }

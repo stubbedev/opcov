@@ -305,6 +305,28 @@ function at_least_once(int $n)
 `each_value([1, 2])` reports `second`. `at_least_once(2)` reports `second`;
 its `zero` is `null`.
 
+### Loop findings as branches
+
+One rule holds for every output: **each loop finding is a branch**. A loop
+contributes "ran two or more times" (taken by the tests in `second`) and,
+unless `zero` is `null`, "ran zero times" (taken by the tests in `zero`), next
+to the branches of its counting outcomes. The totals of branches and covered
+branches of a function are therefore the same in lcov, Clover, Cobertura,
+HTML and the PHPUnit 13 driver and `.cov` converter.
+
+Both findings are anchored at the loop's `site`, the opcode that tests the
+loop (the `FE_FETCH` of a `foreach`, the conditional jump of a `for`, `while`
+or `do-while`; the `site` of the loop's `LoopBack` outcome), and at its
+`line`:
+
+| Output | Loop `l<n>` of the function at position `i` in the file |
+|---|---|
+| lcov `BRDA` | block `2i + 1`; branch `2n` ran zero times, `2n + 1` ran two or more times |
+| Clover, Cobertura, HTML | two conditions on the loop's `line` |
+| php-code-coverage (driver and `.cov`) | branches `N + 2n` (ran zero times) and `N + 2n + 1` (two or more), where `N` is one more than the largest outcome number of the function (0 when it has no outcome); `op_start` = `op_end` = `site`, `line_start` = `line_end` = `line` |
+
+A finding whose `zero` is `null` is not a branch in any format.
+
 ## Executable lines
 
 The rules are in [configuration.md](configuration.md#executable-lines). Two

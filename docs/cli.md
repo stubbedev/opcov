@@ -8,15 +8,15 @@ and merges, converts and checks it. Every subcommand prints `--help`.
 | `opcov merge` | Merge the reports of parallel workers into one report. |
 | `opcov convert` | Write a report as lcov, Clover XML, Cobertura XML or HTML. |
 | `opcov gate` | Check the functions a change touches: uncovered lines, unseen outcomes, loops. |
-| `opcov doctor` | Diagnose a report: outcomes that match no source construct. |
+| `opcov doctor` | Check that a PHP binary can collect coverage with opcov, or with `--report` diagnose a report: outcomes that match no source construct. |
 
 ## Exit codes
 
-| Code | `merge` | `convert` | `gate` | `doctor` |
-|---|---|---|---|---|
-| 0 | merged | converted | pass: no findings | every outcome that counts toward verdicts has a source construct |
-| 1 | refused: the inputs do not merge (mismatching generator, settings, paths, file hash or model) | (not used) | findings | findings |
-| 2 | could not run | could not run | could not run | could not run |
+| Code | `merge` | `convert` | `gate` | `doctor` | `doctor --report` |
+|---|---|---|---|---|---|
+| 0 | merged | converted | pass: no findings | PHP loads opcov and the probe self-test passed | every outcome that counts toward verdicts has a source construct |
+| 1 | refused: the inputs do not merge (mismatching generator, settings, paths, file hash or model) | (not used) | findings | problems found | findings |
+| 2 | could not run | could not run | could not run | could not run | could not run |
 
 "Could not run" covers usage errors, unreadable or invalid reports, missing or
 unreadable inputs, a source file whose SHA-256 differs from the report's, a
@@ -24,6 +24,35 @@ source file that does not parse, and write errors. The message on standard
 error names the input and the cause. Output files are written to a temporary
 file next to the target and renamed into place, so a failed run never leaves a
 partial file.
+
+## Large reports
+
+Every subcommand reads reports as a stream, one `files` entry at a time, and
+never holds a whole report in memory, so memory does not grow with the number
+of files:
+
+- The reader splits the document into entries with a byte scanner and decodes
+  each entry on its own; the header (`generator`, `settings`, `paths`,
+  `tests`) is read once.
+- `convert`, `gate` and `doctor` decode and process entries on a pool of
+  worker threads, one per available core, while the next entries are read.
+  At most 64 entries per worker are in flight; results are emitted in report
+  order, so the output is byte-identical whatever the core count.
+- Sources (`gate`, `doctor`, `convert --format html`) are read, hash-checked
+  and parsed with mago on the same workers, so parsing runs on every core.
+- `convert` to Clover, Cobertura and HTML reads the report twice: once for the
+  totals their headers carry, once to write the files. Clover groups files by
+  package, so the second pass spools the rendered `<file>` elements to an
+  unlinked temporary file in the system temporary directory and copies them
+  out per package.
+- `gate` decodes only the entries of the changed files; the others are
+  scanned and skipped.
+- `merge` reads and decodes every input on its own thread, a few entries
+  ahead of the merge.
+
+Peak memory is a small multiple of the largest file entry times the worker
+count, plus one small record per file for the two-pass formats. Measurements
+are in [scale.md](scale.md#reports-and-cli).
 
 ## Source files
 
@@ -283,16 +312,62 @@ naming the line.
 ## `opcov doctor`
 
 ```sh
+opcov doctor
+opcov doctor --php /usr/bin/php8.5 --format json
 opcov doctor --report out.json
 opcov doctor --report out.json --format json
 ```
 
 | Flag | Meaning |
 |---|---|
-| `--report <REPORT>` | The opcov report to diagnose. |
+| `--php <BINARY>` | The PHP binary to check (default `php` from `PATH`). Not with `--report`. |
+| `--report <REPORT>` | The opcov report to diagnose instead of checking PHP. |
 | `--format <text\|json>` | Output format (default `text`). |
 
-For every file of the report, doctor parses the source and matches every
+### Environment self-test
+
+Without `--report`, doctor checks that the PHP binary can collect coverage
+with this opcov. It writes a small probe file and a script to a fresh
+temporary directory and runs the binary on them with `opcov.enabled=1` and
+`opcov.collect_paths` set to that directory, with the binary's own INI files
+(so the check sees the same `php.ini` and extensions as the test suite). The
+child reports whether the extension loaded, its version, the PHP version,
+thread safety, SAPI, the loaded INI files and `opcov\get_status()`, and runs
+the probe: `start()`, one call through an `if`, `stop()`, and
+`executable()` of the probe file. The self-test passes when exactly the
+expected lines are covered and executable and the branch reports one outcome.
+The child is stopped after 60 seconds and the directory is removed.
+
+Each problem is reported with a code, the problem, the fix and a link to the
+matching entry of [troubleshooting.md](troubleshooting.md):
+
+| Code | Problem |
+|---|---|
+| `extension-not-loaded` | the binary does not load opcov |
+| `build-mismatch` | opcov was built for another PHP minor version or another thread-safety (ZTS/NTS) or debug build; recognised from the loader's message |
+| `version-mismatch` | the extension and the CLI come from different opcov releases |
+| the code of a startup refusal or conflict | opcov loaded but refuses to collect (for example an unsupported OPcache or JIT setting), with the extension's own fix |
+| `self-test-failed` | the probe covered the wrong lines or outcomes, or threw |
+
+Anything PHP printed while starting (warnings, failed `extension=` lines) is
+shown under "PHP printed while starting". Text output:
+
+```
+opcov doctor: php
+  PHP 8.5.13 NTS (cli), opcov 0.1.0, VM HYBRID
+  php.ini: /etc/php/php.ini
+  probe self-test: passed
+doctor: 0 problem(s)
+```
+
+JSON output is one object with `php_binary`, `runtime` (`php`, `zts`, `sapi`,
+`opcov`, `vm_kind`, `ini_file`, `scanned_files`; `null` when the extension did
+not load), `self_test` (`passed`, `not_run` or `failed`), `findings` (`code`,
+`problem`, `fix`, `link`) and `startup_output`.
+
+### Diagnosing a report
+
+With `--report`, for every file of the report, doctor parses the source and matches every
 outcome of every function to the source construct that produced it, with
 `opcov-syntax`'s matcher (by line and construct kind; outcomes with the same
 `site` belong to one construct, and the constructs of one kind on a line are
@@ -318,6 +393,3 @@ app/Foo.php
   App\Foo::bar o8 IfTrue on line 14: no source construct of this kind can produce an opcode on this line
 doctor: 1 of 8 outcome(s) have no source construct
 ```
-
-The engine self-test of `doctor` (probe installation in a child PHP process,
-issue #20) is not part of this tool yet.

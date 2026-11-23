@@ -1,8 +1,7 @@
 use std::io::{self, Write};
 
-use opcov_core::report::Report;
-
-use crate::view::{FileView, Taken, file_view};
+use super::{Context, ConvertError};
+use crate::view::{FileView, Taken};
 
 fn record(out: &mut impl Write, file: &FileView<'_>) -> io::Result<()> {
     writeln!(out, "TN:")?;
@@ -45,10 +44,14 @@ fn record(out: &mut impl Write, file: &FileView<'_>) -> io::Result<()> {
     return writeln!(out, "end_of_record");
 }
 
-pub(crate) fn write<W: Write>(report: &Report, mut out: W) -> io::Result<W> {
-    let paths = &report.header().paths;
-    for (path, file) in report.files() {
-        record(&mut out, &file_view(paths, path, file))?;
-    }
+pub(super) fn write<W: Write>(context: &Context<'_>, mut out: W) -> Result<W, ConvertError> {
+    context.each(
+        &|_, view, _| {
+            let mut bytes = Vec::new();
+            record(&mut bytes, view)?;
+            return Ok(bytes);
+        },
+        &mut |bytes| return Ok(out.write_all(&bytes)?),
+    )?;
     return Ok(out);
 }

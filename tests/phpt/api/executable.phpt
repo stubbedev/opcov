@@ -21,5 +21,5 @@ try {
 true
 {"4":[],"5":[],"6":[],"8":[]}
 ["{main}@work.php","work"]
-{"loops":[{"id":"l0","kind":"PreTest","line":5,"second":[],"zero":[]}],"outcomes":[{"hits":[],"id":"o0","kind":"LoopBack","line":5,"site":7,"span":null},{"hits":[],"id":"o1","kind":"LoopExit","line":5,"site":7,"span":null}],"span":null}
+{"loops":[{"id":"l0","kind":"PreTest","line":5,"second":[],"site":7,"zero":[]}],"outcomes":[{"hits":[],"id":"o0","kind":"LoopBack","line":5,"site":7,"span":null},{"hits":[],"id":"o1","kind":"LoopExit","line":5,"site":7,"span":null}],"span":null}
 opcov\executable() expects file paths; element 0 is not a UTF-8 string

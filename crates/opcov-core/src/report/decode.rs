@@ -1,197 +1,234 @@
 use std::collections::BTreeMap;
-use std::fmt;
 use std::io::Read;
 
-use serde::de::{self, DeserializeSeed, MapAccess, Visitor};
-use serde::{Deserialize, Deserializer as _};
+use serde::Deserialize;
 
-use super::error::{Collection, ModelError, ReadError, SchemaError};
+use super::error::{Collection, EntryError, ModelError, ReadError};
 use super::model::{
     FILES, FileCoverage, GENERATOR, Header, LocalTests, PATHS, PathBase, Report, SCHEMA, SETTINGS,
     SourcePath, TESTS, TestRefs, check_schema, validate_entry,
 };
+use super::scan::{Found, Scanner};
 
 #[derive(Debug)]
-pub(super) struct Abandoned;
+pub struct RawEntry {
+    path: SourcePath,
+    json: Vec<u8>,
+}
 
-impl fmt::Display for Abandoned {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        return formatter.write_str("reading was abandoned by the consumer");
+impl RawEntry {
+    #[must_use]
+    pub const fn path(&self) -> &SourcePath {
+        return &self.path;
+    }
+
+    pub fn decode(self, header: &Header) -> Result<(SourcePath, FileCoverage), ReadError> {
+        return self.decode_with(&header.paths, &LocalTests::of(&header.tests));
+    }
+
+    pub(super) fn decode_with(
+        self,
+        paths: &PathBase,
+        refs: &impl TestRefs,
+    ) -> Result<(SourcePath, FileCoverage), ReadError> {
+        let Self { path, json } = self;
+        let decoded = serde_json::from_slice::<FileCoverage>(&json)
+            .map_err(EntryError::Decode)
+            .and_then(|file| {
+                return validate_entry(paths, refs, &path, file)
+                    .map_err(|error| return EntryError::Model(Box::new(error)));
+            });
+        drop(json);
+        return match decoded {
+            Ok(file) => Ok((path, file)),
+            Err(error) => Err(ReadError::Entry {
+                path,
+                error: Box::new(error),
+            }),
+        };
     }
 }
 
-pub(super) trait FileSink {
-    fn begin(&mut self, path: &SourcePath) -> Result<(), Abandoned>;
-    fn accept(&mut self, path: SourcePath, file: FileCoverage) -> Result<(), Abandoned>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum State {
+    First,
+    Rest,
+    Done,
 }
 
-pub(super) trait Document {
-    type Output;
-    fn visit<'de, A: MapAccess<'de>>(self, map: &mut A) -> Result<Self::Output, A::Error>;
+#[derive(Debug)]
+pub struct ReportReader<R> {
+    scanner: Scanner<R>,
+    header: Header,
+    previous: Option<SourcePath>,
+    state: State,
+    scratch: Vec<u8>,
 }
 
-pub(super) fn expect_member<'de, A: MapAccess<'de>>(
-    map: &mut A,
-    name: &'static str,
-) -> Result<(), A::Error> {
-    return match map.next_key::<String>()? {
-        Some(found) if found == name => Ok(()),
-        Some(found) => Err(de::Error::custom(format!(
-            "expected member `{name}`, found `{found}`"
-        ))),
-        None => Err(de::Error::missing_field(name)),
-    };
-}
-
-fn member<'de, A: MapAccess<'de>, T: Deserialize<'de>>(
-    map: &mut A,
-    name: &'static str,
-) -> Result<T, A::Error> {
-    expect_member(map, name)?;
-    return map.next_value();
-}
-
-pub(super) fn header<'de, A: MapAccess<'de>>(map: &mut A) -> Result<Header, A::Error> {
-    let generator = member(map, GENERATOR)?;
-    let settings = member(map, SETTINGS)?;
-    let paths = member(map, PATHS)?;
-    let tests = member(map, TESTS)?;
-    return Ok(Header {
-        generator,
-        settings,
-        paths,
-        tests,
+fn key<R: Read>(scanner: &mut Scanner<R>, scratch: &mut Vec<u8>) -> Result<String, ReadError> {
+    scanner.string(scratch)?;
+    let offset = scanner.offset();
+    return serde_json::from_slice(scratch).map_err(|error| {
+        return ReadError::Key { offset, error };
     });
 }
 
-pub(super) struct FilesSeed<'a, R, S> {
-    pub(super) paths: &'a PathBase,
-    pub(super) refs: &'a R,
-    pub(super) sink: &'a mut S,
-}
-
-impl<'de, R: TestRefs, S: FileSink> DeserializeSeed<'de> for FilesSeed<'_, R, S> {
-    type Value = ();
-
-    fn deserialize<D: de::Deserializer<'de>>(self, deserializer: D) -> Result<(), D::Error> {
-        return deserializer.deserialize_map(self);
-    }
-}
-
-impl<'de, R: TestRefs, S: FileSink> Visitor<'de> for FilesSeed<'_, R, S> {
-    type Value = ();
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        return formatter.write_str("an object of files in ascending path order");
-    }
-
-    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
-        let mut previous: Option<SourcePath> = None;
-        while let Some(raw) = map.next_key::<String>()? {
-            let path = SourcePath::new(raw).map_err(de::Error::custom)?;
-            if let Some(last) = &previous
-                && *last >= path
-            {
-                return Err(de::Error::custom(ModelError::NotAscending {
-                    collection: Collection::Files,
-                    previous: format!("{last:?}"),
-                    next: format!("{path:?}"),
-                }));
-            }
-            self.paths.admits(&path).map_err(de::Error::custom)?;
-            self.sink.begin(&path).map_err(de::Error::custom)?;
-            let file = map.next_value::<FileCoverage>()?;
-            let file =
-                validate_entry(self.paths, self.refs, &path, file).map_err(de::Error::custom)?;
-            previous = Some(path.clone());
-            self.sink.accept(path, file).map_err(de::Error::custom)?;
-        }
-        return Ok(());
-    }
-}
-
-struct Envelope<'s, D> {
-    document: D,
-    schema_error: &'s mut Option<SchemaError>,
-}
-
-impl<'de, D: Document> Visitor<'de> for Envelope<'_, D> {
-    type Value = D::Output;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        return formatter.write_str("an opcov report object");
-    }
-
-    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<D::Output, A::Error> {
-        let found: String = member(&mut map, SCHEMA)?;
-        if let Err(error) = check_schema(&found) {
-            let message = error.to_string();
-            *self.schema_error = Some(error);
-            return Err(de::Error::custom(message));
-        }
-        let output = self.document.visit(&mut map)?;
-        if let Some(extra) = map.next_key::<String>()? {
-            return Err(de::Error::custom(format!(
-                "unexpected member `{extra}` after `{FILES}`"
-            )));
-        }
-        return Ok(output);
-    }
-}
-
-pub(super) fn read_document<R: Read, D: Document>(
-    reader: R,
-    document: D,
-) -> Result<D::Output, ReadError> {
-    let mut schema_error = None;
-    let mut deserializer = serde_json::Deserializer::from_reader(reader);
-    let result = deserializer
-        .deserialize_map(Envelope {
-            document,
-            schema_error: &mut schema_error,
-        })
-        .and_then(|output| {
-            deserializer.end()?;
-            return Ok(output);
+fn member<R: Read, T: for<'de> Deserialize<'de>>(
+    scanner: &mut Scanner<R>,
+    scratch: &mut Vec<u8>,
+    name: &'static str,
+    first: bool,
+) -> Result<T, ReadError> {
+    let found = scanner.peek()?;
+    if found == Found::Byte(b'}') {
+        return Err(ReadError::Member {
+            expected: name,
+            found: None,
         });
-    return result.map_err(|error| {
-        return schema_error.map_or_else(|| return ReadError::Decode(error), ReadError::Schema);
+    }
+    if !first {
+        scanner.expect(b',', "`,` between members")?;
+    }
+    let found = key(scanner, scratch)?;
+    if found != name {
+        return Err(ReadError::Member {
+            expected: name,
+            found: Some(found),
+        });
+    }
+    scanner.expect(b':', "`:` after a member name")?;
+    scanner.value(scratch)?;
+    return serde_json::from_slice(scratch).map_err(|error| {
+        return ReadError::Value {
+            member: name,
+            error,
+        };
     });
 }
 
-struct Collect(BTreeMap<SourcePath, FileCoverage>);
-
-impl FileSink for Collect {
-    fn begin(&mut self, _path: &SourcePath) -> Result<(), Abandoned> {
-        return Ok(());
+impl<R: Read> ReportReader<R> {
+    pub fn open(reader: R) -> Result<Self, ReadError> {
+        let mut scanner = Scanner::new(reader);
+        let mut scratch = Vec::new();
+        scanner.expect(b'{', "`{` opening the report")?;
+        let schema: String = member(&mut scanner, &mut scratch, SCHEMA, true)?;
+        check_schema(&schema).map_err(ReadError::Schema)?;
+        let generator = member(&mut scanner, &mut scratch, GENERATOR, false)?;
+        let settings = member(&mut scanner, &mut scratch, SETTINGS, false)?;
+        let paths = member(&mut scanner, &mut scratch, PATHS, false)?;
+        let tests = member(&mut scanner, &mut scratch, TESTS, false)?;
+        if scanner.peek()? == Found::Byte(b'}') {
+            return Err(ReadError::Member {
+                expected: FILES,
+                found: None,
+            });
+        }
+        scanner.expect(b',', "`,` between members")?;
+        let found = key(&mut scanner, &mut scratch)?;
+        if found != FILES {
+            return Err(ReadError::Member {
+                expected: FILES,
+                found: Some(found),
+            });
+        }
+        scanner.expect(b':', "`:` after a member name")?;
+        scanner.expect(b'{', "`{` opening the files")?;
+        return Ok(Self {
+            scanner,
+            header: Header {
+                generator,
+                settings,
+                paths,
+                tests,
+            },
+            previous: None,
+            state: State::First,
+            scratch,
+        });
     }
 
-    fn accept(&mut self, path: SourcePath, file: FileCoverage) -> Result<(), Abandoned> {
-        self.0.insert(path, file);
-        return Ok(());
+    #[must_use]
+    pub const fn header(&self) -> &Header {
+        return &self.header;
+    }
+
+    #[must_use]
+    pub fn into_header(self) -> Header {
+        return self.header;
+    }
+
+    fn finish(&mut self) -> Result<(), ReadError> {
+        self.scanner.expect(b'}', "`}` closing the files")?;
+        let found = self.scanner.peek()?;
+        if found != Found::Byte(b'}') {
+            if found == Found::Byte(b',') {
+                self.scanner.expect(b',', "`,`")?;
+                let extra = key(&mut self.scanner, &mut self.scratch)?;
+                return Err(ReadError::Trailing { member: extra });
+            }
+            return Err(self.scanner.unexpected("`}` closing the report", found));
+        }
+        self.scanner.expect(b'}', "`}` closing the report")?;
+        return self.scanner.end();
+    }
+
+    fn entry(&mut self) -> Result<Option<RawEntry>, ReadError> {
+        if self.state == State::Done {
+            return Ok(None);
+        }
+        if self.scanner.peek()? == Found::Byte(b'}') {
+            self.state = State::Done;
+            self.finish()?;
+            return Ok(None);
+        }
+        if self.state == State::Rest {
+            self.scanner.expect(b',', "`,` between files")?;
+        }
+        let raw = key(&mut self.scanner, &mut self.scratch)?;
+        let path =
+            SourcePath::new(raw).map_err(|error| return ReadError::Files(Box::new(error)))?;
+        if let Some(last) = &self.previous
+            && *last >= path
+        {
+            return Err(ReadError::Files(Box::new(ModelError::NotAscending {
+                collection: Collection::Files,
+                previous: format!("{last:?}"),
+                next: format!("{path:?}"),
+            })));
+        }
+        self.header
+            .paths
+            .admits(&path)
+            .map_err(|error| return ReadError::Files(Box::new(error)))?;
+        self.scanner.expect(b':', "`:` after a file path")?;
+        let mut json = Vec::new();
+        self.scanner.value(&mut json)?;
+        self.previous = Some(path.clone());
+        self.state = State::Rest;
+        return Ok(Some(RawEntry { path, json }));
     }
 }
 
-struct FullDocument;
+impl<R: Read> Iterator for ReportReader<R> {
+    type Item = Result<RawEntry, ReadError>;
 
-impl Document for FullDocument {
-    type Output = Report;
-
-    fn visit<'de, A: MapAccess<'de>>(self, map: &mut A) -> Result<Report, A::Error> {
-        let header = header(map)?;
-        expect_member(map, FILES)?;
-        let mut files = Collect(BTreeMap::new());
-        map.next_value_seed(FilesSeed {
-            paths: &header.paths,
-            refs: &LocalTests::of(&header.tests),
-            sink: &mut files,
-        })?;
-        return Ok(Report::from_validated(header, files.0));
+    fn next(&mut self) -> Option<Self::Item> {
+        let next = self.entry();
+        if next.is_err() {
+            self.state = State::Done;
+        }
+        return next.transpose();
     }
 }
 
 impl Report {
     pub fn read<R: Read>(reader: R) -> Result<Self, ReadError> {
-        return read_document(reader, FullDocument);
+        let mut entries = ReportReader::open(reader)?;
+        let mut files = BTreeMap::new();
+        while let Some(entry) = entries.next().transpose()? {
+            let (path, file) = entry.decode(entries.header())?;
+            files.insert(path, file);
+        }
+        return Ok(Self::from_validated(entries.into_header(), files));
     }
 }

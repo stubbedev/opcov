@@ -12,8 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use opcov_core::report::{FileCoverage, PathBase, Report, SourcePath, merge_streams};
-use opcov_syntax::SourceFile;
+use opcov_core::report::merge_streams;
 
 mod changes;
 mod checkup;
@@ -23,14 +22,15 @@ mod failure;
 mod gate;
 mod output;
 mod source;
+mod spool;
+mod stream;
 mod view;
 mod xml;
 
 use changes::{ChangeSet, parse_diff, parse_list};
 use convert::{Format, convert};
 use failure::{Failure, Severity, Verdict};
-use output::{read_report, write_atomically, write_stdout};
-use source::SourceError;
+use output::{write_atomically, write_stdout};
 
 #[derive(Debug, Parser)]
 #[command(name = "opcov", version, about)]
@@ -174,15 +174,9 @@ fn merge(args: &MergeArgs) -> Result<Verdict, Failure> {
 }
 
 fn convert_report(args: &ConvertArgs) -> Result<Verdict, Failure> {
-    let report = read_report(&args.report)?;
+    let header = stream::header(&args.report)?;
     write_atomically(&args.output, |out| {
-        return convert(&report, args.format, out).map_err(|error| {
-            return Failure::failed(format!(
-                "cannot convert {} to {:?}: {error}",
-                args.report.display(),
-                args.format
-            ));
-        });
+        return convert(&args.report, &header, args.format, out);
     })?;
     return Ok(Verdict::Clean);
 }
@@ -233,19 +227,6 @@ fn read_changes(args: &GateArgs) -> Result<ChangeSet, Failure> {
     return Ok(set);
 }
 
-fn source_failure(error: &SourceError) -> Failure {
-    return Failure::failed(error.to_string());
-}
-
-fn loader(
-    paths: &PathBase,
-) -> impl FnMut(&SourcePath, &FileCoverage) -> Result<SourceFile, SourceError> {
-    return move |path, file| {
-        let source = source::read_verified(paths, path, file)?;
-        return source::parse(path, &source);
-    };
-}
-
 fn emit_result<T>(
     format: OutputFormat,
     result: &T,
@@ -261,7 +242,7 @@ fn emit_result<T>(
 }
 
 fn gate_report(args: &GateArgs) -> Result<Verdict, Failure> {
-    let report: Report = read_report(&args.report)?;
+    let header = stream::header(&args.report)?;
     let changes = read_changes(args)?;
     let base = match &args.base {
         Some(base) => base.clone(),
@@ -269,9 +250,7 @@ fn gate_report(args: &GateArgs) -> Result<Verdict, Failure> {
             return Failure::io("resolve", Path::new("the current directory"), &error);
         })?,
     };
-    let paths = &report.header().paths;
-    let result = gate::evaluate(&report, &changes, &base, loader(paths))
-        .map_err(|error| return source_failure(&error))?;
+    let result = gate::evaluate(&args.report, &header, &changes, &base)?;
     emit_result(args.format, &result, gate::render_text, gate::render_json)?;
     return Ok(result.verdict());
 }
@@ -295,10 +274,8 @@ fn doctor(args: &DoctorArgs) -> Result<Verdict, Failure> {
 }
 
 fn doctor_report(path: &Path, format: OutputFormat) -> Result<Verdict, Failure> {
-    let report = read_report(path)?;
-    let paths = &report.header().paths;
-    let diagnosis =
-        doctor::diagnose(&report, loader(paths)).map_err(|error| return source_failure(&error))?;
+    let header = stream::header(path)?;
+    let diagnosis = doctor::diagnose(path, &header)?;
     emit_result(format, &diagnosis, doctor::render_text, doctor::render_json)?;
     return Ok(diagnosis.verdict());
 }

@@ -28,7 +28,7 @@ mod schema {
         r#""functions":{"App\\Foo::bar":{"span":[10,1,30,5],"outcomes":["#,
         r#"{"id":"o7","site":21,"kind":"CoalesceFallback","line":14,"span":[14,20,14,31],"hits":[0]},"#,
         r#"{"id":"o8","site":25,"kind":{"MatchArm":2},"line":15,"span":null,"hits":[]}],"#,
-        r#""loops":[{"id":"l1","kind":"Foreach","line":18,"zero":[],"second":[1]},{"id":"l2","kind":"PostTest","line":20,"zero":null,"second":[]}]}}}}}"#,
+        r#""loops":[{"id":"l1","site":29,"kind":"Foreach","line":18,"zero":[],"second":[1]},{"id":"l2","site":33,"kind":"PostTest","line":20,"zero":null,"second":[]}]}}}}}"#,
         "\n"
     );
 
@@ -181,6 +181,8 @@ mod schema {
                 mutate(r#""kind":"Foreach""#, r#""kind":"For""#),
             ),
             ("missing zero", mutate(r#""zero":null,"#, "")),
+            ("missing loop site", mutate(r#""site":29,"#, "")),
+            ("negative loop site", mutate(r#""site":29"#, r#""site":-1"#)),
             (
                 "empty test name",
                 mutate(r#""Tests\\Unit\\FooTest::test_bar""#, r#""""#),

@@ -1,17 +1,19 @@
 use std::io::{self, Write};
+use std::path::Path;
 
 use opcov_core::cfg::{FunctionKey, Line};
 use opcov_core::kind::EdgeKind;
-use opcov_core::report::{FileCoverage, Function, Identified, OutcomeId, Report, SourcePath};
+use opcov_core::report::{FileCoverage, Function, Header, Identified, OutcomeId, SourcePath};
 use opcov_syntax::{OutcomeRef, SourceFile};
 use serde::Serialize;
 
-use crate::failure::Verdict;
-use crate::source::SourceError;
+use crate::failure::{Failure, Verdict};
+use crate::source;
+use crate::stream;
 
 #[derive(Debug, Serialize)]
-pub(crate) struct UnmatchedOutcome<'r> {
-    function: &'r FunctionKey,
+pub(crate) struct UnmatchedOutcome {
+    function: FunctionKey,
     id: OutcomeId,
     kind: EdgeKind,
     line: Line,
@@ -20,26 +22,26 @@ pub(crate) struct UnmatchedOutcome<'r> {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct MissingFunction<'r> {
-    function: &'r FunctionKey,
+pub(crate) struct MissingFunction {
+    function: FunctionKey,
     reason: String,
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct FileDiagnosis<'r> {
-    path: &'r SourcePath,
-    missing_functions: Vec<MissingFunction<'r>>,
-    unmatched_outcomes: Vec<UnmatchedOutcome<'r>>,
+pub(crate) struct FileDiagnosis {
+    path: SourcePath,
+    missing_functions: Vec<MissingFunction>,
+    unmatched_outcomes: Vec<UnmatchedOutcome>,
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct Diagnosis<'r> {
+pub(crate) struct Diagnosis {
     outcomes: usize,
     unmatched: usize,
-    files: Vec<FileDiagnosis<'r>>,
+    files: Vec<FileDiagnosis>,
 }
 
-impl Diagnosis<'_> {
+impl Diagnosis {
     pub(crate) fn verdict(&self) -> Verdict {
         let blocking = self.files.iter().any(|file| {
             return !file.missing_functions.is_empty()
@@ -74,11 +76,11 @@ fn outcome_refs(function: &Function) -> Vec<(OutcomeId, OutcomeRef)> {
         .collect();
 }
 
-fn diagnose_file<'r>(
-    path: &'r SourcePath,
-    file: &'r FileCoverage,
+fn diagnose_file(
+    path: SourcePath,
+    file: &FileCoverage,
     source: &SourceFile,
-) -> (FileDiagnosis<'r>, usize) {
+) -> (FileDiagnosis, usize) {
     let mut diagnosis = FileDiagnosis {
         path,
         missing_functions: Vec::new(),
@@ -91,7 +93,7 @@ fn diagnose_file<'r>(
             Ok(located) => located,
             Err(error) => {
                 diagnosis.missing_functions.push(MissingFunction {
-                    function: key,
+                    function: key.clone(),
                     reason: error.to_string(),
                 });
                 continue;
@@ -105,7 +107,7 @@ fn diagnose_file<'r>(
                 continue;
             };
             diagnosis.unmatched_outcomes.push(UnmatchedOutcome {
-                function: key,
+                function: key.clone(),
                 id: *id,
                 kind: outcome.kind,
                 line: outcome.line,
@@ -117,30 +119,35 @@ fn diagnose_file<'r>(
     return (diagnosis, outcomes);
 }
 
-pub(crate) fn diagnose(
-    report: &Report,
-    mut load: impl FnMut(&SourcePath, &FileCoverage) -> Result<SourceFile, SourceError>,
-) -> Result<Diagnosis<'_>, SourceError> {
+pub(crate) fn diagnose(report: &Path, header: &Header) -> Result<Diagnosis, Failure> {
     let mut diagnosis = Diagnosis {
         outcomes: 0,
         unmatched: 0,
         files: Vec::new(),
     };
-    for (path, file) in report.files() {
-        let source = load(path, file)?;
-        let (found, outcomes) = diagnose_file(path, file, &source);
-        diagnosis.outcomes = diagnosis.outcomes.saturating_add(outcomes);
-        diagnosis.unmatched = diagnosis
-            .unmatched
-            .saturating_add(found.unmatched_outcomes.len());
-        if !found.missing_functions.is_empty() || !found.unmatched_outcomes.is_empty() {
-            diagnosis.files.push(found);
-        }
-    }
+    stream::entries(
+        report,
+        header,
+        &stream::everything,
+        &|_, path, file| {
+            let source = source::load(&header.paths, &path, &file)?;
+            return Ok(diagnose_file(path, &file, &source));
+        },
+        &mut |(found, outcomes)| {
+            diagnosis.outcomes = diagnosis.outcomes.saturating_add(outcomes);
+            diagnosis.unmatched = diagnosis
+                .unmatched
+                .saturating_add(found.unmatched_outcomes.len());
+            if !found.missing_functions.is_empty() || !found.unmatched_outcomes.is_empty() {
+                diagnosis.files.push(found);
+            }
+            return Ok(());
+        },
+    )?;
     return Ok(diagnosis);
 }
 
-pub(crate) fn render_text(out: &mut dyn Write, diagnosis: &Diagnosis<'_>) -> io::Result<()> {
+pub(crate) fn render_text(out: &mut dyn Write, diagnosis: &Diagnosis) -> io::Result<()> {
     for file in &diagnosis.files {
         writeln!(out, "{}", file.path)?;
         for missing in &file.missing_functions {
@@ -166,7 +173,7 @@ pub(crate) fn render_text(out: &mut dyn Write, diagnosis: &Diagnosis<'_>) -> io:
     );
 }
 
-pub(crate) fn render_json(out: &mut dyn Write, diagnosis: &Diagnosis<'_>) -> io::Result<()> {
+pub(crate) fn render_json(out: &mut dyn Write, diagnosis: &Diagnosis) -> io::Result<()> {
     serde_json::to_writer(&mut *out, diagnosis)?;
     return writeln!(out);
 }

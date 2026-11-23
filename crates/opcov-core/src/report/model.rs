@@ -470,21 +470,33 @@ impl HitSet {
     }
 
     fn resolve(
-        self,
+        mut self,
         refs: &impl TestRefs,
         site: impl FnOnce() -> HitSite,
     ) -> Result<Self, BadTestRef> {
-        let mut resolved = Vec::with_capacity(self.0.len());
-        for index in self.0 {
+        for slot in &mut self.0 {
+            let index = *slot;
             let Some(target) = refs.resolve(index) else {
                 return Err(BadTestRef {
                     site: site(),
                     index,
                 });
             };
-            resolved.push(target);
+            *slot = target;
         }
-        return Ok(Self(resolved));
+        return Ok(self);
+    }
+
+    fn check(&self, tests: usize, site: impl FnOnce() -> HitSite) -> Result<(), BadTestRef> {
+        let beyond = self
+            .0
+            .partition_point(|index| return index.position().is_some_and(|at| return at < tests));
+        return self.0.get(beyond).map_or(Ok(()), |&index| {
+            return Err(BadTestRef {
+                site: site(),
+                index,
+            });
+        });
     }
 }
 
@@ -935,6 +947,7 @@ impl From<MeasuredShape> for LoopShape {
 #[serde(deny_unknown_fields)]
 pub struct Loop {
     pub(super) id: LoopId,
+    pub(super) site: OpIndex,
     pub(super) kind: MeasuredShape,
     pub(super) line: Line,
     #[serde(deserialize_with = "required")]
@@ -946,6 +959,7 @@ impl Loop {
     #[must_use]
     pub const fn new(
         id: LoopId,
+        site: OpIndex,
         kind: MeasuredShape,
         line: Line,
         zero: Option<HitSet>,
@@ -953,11 +967,17 @@ impl Loop {
     ) -> Self {
         return Self {
             id,
+            site,
             kind,
             line,
             zero,
             second,
         };
+    }
+
+    #[must_use]
+    pub const fn site(&self) -> OpIndex {
+        return self.site;
     }
 
     #[must_use]
@@ -1041,6 +1061,34 @@ pub struct Function {
 }
 
 impl Function {
+    fn check_tests(&self, key: &FunctionKey, tests: usize) -> Result<(), BadTestRef> {
+        for outcome in &self.outcomes.0 {
+            outcome.hits.check(tests, || {
+                return HitSite::Outcome {
+                    function: key.clone(),
+                    id: outcome.id,
+                };
+            })?;
+        }
+        for looped in &self.loops.0 {
+            if let Some(zero) = &looped.zero {
+                zero.check(tests, || {
+                    return HitSite::LoopZero {
+                        function: key.clone(),
+                        id: looped.id,
+                    };
+                })?;
+            }
+            looped.second.check(tests, || {
+                return HitSite::LoopSecond {
+                    function: key.clone(),
+                    id: looped.id,
+                };
+            })?;
+        }
+        return Ok(());
+    }
+
     fn resolve_tests(self, key: &FunctionKey, refs: &impl TestRefs) -> Result<Self, BadTestRef> {
         let Self {
             span,
@@ -1109,6 +1157,16 @@ pub struct FileCoverage {
 }
 
 impl FileCoverage {
+    fn check_tests(&self, tests: usize) -> Result<(), BadTestRef> {
+        for (line, hits) in &self.lines {
+            hits.check(tests, || return HitSite::Line(*line))?;
+        }
+        for (key, function) in &self.functions {
+            function.check_tests(key, tests)?;
+        }
+        return Ok(());
+    }
+
     pub(super) fn resolve_tests(self, refs: &impl TestRefs) -> Result<Self, BadTestRef> {
         let Self {
             sha256,
@@ -1137,12 +1195,7 @@ impl FileCoverage {
     }
 }
 
-pub(super) fn validate_entry(
-    paths: &PathBase,
-    refs: &impl TestRefs,
-    path: &SourcePath,
-    file: FileCoverage,
-) -> Result<FileCoverage, ModelError> {
+fn check_keys(paths: &PathBase, path: &SourcePath, file: &FileCoverage) -> Result<(), ModelError> {
     paths.admits(path)?;
     if let Some(key) = file.functions.keys().find(|key| {
         return key
@@ -1154,9 +1207,31 @@ pub(super) fn validate_entry(
             key: Box::new(key.clone()),
         });
     }
+    return Ok(());
+}
+
+pub(super) fn validate_entry(
+    paths: &PathBase,
+    refs: &impl TestRefs,
+    path: &SourcePath,
+    file: FileCoverage,
+) -> Result<FileCoverage, ModelError> {
+    check_keys(paths, path, &file)?;
     return file
         .resolve_tests(refs)
         .map_err(|bad| return bad.into_error(path, refs.count()));
+}
+
+pub(super) fn check_entry(
+    paths: &PathBase,
+    tests: usize,
+    path: &SourcePath,
+    file: &FileCoverage,
+) -> Result<(), ModelError> {
+    check_keys(paths, path, file)?;
+    return file
+        .check_tests(tests)
+        .map_err(|bad| return bad.into_error(path, tests));
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1170,14 +1245,9 @@ impl Report {
         header: Header,
         files: BTreeMap<SourcePath, FileCoverage>,
     ) -> Result<Self, ModelError> {
-        let refs = LocalTests::of(&header.tests);
-        let files = files
-            .into_iter()
-            .map(|(path, file)| {
-                let file = validate_entry(&header.paths, &refs, &path, file)?;
-                return Ok((path, file));
-            })
-            .collect::<Result<BTreeMap<_, _>, ModelError>>()?;
+        for (path, file) in &files {
+            check_entry(&header.paths, header.tests.len(), path, file)?;
+        }
         return Ok(Self { header, files });
     }
 

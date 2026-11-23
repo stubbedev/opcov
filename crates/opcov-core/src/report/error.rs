@@ -1,7 +1,9 @@
 use std::error::Error;
 use std::fmt;
+use std::io;
 
 use super::model::{LoopId, OutcomeId, PathMode, Root, SourcePath, Span, TestIndex, schema_id};
+use super::scan::Found;
 use crate::cfg::{FunctionKey, KeyError, Line};
 use crate::kind::EdgeKind;
 
@@ -250,16 +252,93 @@ impl fmt::Display for SchemaError {
 impl Error for SchemaError {}
 
 #[derive(Debug)]
-pub enum ReadError {
-    Schema(SchemaError),
+pub enum EntryError {
     Decode(serde_json::Error),
+    Model(Box<ModelError>),
+}
+
+impl fmt::Display for EntryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        return match self {
+            Self::Decode(error) => write!(formatter, "{error}"),
+            Self::Model(error) => write!(formatter, "{error}"),
+        };
+    }
+}
+
+impl Error for EntryError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        return match self {
+            Self::Decode(error) => Some(error),
+            Self::Model(error) => Some(&**error),
+        };
+    }
+}
+
+#[derive(Debug)]
+pub enum ReadError {
+    Io(io::Error),
+    Syntax {
+        offset: u64,
+        expected: &'static str,
+        found: Found,
+    },
+    Key {
+        offset: u64,
+        error: serde_json::Error,
+    },
+    Member {
+        expected: &'static str,
+        found: Option<String>,
+    },
+    Trailing {
+        member: String,
+    },
+    Value {
+        member: &'static str,
+        error: serde_json::Error,
+    },
+    Schema(SchemaError),
+    Files(Box<ModelError>),
+    Entry {
+        path: SourcePath,
+        error: Box<EntryError>,
+    },
 }
 
 impl fmt::Display for ReadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         return match self {
+            Self::Io(error) => write!(formatter, "{error}"),
+            Self::Syntax {
+                offset,
+                expected,
+                found,
+            } => write!(
+                formatter,
+                "expected {expected} at byte {offset}, found {found}"
+            ),
+            Self::Key { offset, error } => {
+                write!(
+                    formatter,
+                    "invalid member name before byte {offset}: {error}"
+                )
+            }
+            Self::Member {
+                expected,
+                found: Some(found),
+            } => write!(formatter, "expected member `{expected}`, found `{found}`"),
+            Self::Member {
+                expected,
+                found: None,
+            } => write!(formatter, "missing member `{expected}`"),
+            Self::Trailing { member } => {
+                write!(formatter, "unexpected member `{member}` after `files`")
+            }
+            Self::Value { member, error } => write!(formatter, "member `{member}`: {error}"),
             Self::Schema(error) => write!(formatter, "{error}"),
-            Self::Decode(error) => write!(formatter, "{error}"),
+            Self::Files(error) => write!(formatter, "files: {error}"),
+            Self::Entry { path, error } => write!(formatter, "files entry {path:?}: {error}"),
         };
     }
 }
@@ -267,8 +346,12 @@ impl fmt::Display for ReadError {
 impl Error for ReadError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         return match self {
+            Self::Io(error) => Some(error),
+            Self::Key { error, .. } | Self::Value { error, .. } => Some(error),
             Self::Schema(error) => Some(error),
-            Self::Decode(error) => Some(error),
+            Self::Files(error) => Some(&**error),
+            Self::Entry { error, .. } => Some(&**error),
+            Self::Syntax { .. } | Self::Member { .. } | Self::Trailing { .. } => None,
         };
     }
 }

@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 use std::io::Write;
 
 use opcov_core::cfg::{ClassRef, Line};
-use opcov_core::report::Report;
 
-use crate::view::{FileView, FunctionView, LineView, Totals, Unit, file_view};
+use super::{Context, ConvertError};
+use crate::spool::Spool;
+use crate::view::{FileView, FunctionView, LineView, Totals, Unit};
 use crate::xml::{Attribute, Value, XmlError, XmlWriter};
 
 const TIMESTAMP: &str = "0";
@@ -84,10 +85,10 @@ fn namespace(class: &ClassRef) -> Option<&str> {
         .map(|(namespace, _)| return namespace);
 }
 
-fn package_of<'f>(file: &'f FileView<'_>) -> Option<&'f str> {
+fn package_of(file: &FileView<'_>) -> Option<String> {
     return file.units().into_iter().find_map(|unit| {
         return match unit {
-            Unit::Class(class) => namespace(class),
+            Unit::Class(class) => namespace(class).map(str::to_owned),
             Unit::File => None,
         };
     });
@@ -204,58 +205,78 @@ fn file_element<W: Write>(xml: &mut XmlWriter<W>, file: &FileView<'_>) -> Result
     );
 }
 
-fn package_counts(files: &[&FileView<'_>], named: bool) -> Counts {
-    let mut counts = Counts {
-        packages: u64::from(named),
-        ..Counts::default()
-    };
-    for file in files {
-        counts.absorb(file_counts(file));
-    }
-    return counts;
+#[derive(Debug, Default)]
+struct Package {
+    counts: Counts,
+    files: Vec<usize>,
 }
 
-pub(crate) fn write<W: Write>(report: &Report, out: W) -> Result<W, XmlError> {
-    let paths = &report.header().paths;
-    let views: Vec<FileView<'_>> = report
-        .files()
-        .iter()
-        .map(|(path, file)| return file_view(paths, path, file))
-        .collect();
-    let mut packages: BTreeMap<Option<&str>, Vec<&FileView<'_>>> = BTreeMap::new();
-    for view in &views {
-        packages.entry(package_of(view)).or_default().push(view);
-    }
+const FILE_DEPTH: usize = 2;
+const PACKAGED_FILE_DEPTH: usize = 3;
+
+pub(super) fn write<W: Write>(context: &Context<'_>, out: W) -> Result<W, ConvertError> {
+    let mut packages: BTreeMap<Option<String>, Package> = BTreeMap::new();
+    let mut members: Vec<bool> = Vec::new();
+    context.each(
+        &|sequence, view, _| return Ok((sequence, package_of(view), file_counts(view))),
+        &mut |(sequence, name, counts)| {
+            members.push(name.is_some());
+            let package = packages.entry(name).or_default();
+            package.counts.absorb(counts);
+            package.files.push(sequence);
+            return Ok(());
+        },
+    )?;
     let mut project = Counts::default();
-    for (package, files) in &packages {
-        project.absorb(package_counts(files, package.is_some()));
+    for (name, package) in &mut packages {
+        package.counts.packages = u64::from(name.is_some());
+        project.absorb(package.counts);
     }
-    return XmlWriter::document(out, None, |xml| {
-        let root = [
+    let mut spool = Spool::new()?;
+    context.each(
+        &|sequence, view, _| {
+            let named = members
+                .get(sequence)
+                .copied()
+                .ok_or_else(|| return context.changed())?;
+            let depth = if named {
+                PACKAGED_FILE_DEPTH
+            } else {
+                FILE_DEPTH
+            };
+            let mut fragment = XmlWriter::fragment(Vec::new(), depth);
+            file_element(&mut fragment, view)?;
+            return Ok(fragment.finish());
+        },
+        &mut |bytes| {
+            spool.push(&bytes)?;
+            return Ok(());
+        },
+    )?;
+    let mut spooled = spool.into_reader()?;
+    let mut xml = XmlWriter::begin(out, None)?;
+    xml.open(
+        "coverage",
+        &[
             ("clover", Value::Text(env!("CARGO_PKG_VERSION"))),
             ("generated", Value::Text(TIMESTAMP)),
-        ];
-        return xml.element("coverage", &root, |xml| {
-            let attributes = [("timestamp", Value::Text(TIMESTAMP))];
-            return xml.element("project", &attributes, |xml| {
-                metrics(xml, project, Level::Project)?;
-                for (package, files) in &packages {
-                    let Some(name) = package else {
-                        for file in files {
-                            file_element(xml, file)?;
-                        }
-                        continue;
-                    };
-                    xml.element("package", &[("name", Value::Text(name))], |xml| {
-                        metrics(xml, package_counts(files, true), Level::Package)?;
-                        for file in files {
-                            file_element(xml, file)?;
-                        }
-                        return Ok(());
-                    })?;
-                }
-                return Ok(());
-            });
-        });
-    });
+        ],
+    )?;
+    xml.open("project", &[("timestamp", Value::Text(TIMESTAMP))])?;
+    metrics(&mut xml, project, Level::Project)?;
+    for (name, package) in &packages {
+        if let Some(name) = name {
+            xml.open("package", &[("name", Value::Text(name))])?;
+            metrics(&mut xml, package.counts, Level::Package)?;
+        }
+        for &file in &package.files {
+            xml.raw(spooled.chunk(file)?)?;
+        }
+        if name.is_some() {
+            xml.close("package")?;
+        }
+    }
+    xml.close("project")?;
+    xml.close("coverage")?;
+    return Ok(xml.finish());
 }

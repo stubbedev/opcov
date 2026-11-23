@@ -266,6 +266,7 @@ impl Universe {
                             let zero = hits.draw();
                             return Loop::new(
                                 LoopId::new(*id),
+                                OpIndex::new(id.saturating_add(1000)),
                                 *kind,
                                 *line,
                                 zero_possible.then_some(zero),

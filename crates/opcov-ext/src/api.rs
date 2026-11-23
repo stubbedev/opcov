@@ -1090,36 +1090,26 @@ unsafe extern "C" fn write_report(execute_data: *mut zend_execute_data, _return_
             refuse(&reason);
             return;
         }
-        let Some(built) = with_engine(|engine| {
+        let Some(written) = with_engine(|engine| {
             if engine.collecting {
                 return Err(Refusal::new(
                     Exception::Logic,
                     "called while collecting; call opcov\\stop() first",
                 ));
             }
-            return engine.report(paths).map_err(|error| {
-                return Refusal::new(
-                    Exception::Runtime,
-                    format!("cannot build the report for {}: {error}", target.display()),
-                );
-            });
+            return write_atomically(&target, |out| return engine.write_report(paths, out))
+                .map_err(|error| {
+                    return Refusal::new(
+                        Exception::Runtime,
+                        report::write_failure(&target, &error),
+                    );
+                });
         }) else {
             refuse(&OffReason::NotEnabledAtStartup);
             return;
         };
-        let report = match built {
-            Ok(report) => report,
-            Err(refusal) => {
-                refusal.throw();
-                return;
-            }
-        };
-        if let Err(error) = write_atomically(&target, |out| return report.write(out)) {
-            Refusal::new(
-                Exception::Runtime,
-                format!("cannot write the report to {}: {error}", target.display()),
-            )
-            .throw();
+        if let Err(refusal) = written {
+            refusal.throw();
         }
     });
 }

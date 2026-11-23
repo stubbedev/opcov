@@ -7,6 +7,7 @@ use opcov_core::cfg::{FilePath, KeyError};
 use opcov_core::report::{FileCoverage, PathBase, Sha256, SourcePath};
 use opcov_syntax::{SourceFile, SyntaxError};
 
+use crate::failure::Failure;
 use crate::view::location;
 
 #[derive(Debug)]
@@ -85,4 +86,14 @@ pub(crate) fn key_file(path: &SourcePath) -> Result<FilePath, SourceError> {
 
 pub(crate) fn parse(path: &SourcePath, source: &[u8]) -> Result<SourceFile, SourceError> {
     return SourceFile::parse(key_file(path)?, source).map_err(SourceError::Syntax);
+}
+
+pub(crate) fn load(
+    paths: &PathBase,
+    path: &SourcePath,
+    file: &FileCoverage,
+) -> Result<SourceFile, Failure> {
+    return read_verified(paths, path, file)
+        .and_then(|source| return parse(path, &source))
+        .map_err(|error| return Failure::failed(error.to_string()));
 }

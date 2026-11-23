@@ -155,7 +155,7 @@ mod refusals {
             return variant(
                 r#""loops":[]"#,
                 &format!(
-                    r#""loops":[{{"id":"l0","kind":"PreTest","line":12,"zero":{zero},"second":[]}}]"#
+                    r#""loops":[{{"id":"l0","site":3,"kind":"PreTest","line":12,"zero":{zero},"second":[]}}]"#
                 ),
             );
         };

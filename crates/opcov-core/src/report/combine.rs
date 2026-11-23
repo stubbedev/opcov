@@ -72,6 +72,7 @@ pub enum OutcomeField {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoopField {
+    Site,
     Kind,
     Line,
     Zero,
@@ -122,6 +123,7 @@ impl fmt::Display for ConflictSite {
                 field,
             } => {
                 let field = match field {
+                    LoopField::Site => "site",
                     LoopField::Kind => "kind",
                     LoopField::Line => "line",
                     LoopField::Zero => "zero",
@@ -466,6 +468,7 @@ fn union_loops(function: &FunctionKey, left: Loop, right: Loop) -> Result<Loop, 
             };
         };
     };
+    clash_if(&left.site, &right.site, site(LoopField::Site))?;
     clash_if(&left.kind, &right.kind, site(LoopField::Kind))?;
     clash_if(&left.line, &right.line, site(LoopField::Line))?;
     clash_if(

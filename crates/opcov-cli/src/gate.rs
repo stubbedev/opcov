@@ -6,15 +6,16 @@ use std::path::Path;
 use opcov_core::cfg::{Line, LoopShape};
 use opcov_core::kind::EdgeKind;
 use opcov_core::report::{
-    FileCoverage, Function, HitSet, Identified, LoopId, OutcomeId, Report, SourcePath,
+    FileCoverage, Function, Header, HitSet, Identified, LoopId, OutcomeId, SourcePath,
     Span as ReportSpan, TestTable,
 };
-use opcov_syntax::{FunctionSource, SourceFile, Span};
+use opcov_syntax::{FunctionSource, Span};
 use serde::Serialize;
 
 use crate::changes::{Change, ChangeSet, FileChange, resolve};
-use crate::failure::Verdict;
-use crate::source::SourceError;
+use crate::failure::{Failure, Verdict};
+use crate::source;
+use crate::stream;
 use crate::view::is_nested;
 
 #[derive(Debug, Serialize)]
@@ -63,7 +64,7 @@ impl FunctionResult<'_> {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct FileResult<'r> {
-    path: &'r SourcePath,
+    path: SourcePath,
     functions: Vec<FunctionResult<'r>>,
 }
 
@@ -176,10 +177,10 @@ fn test_names<'r>(tests: &'r TestTable, hits: &HitSet) -> Vec<&'r str> {
 
 fn evaluate_function<'r>(
     tests: &'r TestTable,
-    file: &'r FileCoverage,
+    file: &FileCoverage,
     functions: &[FunctionSource],
     index: usize,
-    measured: Option<&'r Function>,
+    measured: Option<&Function>,
 ) -> Option<FunctionResult<'r>> {
     let source = functions.get(index)?;
     let (first, last) = line_range(source.span());
@@ -254,51 +255,73 @@ fn evaluate_function<'r>(
     });
 }
 
+fn evaluate_file<'r>(
+    header: &'r Header,
+    path: SourcePath,
+    file: &FileCoverage,
+    changes: &[&FileChange],
+) -> Result<FileResult<'r>, Failure> {
+    let source = source::load(&header.paths, &path, file)?;
+    let functions = source.functions();
+    let mut selected = BTreeSet::new();
+    for change in changes {
+        selected.extend(changed_functions(functions, change));
+    }
+    let results = selected
+        .into_iter()
+        .filter_map(|index| {
+            let found = functions
+                .get(index)
+                .and_then(|function| return file.functions.get(function.key()));
+            return evaluate_function(&header.tests, file, functions, index, found);
+        })
+        .collect();
+    return Ok(FileResult {
+        path,
+        functions: results,
+    });
+}
+
 pub(crate) fn evaluate<'r>(
-    report: &'r Report,
+    report: &Path,
+    header: &'r Header,
     changes: &ChangeSet,
     base: &Path,
-    mut load: impl FnMut(&SourcePath, &FileCoverage) -> Result<SourceFile, SourceError>,
-) -> Result<GateResult<'r>, SourceError> {
-    let header = report.header();
-    let mut targets: BTreeMap<&'r SourcePath, (&'r FileCoverage, Vec<&FileChange>)> =
-        BTreeMap::new();
-    let mut unmeasured = Vec::new();
-    for (changed, change) in changes.files() {
-        let found = resolve(&header.paths, base, changed)
-            .and_then(|path| return report.files().get_key_value(&path));
-        match found {
-            Some((path, file)) => targets
-                .entry(path)
-                .or_insert((file, Vec::new()))
-                .1
-                .push(change),
-            None => unmeasured.push(changed.display().to_string()),
+) -> Result<GateResult<'r>, Failure> {
+    let resolved: Vec<(&Path, Option<SourcePath>)> = changes
+        .files()
+        .map(|(changed, _)| return (changed, resolve(&header.paths, base, changed)))
+        .collect();
+    let mut targets: BTreeMap<&SourcePath, Vec<&FileChange>> = BTreeMap::new();
+    for ((_, path), (_, change)) in resolved.iter().zip(changes.files()) {
+        if let Some(path) = path {
+            targets.entry(path).or_default().push(change);
         }
     }
     let mut files = Vec::with_capacity(targets.len());
-    for (path, (file, file_changes)) in targets {
-        let source = load(path, file)?;
-        let measured = &file.functions;
-        let functions = source.functions();
-        let mut selected = BTreeSet::new();
-        for change in file_changes {
-            selected.extend(changed_functions(functions, change));
-        }
-        let results = selected
-            .into_iter()
-            .filter_map(|index| {
-                let found = functions
-                    .get(index)
-                    .and_then(|function| return measured.get(function.key()));
-                return evaluate_function(&header.tests, file, functions, index, found);
-            })
-            .collect();
-        files.push(FileResult {
-            path,
-            functions: results,
-        });
-    }
+    stream::entries(
+        report,
+        header,
+        &|path| return targets.contains_key(path),
+        &|_, path, file| {
+            let parts = targets.get(&path).map_or(&[][..], Vec::as_slice);
+            return evaluate_file(header, path, &file, parts);
+        },
+        &mut |result| {
+            files.push(result);
+            return Ok(());
+        },
+    )?;
+    let measured: BTreeSet<&SourcePath> = files.iter().map(|file| return &file.path).collect();
+    let unmeasured = resolved
+        .iter()
+        .filter(|(_, path)| {
+            return path
+                .as_ref()
+                .is_none_or(|path| return !measured.contains(path));
+        })
+        .map(|(changed, _)| return changed.display().to_string())
+        .collect();
     let findings = files
         .iter()
         .flat_map(|file| return file.functions.iter())

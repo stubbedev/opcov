@@ -202,9 +202,10 @@
     "loop": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "line", "zero", "second"],
+      "required": ["id", "site", "kind", "line", "zero", "second"],
       "properties": {
         "id": { "type": "string", "pattern": "^l(0|[1-9][0-9]*)$" },
+        "site": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
         "kind": { "enum": ["Foreach", "PreTest", "PostTest"] },
         "line": { "$ref": "#/$defs/line" },
         "zero": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/hits" }] },
