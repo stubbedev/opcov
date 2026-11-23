@@ -39,10 +39,10 @@ final readonly class ChangedLines
             $removed = $match[1] === '' ? 1 : (int) $match[1];
             $start = (int) $match[2];
             $count = isset($match[3]) && $match[3] !== '' ? (int) $match[3] : 1;
-            if ($removed > 0) {
-                $gaps[$file][] = $count === 0 ? $start + 1 : $start;
-            }
             if ($count === 0) {
+                if ($removed > 0) {
+                    $gaps[$file][] = $start + 1;
+                }
                 continue;
             }
             foreach (range($start, $start + $count - 1) as $line) {
