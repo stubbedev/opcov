@@ -53,7 +53,10 @@
   sources = lib.fileset.unions [
     (craneLib.fileset.commonCargoSources ../.)
     ../crates
-    (lib.fileset.maybeMissing ../schema)
+    ../schema
+    ../.config
+    ../tests/phpt/keys/fixtures
+    ../docs/troubleshooting.md
   ];
 
   commonArgs =
