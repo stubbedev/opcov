@@ -15,7 +15,7 @@
         rustfmt = {
           enable = true;
           package = rustToolchain;
-          inherit ((lib.importTOML ../Cargo.toml).package) edition;
+          inherit ((lib.importTOML ../Cargo.toml).workspace.package) edition;
         };
         taplo.enable = true;
         yamlfmt = {

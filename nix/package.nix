@@ -7,10 +7,12 @@
     ...
   }: let
     cargoToml = lib.importTOML ../Cargo.toml;
+    inherit (cargoToml.workspace.package) description repository;
 
     commonArgs =
       cargoEnv
       // {
+        pname = "opcov";
         src = craneLib.cleanCargoSource ../.;
         strictDeps = true;
       };
@@ -39,10 +41,10 @@
         doCheck = false;
 
         meta = {
-          inherit (cargoToml.package) description;
-          homepage = cargoToml.package.repository;
+          inherit description;
+          homepage = repository;
           license = lib.licenses.mit;
-          mainProgram = cargoToml.package.name;
+          mainProgram = "opcov";
           platforms = lib.platforms.unix;
         };
       });

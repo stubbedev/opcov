@@ -1,0 +1,20 @@
+[package]
+name = "opcov-cli"
+version.workspace = true
+edition.workspace = true
+description = "Command-line tool to merge, convert and check opcov reports"
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "opcov"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+opcov-core.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
