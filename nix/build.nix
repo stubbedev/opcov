@@ -12,6 +12,7 @@
       extensions = [
         "rust-analyzer"
         "rust-src"
+        "rustc-codegen-cranelift-preview"
       ];
     });
 

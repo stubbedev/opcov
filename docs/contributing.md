@@ -49,10 +49,18 @@ The shells are `php84`, `php84-zts`, `php85`, `php85-zts`, `php86`,
 
 ### Fast iteration
 
-- Every build uses the LLVM backend. Cranelift would compile unoptimised code
-  faster, but it does not implement unwinding, so the extension's
-  `catch_unwind` guards would catch nothing and a panic would abort PHP
-  ([ADR 0001](adr/0001-bindings.md)).
+- Dev and test builds of `opcov-cli` and `opcov-syntax` use the Cranelift
+  backend (`.cargo/config.toml`; the toolchain in `nix/build.nix` ships
+  `rustc-codegen-cranelift-preview`). Everything else stays on LLVM:
+  Cranelift does not implement unwinding, so a `catch_unwind` compiled with it
+  catches nothing and a panic passing through its frames skips their
+  destructors ([ADR 0001](adr/0001-bindings.md)). That rules out `opcov-ext`,
+  `opcov-sys` and `opcov-core`, whose code runs inside PHP under the
+  extension's panic guard, and every third-party crate (`"*"`), since rayon,
+  `std::thread::scope` and the extension's dependencies rely on unwinding.
+  Release builds always use LLVM. Measured with two jobs and no sccache,
+  Cranelift cuts a full rebuild of `opcov-cli` from 4.3 s to 3.5 s and of the
+  `opcov-syntax` tests from 3.4 s to 2.8 s.
 - Every build on Linux links with mold: crane's `stdenvSelector` in
   `nix/build.nix` picks `useMoldLinker` over `clangStdenv`, and the dev shell
   reuses that stdenv. macOS keeps clang's default linker, since mold cannot

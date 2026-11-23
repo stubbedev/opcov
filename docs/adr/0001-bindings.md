@@ -11,9 +11,13 @@ opcov binds to the Zend engine through its own `opcov-sys` crate:
 - `bindgen` runs over the headers of the exact PHP being targeted, found through
   `php-config` (`PHP_CONFIG`, else `php-config` on `PATH`), with an allowlist of
   the engine items opcov uses (`ENGINE_ITEMS` in `crates/opcov-sys/build.rs`).
-- A C shim compiled by `cc` (`crates/opcov-sys/shim/shim.c`, about 180 lines plus a 45-line header) exports
+- A C shim compiled by `cc` (`crates/opcov-sys/shim/shim.c`, about 460 lines plus a 75-line header) exports
   the inline functions, macros and TSRM-indirected globals that bindgen cannot
-  emit. It holds accessors only.
+  emit. It holds accessors and wrappers, never opcov's logic and never user code:
+  globals and INI accessors, zval and array builders, argument parsing, the
+  readers of operand, iterator and fast-call state that branch probes need
+  (ADR 0002), and the `zend_try` wrappers around every engine call that can raise
+  a fatal error while Rust frames are on the stack (see "Fatal errors" below).
 - Zend macros that are pure data (`STANDARD_MODULE_HEADER`/`_PROPERTIES`,
   `ZEND_NS_FE`, `ZEND_FE_END`, `ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX`) are
   rewritten in Rust in `opcov-sys` (`Module`, `FunctionTable`, `ArgInfo`,
@@ -103,7 +107,8 @@ target headers:
 | `opcov_fast_call_var()`, `opcov_fast_call_threw()` | the finally's fast-call variable (`try_catch_array[].finally_end`'s op1) and `Z_OBJ_P` of it |
 
 `shim.h` also declares four PCRE functions by hand (`pcre_get_compiled_regex_cache`,
-`php_pcre_pce_incref`, `php_pcre_pce_decref`, `php_pcre_match_impl`, with
+`php_pcre_pce_incref`, `php_pcre_pce_decref`, `php_pcre_match_impl`, the first and
+last only called from the shim's own `opcov_pcre_compile`/`opcov_pcre_match`, with
 `pcre_cache_entry` as an opaque type) instead of including
 `ext/pcre/php_pcre.h`: with an external PCRE2 (nixpkgs, most distributions)
 that header includes `pcre2.h`, which `php-config --includes` does not list.
@@ -138,12 +143,19 @@ Two constraints found while proving it:
 
 - The Cranelift backend does not implement unwinding: built with it,
   `catch_unwind` in the extension catches nothing and the guard's unit tests
-  fail. The dev profile therefore uses LLVM again (`nix/toolchain.nix` no longer
-  sets `CARGO_PROFILE_DEV_CODEGEN_BACKEND=cranelift`). Cargo cannot select a
-  backend per package from the environment, and per-package profile settings
-  need `cargo-features = ["codegen-backend"]`, which Dependabot's stable cargo
-  cannot parse. A `.cargo/config.toml` override for `opcov-ext` alone would bring
-  Cranelift back for the other crates.
+  fail. A panic that unwinds through Cranelift frames up to an LLVM
+  `catch_unwind` is caught, but the destructors in those frames never run, and
+  `std::thread::scope` instantiated in a Cranelift crate no longer joins its
+  threads when its closure panics. So every crate whose frames a panic can
+  cross inside PHP must use LLVM: `opcov-ext`, `opcov-sys`, `opcov-core` and
+  all third-party crates. `.cargo/config.toml` sets this per package
+  (`[unstable] codegen-backend`, Cranelift for `[profile.dev]`, LLVM for
+  `"*"` and those three), leaving Cranelift for `opcov-cli` and
+  `opcov-syntax`. The test profile inherits these overrides, and cargo builds
+  one `opcov-core` per profile, shared by the extension and the CLI, so
+  `opcov-core` stays on LLVM even for its own tests. Settings in
+  `.cargo/config.toml` do not touch `Cargo.toml`, which Dependabot's stable
+  cargo still parses (`cargo update` and `cargo metadata` run with it).
 - Engine calls that can raise a fatal error `longjmp` through Rust frames
   (`zend_bailout`). `catch_unwind` does not see that, and any Rust value with a
   destructor between the engine and the `longjmp` target leaks or is skipped.
@@ -264,3 +276,26 @@ that differ between glibc and macOS (`FILE`, `sigaction`, `jmp_buf`) are
 generated opaque so their fields cannot change that set. If a lint fires on one
 platform only, the `expect` turns into `unfulfilled_lint_expectations` there;
 the narrowest sound fix is then to make the offending libc type opaque too.
+
+## Fatal errors
+
+A PHP fatal error (`E_ERROR`, memory exhaustion, a compile error) leaves through
+`zend_bailout()`, a `longjmp` to the nearest `zend_try`. Jumping over a Rust frame
+that owns a value with a destructor is undefined behaviour, and it would skip
+opcov's own bookkeeping (the engine's re-entrancy flag would stay set). Every
+engine call that can raise one while Rust frames are on the stack therefore goes
+through a shim wrapper that runs it inside `zend_try` and returns `false` when it
+bailed out: the compile hooks' calls into the original `zend_compile_file` and
+`zend_compile_string`, arena creation and `zend_build_cfg`, PCRE compilation and
+matching, exception throwing, and every zval and array builder that allocates.
+The Rust side records the caught bailout, returns through its frames normally,
+and the outermost entry point (`guard`, or the compile hook after restoring
+`CG(compiler_options)`) resumes it with `opcov_bailout()` from a frame that owns
+nothing. `tests/phpt/engine/bailout.phpt` exhausts the memory limit inside
+`get_debug_info()` and checks that shutdown functions find opcov usable and the
+report is still written.
+
+Calls that cannot bail out (reads, `zend_vm_set_opcode_handler`, hash lookups)
+are not wrapped. `php_info_print_table_row()` (only during `phpinfo()`) and
+`zend_resolve_path()` (called from a frame that owns nothing) are not wrapped
+either.

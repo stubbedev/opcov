@@ -1,0 +1,17 @@
+[unstable]
+codegen-backend = true
+
+[profile.dev]
+codegen-backend = "cranelift"
+
+[profile.dev.package."*"]
+codegen-backend = "llvm"
+
+[profile.dev.package.opcov-core]
+codegen-backend = "llvm"
+
+[profile.dev.package.opcov-ext]
+codegen-backend = "llvm"
+
+[profile.dev.package.opcov-sys]
+codegen-backend = "llvm"
