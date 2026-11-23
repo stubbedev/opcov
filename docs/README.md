@@ -6,6 +6,7 @@
 - [configuration.md](configuration.md): the `opcov.*` INI settings, file selection, executable-line rules and the `\opcov\` PHP API.
 - [phpunit.md](phpunit.md): the `opcov/phpunit` package for PHPUnit 12/13 and Pest 4, the launcher, paratest, the PHPUnit 13.3 driver and `.cov` conversion.
 - [cli.md](cli.md): the `opcov` command: `merge`, `convert`, `gate` and `doctor`, with exit codes and output formats.
+- [gate.md](gate.md): running `opcov gate` on changed code in CI, the comparison with an Xdebug-based gate on a real branch, and migration notes.
 - [report-schema.md](report-schema.md): the canonical report `opcov-report/1`, its version policy, how to consume it and how merging works.
 - [branch-semantics.md](branch-semantics.md): every outcome kind and loop finding, what counts toward a verdict, and the differences from Xdebug and PCOV.
 - [troubleshooting.md](troubleshooting.md): every message opcov refuses collection with, and the fix.

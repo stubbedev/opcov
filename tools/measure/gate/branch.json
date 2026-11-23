@@ -1,0 +1,6 @@
+{
+    "project": "symfony-string",
+    "description": "the symfony/string 8.1 patch releases v8.1.0 to v8.1.10",
+    "base": "afd5944f4005862d961efb85c8bbd5c523c4e3c9",
+    "head": "6c6110979c0150393bbb336170e286d51ab4d76c"
+}

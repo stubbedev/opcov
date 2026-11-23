@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+    echo "usage: tools/measure/gate/gate collect|compare [options]" >&2
+    exit 2
+fi
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+php_attribute="${OPCOV_MEASURE_PHP:-php85}"
+cache="$root/target/measure-cache"
+environment="$cache/env-$php_attribute"
+
+nix build --impure --file "$root/tools/measure/env.nix" --argstr php "$php_attribute" --out-link "$environment"
+
+if [[ -n "${OPCOV_EXTENSION:-}" && -n "${OPCOV_CLI:-}" ]]; then
+    extension="$OPCOV_EXTENSION"
+    cli="$OPCOV_CLI"
+else
+    target="$cache/cargo-$php_attribute"
+    nix develop "$root" --command env PHP_CONFIG="$environment/bin/php-config" CARGO_TARGET_DIR="$target" \
+        cargo build --locked --release --package opcov-ext --package opcov-cli
+    extension="$target/release/libopcov_ext.so"
+    cli="$target/release/opcov"
+fi
+
+command="$1"
+shift
+exec "$environment/bin/php" "$root/tools/measure/gate/php/main.php" "$command" --env "$environment" --opcov "$extension" --cli "$cli" "$@"
