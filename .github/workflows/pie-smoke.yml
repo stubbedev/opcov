@@ -46,6 +46,7 @@ jobs:
       - name: Install opcov ${{ inputs.version }} with PIE and check the version it reports
         env:
           VERSION: ${{ inputs.version }}
+          GITHUB_TOKEN: ${{ github.token }}
           IMAGE: ${{ matrix.image }}
           FORMULA: ${{ matrix.formula }}
         run: |
@@ -53,7 +54,7 @@ jobs:
           curl -fsSL --retry 3 --output "$pie" "https://github.com/php/pie/releases/download/$PIE_VERSION/pie.phar"
           echo "$PIE_SHA256  $pie" | shasum --algorithm 256 --check --strict
           if [ -n "$IMAGE" ]; then
-            docker run --detach --name smoke --volume "$pie:$pie:ro" "$IMAGE" tail -f /dev/null
+            docker run --detach --name smoke --env GITHUB_TOKEN --volume "$pie:$pie:ro" "$IMAGE" tail -f /dev/null
             php=(docker exec smoke php)
           else
             brew install "$FORMULA"
