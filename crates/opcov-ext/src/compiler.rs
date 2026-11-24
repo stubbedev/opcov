@@ -306,8 +306,7 @@ unsafe fn gather_class(
     // SAFETY: as above.
     let entry = unsafe { &*class };
     // SAFETY: a class's method table is a live map of zend_function pointers.
-    for function in unsafe { zend::map_values::<zend_function>(&raw const entry.function_table, 0) }
-    {
+    for function in unsafe { zend::map_values::<zend_function>(&entry.function_table, 0) } {
         // SAFETY: as above.
         unsafe { gather_function(list, function, slot) };
     }
@@ -315,8 +314,7 @@ unsafe fn gather_class(
         return;
     }
     // SAFETY: a class's property table is a live map of zend_property_info pointers.
-    let properties =
-        unsafe { zend::map_values::<zend_property_info>(&raw const entry.properties_info, 0) };
+    let properties = unsafe { zend::map_values::<zend_property_info>(&entry.properties_info, 0) };
     for property in properties {
         // SAFETY: each value is a live property info.
         let hooks = unsafe { (*property).hooks };

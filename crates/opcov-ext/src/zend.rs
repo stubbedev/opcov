@@ -34,42 +34,51 @@ pub(crate) fn executor_globals() -> *mut zend_executor_globals {
     return unsafe { opcov_executor_globals() };
 }
 
-pub(crate) const unsafe fn map_used(map: *const HashTable) -> u32 {
-    // SAFETY: the caller passes a live hash table.
-    return unsafe { (*map).nNumUsed };
+pub(crate) const fn map_used(map: &HashTable) -> u32 {
+    return map.nNumUsed;
 }
 
-pub(crate) unsafe fn map_values<T>(
-    map: *const HashTable,
-    from: u32,
-) -> impl Iterator<Item = *mut T> {
-    // SAFETY: forwarded from the caller.
-    let used = unsafe { map_used(map) };
-    return (from..used).filter_map(move |index| {
-        // SAFETY: `index` is below nNumUsed of a live map whose values are pointers.
+pub(crate) unsafe fn map_values<T>(map: &HashTable, from: u32) -> impl Iterator<Item = *mut T> {
+    return (from..map_used(map)).filter_map(move |index| {
+        // SAFETY: `index` is below nNumUsed of the borrowed map, whose values the caller guarantees
+        // are pointers to `T`.
         let value = unsafe { opcov_map_ptr_at(map, index) };
         return (!value.is_null()).then(|| return value.cast::<T>());
     });
 }
 
+unsafe fn function_table<'a>() -> &'a HashTable {
+    // SAFETY: once zend_startup (and, under ZTS, the thread's compiler-globals constructor) has
+    // run, which precedes every extension hook, the function table pointer is never null and points at a
+    // table that stays live until shutdown.
+    return unsafe { &*(*compiler_globals()).function_table };
+}
+
+unsafe fn class_table<'a>() -> &'a HashTable {
+    // SAFETY: once zend_startup (and, under ZTS, the thread's compiler-globals constructor) has
+    // run, which precedes every extension hook, the class table pointer is never null and points at a
+    // table that stays live until shutdown.
+    return unsafe { &*(*compiler_globals()).class_table };
+}
+
 pub(crate) unsafe fn function_table_used() -> u32 {
-    // SAFETY: the compiler globals hold a live function table during a request.
-    return unsafe { map_used((*compiler_globals()).function_table) };
+    // SAFETY: forwarded from the caller, who runs inside an engine hook.
+    return map_used(unsafe { function_table() });
 }
 
 pub(crate) unsafe fn class_table_used() -> u32 {
-    // SAFETY: the compiler globals hold a live class table during a request.
-    return unsafe { map_used((*compiler_globals()).class_table) };
+    // SAFETY: forwarded from the caller, who runs inside an engine hook.
+    return map_used(unsafe { class_table() });
 }
 
 pub(crate) unsafe fn new_functions(from: u32) -> impl Iterator<Item = *mut zend_function> {
-    // SAFETY: the compiler globals hold a live function table during a request.
-    return unsafe { map_values((*compiler_globals()).function_table, from) };
+    // SAFETY: the function table maps names to zend_function pointers.
+    return unsafe { map_values(function_table(), from) };
 }
 
 pub(crate) unsafe fn new_classes(from: u32) -> impl Iterator<Item = *mut zend_class_entry> {
-    // SAFETY: the compiler globals hold a live class table during a request.
-    return unsafe { map_values((*compiler_globals()).class_table, from) };
+    // SAFETY: the class table maps names to zend_class_entry pointers.
+    return unsafe { map_values(class_table(), from) };
 }
 
 pub(crate) fn c_text(text: &str) -> std::ffi::CString {

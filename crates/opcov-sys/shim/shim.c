@@ -152,12 +152,13 @@ bool opcov_parse_path(zend_execute_data *execute_data, const char **path, size_t
 	return true;
 }
 
-bool opcov_parse_array(zend_execute_data *execute_data, HashTable **array)
+const HashTable *opcov_parse_array(zend_execute_data *execute_data)
 {
+	HashTable *array;
 	ZEND_PARSE_PARAMETERS_START(1, 1)
-		Z_PARAM_ARRAY_HT(*array)
-	ZEND_PARSE_PARAMETERS_END_EX(return false);
-	return true;
+		Z_PARAM_ARRAY_HT(array)
+	ZEND_PARSE_PARAMETERS_END_EX(return NULL);
+	return array;
 }
 
 bool opcov_parse_optional_string(zend_execute_data *execute_data, const char **str, size_t *len)
@@ -173,7 +174,7 @@ bool opcov_parse_optional_string(zend_execute_data *execute_data, const char **s
 	return true;
 }
 
-bool opcov_parse_path_and_array(zend_execute_data *execute_data, const char **path, size_t *len, HashTable **array)
+bool opcov_parse_path_and_array(zend_execute_data *execute_data, const char **path, size_t *len, const HashTable **array)
 {
 	char *value;
 	HashTable *options = NULL;
@@ -304,9 +305,9 @@ void *opcov_map_ptr_at(const HashTable *map, uint32_t index)
 	return Z_TYPE(bucket->val) == IS_UNDEF ? NULL : Z_PTR(bucket->val);
 }
 
-zval *opcov_array_value_at(HashTable *array, uint32_t index)
+const zval *opcov_array_value_at(const HashTable *array, uint32_t index)
 {
-	zval *value = HT_IS_PACKED(array) ? array->arPacked + index : &array->arData[index].val;
+	const zval *value = HT_IS_PACKED(array) ? array->arPacked + index : &array->arData[index].val;
 	if (Z_TYPE_P(value) == IS_UNDEF) {
 		return NULL;
 	}
@@ -314,15 +315,15 @@ zval *opcov_array_value_at(HashTable *array, uint32_t index)
 	return value;
 }
 
-bool opcov_array_entry_at(HashTable *array, uint32_t index, zend_string **key, zend_ulong *number, zval **value)
+bool opcov_array_entry_at(const HashTable *array, uint32_t index, zend_string **key, zend_ulong *number, const zval **value)
 {
-	zval *found;
+	const zval *found;
 	if (HT_IS_PACKED(array)) {
 		found = array->arPacked + index;
 		*key = NULL;
 		*number = index;
 	} else {
-		Bucket *bucket = array->arData + index;
+		const Bucket *bucket = array->arData + index;
 		found = &bucket->val;
 		*key = bucket->key;
 		*number = bucket->h;

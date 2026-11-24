@@ -338,12 +338,10 @@ unsafe extern "C" fn reset(execute_data: *mut zend_execute_data, _return_value: 
     });
 }
 
-unsafe fn requested_paths<'a>(files: *mut HashTable) -> Result<Vec<&'a [u8]>, u32> {
-    // SAFETY: the caller passes the live argument array.
-    let used = unsafe { zend::map_used(files) };
+fn requested_paths(files: &HashTable) -> Result<Vec<&[u8]>, u32> {
     let mut paths = Vec::new();
-    for index in 0..used {
-        // SAFETY: `index` is below nNumUsed of the live argument array.
+    for index in 0..zend::map_used(files) {
+        // SAFETY: `index` is below nNumUsed of the borrowed argument array.
         let value = unsafe { opcov_array_value_at(files, index) };
         if value.is_null() {
             continue;
@@ -354,7 +352,7 @@ unsafe fn requested_paths<'a>(files: *mut HashTable) -> Result<Vec<&'a [u8]>, u3
         if !unsafe { opcov_read_string(value, &raw mut text, &raw mut length) } {
             return Err(index);
         }
-        // SAFETY: a PHP string's bytes stay alive while the argument array does, i.e. this call.
+        // SAFETY: a PHP string's bytes stay alive while the borrowed array that holds it does.
         paths.push(unsafe { core::slice::from_raw_parts(text.cast::<u8>(), length) });
     }
     return Ok(paths);
@@ -424,13 +422,12 @@ unsafe fn emit_entry(target: *mut zval, entry: &Entry) -> Result<(), EntryError>
 
 unsafe extern "C" fn executable(execute_data: *mut zend_execute_data, return_value: *mut zval) {
     guard(EntryPoint::Executable, (), || {
-        let mut files: *mut HashTable = core::ptr::null_mut();
-        // SAFETY: the engine calls this handler with the frame of this call.
-        if !unsafe { opcov_parse_array(execute_data, &raw mut files) } {
+        // SAFETY: the engine calls this handler with the frame of this call; the shim returns the
+        // argument's array, live during this call, or null when parsing failed and threw.
+        let Some(files) = (unsafe { opcov_parse_array(execute_data).as_ref() }) else {
             return;
-        }
-        // SAFETY: the argument array is live during this call.
-        let requested = match unsafe { requested_paths(files) } {
+        };
+        let requested = match requested_paths(files) {
             Ok(requested) => requested,
             Err(position) => {
                 php::throw(
@@ -870,18 +867,16 @@ unsafe fn root_option(value: *const zval) -> Result<PathBuf, Refusal> {
     return Ok(PathBuf::from(OsStr::from_bytes(bytes)));
 }
 
-unsafe fn report_options(options: *mut HashTable) -> Result<ReportOptions, Refusal> {
+fn report_options(options: Option<&HashTable>) -> Result<ReportOptions, Refusal> {
     let mut parsed = ReportOptions::default();
-    if options.is_null() {
+    let Some(options) = options else {
         return Ok(parsed);
-    }
-    // SAFETY: the caller passes the live argument array.
-    let used = unsafe { zend::map_used(options) };
-    for index in 0..used {
+    };
+    for index in 0..zend::map_used(options) {
         let mut key: *mut zend_string = core::ptr::null_mut();
         let mut number: zend_ulong = 0;
-        let mut value: *mut zval = core::ptr::null_mut();
-        // SAFETY: `index` is below nNumUsed of the live argument array.
+        let mut value: *const zval = core::ptr::null();
+        // SAFETY: `index` is below nNumUsed of the borrowed argument array.
         if !unsafe {
             opcov_array_entry_at(
                 options,
@@ -984,7 +979,7 @@ unsafe fn report_arguments(
 ) -> Option<Result<(PathBuf, PathBase), Refusal>> {
     let mut text: *const c_char = core::ptr::null();
     let mut length = 0_usize;
-    let mut options: *mut HashTable = core::ptr::null_mut();
+    let mut options: *const HashTable = core::ptr::null();
     // SAFETY: the caller passes the frame of this call.
     if !unsafe {
         opcov_parse_path_and_array(
@@ -998,6 +993,8 @@ unsafe fn report_arguments(
     }
     // SAFETY: the path argument's bytes stay alive during this call.
     let bytes = unsafe { core::slice::from_raw_parts(text.cast::<u8>(), length) };
+    // SAFETY: the optional argument is null when omitted, otherwise an array live during this call.
+    let options = unsafe { options.as_ref() };
     let parsed = (|| {
         if bytes.is_empty() {
             return Err(Refusal::new(
@@ -1005,8 +1002,7 @@ unsafe fn report_arguments(
                 "Argument #1 ($path) must not be empty",
             ));
         }
-        // SAFETY: the options array is null or live during this call.
-        let options = unsafe { report_options(options) }?;
+        let options = report_options(options)?;
         let cwd = working_directory()?;
         let paths = report_paths(&options, &cwd)?;
         return Ok((cwd.join(OsStr::from_bytes(bytes)), paths));
