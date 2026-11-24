@@ -17,11 +17,11 @@ final class WorkloadResult
     /** @var array<string, ReportSize> */
     private array $reports = [];
 
-    /** @var array<string, list<float>> */
-    private array $seconds = [];
+    /** @var array<string, list<Sample>> */
+    private array $samples = [];
 
-    /** @var array<string, list<int>> */
-    private array $rss = [];
+    /** @var array<string, Sample> */
+    private array $systemAllocator = [];
 
     /** @var array<string, true> */
     private array $timedOut = [];
@@ -35,7 +35,7 @@ final class WorkloadResult
     public function timedOut(Driver $driver): void
     {
         $this->timedOut[$driver->value] = true;
-        unset($this->seconds[$driver->value], $this->rss[$driver->value], $this->payloadBytes[$driver->value], $this->reports[$driver->value]);
+        unset($this->samples[$driver->value], $this->systemAllocator[$driver->value], $this->payloadBytes[$driver->value], $this->reports[$driver->value]);
     }
 
     public function hasTimedOut(Driver $driver): bool
@@ -55,11 +55,16 @@ final class WorkloadResult
         return $this->reports[$driver->value] ?? throw new \LogicException("{$this->workload->value} has no report size for {$driver->value}");
     }
 
-    public function timed(Driver $driver, int $tests, float $seconds, int $rssBytes): void
+    public function timed(Driver $driver, int $tests, Sample $sample): void
     {
         $this->expectTests($driver, $tests);
-        $this->seconds[$driver->value][] = $seconds;
-        $this->rss[$driver->value][] = $rssBytes;
+        $this->samples[$driver->value][] = $sample;
+    }
+
+    public function systemAllocator(Driver $driver, int $tests, Sample $sample): void
+    {
+        $this->expectTests($driver, $tests);
+        $this->systemAllocator[$driver->value] = $sample;
     }
 
     public function tests(): int
@@ -72,31 +77,57 @@ final class WorkloadResult
     {
         return array_values(array_filter(
             Driver::cases(),
-            fn (Driver $driver): bool => isset($this->seconds[$driver->value]) || isset($this->timedOut[$driver->value]),
+            fn (Driver $driver): bool => isset($this->samples[$driver->value]) || isset($this->timedOut[$driver->value]),
         ));
     }
 
-    public function time(Driver $driver): Stats
+    /** @param \Closure(Sample): (float|int|null) $metric */
+    public function stats(Driver $driver, \Closure $metric): ?Stats
     {
-        return Stats::of($this->seconds[$driver->value] ?? throw new \LogicException("{$this->workload->value} has no times for {$driver->value}"));
+        $values = [];
+        foreach ($this->samples[$driver->value] ?? throw new \LogicException("{$this->workload->value} has no samples for {$driver->value}") as $sample) {
+            $value = $metric($sample);
+            if ($value === null) {
+                return null;
+            }
+            $values[] = $value;
+        }
+        return Stats::of($values);
     }
 
-    public function rss(Driver $driver): Stats
+    public function counter(Driver $driver, string $event): ?Stats
     {
-        return Stats::of($this->rss[$driver->value] ?? throw new \LogicException("{$this->workload->value} has no RSS for {$driver->value}"));
+        return $this->stats($driver, static fn (Sample $sample): ?float => $sample->counters->values[$event] ?? throw new \LogicException("no $event counter"));
+    }
+
+    /** @return array<string, string> */
+    public function reportedEvents(Driver $driver): array
+    {
+        return ($this->samples[$driver->value] ?? throw new \LogicException("{$this->workload->value} has no samples for {$driver->value}"))[0]->counters->reported;
+    }
+
+    /** @param \Closure(Sample): (float|int|null) $metric */
+    public function ratio(Driver $driver, \Closure $metric): ?float
+    {
+        if (!isset($this->samples[Driver::None->value])) {
+            return null;
+        }
+        $mine = $this->stats($driver, $metric);
+        $none = $this->stats(Driver::None, $metric);
+        if ($mine === null || $none === null || $none->median <= 0.0) {
+            return null;
+        }
+        return $mine->median / $none->median;
+    }
+
+    public function systemSample(Driver $driver): ?Sample
+    {
+        return $this->systemAllocator[$driver->value] ?? null;
     }
 
     public function payloadBytes(Driver $driver): int
     {
         return $this->payloadBytes[$driver->value] ?? throw new \LogicException("{$this->workload->value} has no payload size for {$driver->value}");
-    }
-
-    public function overhead(Driver $driver): ?float
-    {
-        if (!isset($this->seconds[Driver::None->value])) {
-            return null;
-        }
-        return $this->time($driver)->median / $this->time(Driver::None)->median;
     }
 
     /** @return array<string, mixed> */
@@ -109,8 +140,8 @@ final class WorkloadResult
                 continue;
             }
             $drivers[$driver->value] = [
-                'seconds' => $this->seconds[$driver->value],
-                'peak_rss_bytes' => $this->rss[$driver->value],
+                'runs' => array_map(static fn (Sample $sample): array => $sample->toArray(), $this->samples[$driver->value]),
+                'system_allocator_run' => $this->systemSample($driver)?->toArray() ?? ['timed_out_after_seconds' => $this->budgetSeconds],
                 'payload_bytes' => $this->payloadBytes($driver),
                 'report' => $this->report($driver)->toArray(),
             ];

@@ -186,19 +186,19 @@ tools/measure/gate/gate compare --write-docs # and rewrite the results section o
 ### Results
 
 <!-- gate:results:begin -->
-Branch: the symfony/string 8.1 patch releases v8.1.0 to v8.1.10, `afd5944f4005..6c6110979c01` of [symfony/string](https://github.com/symfony/string) (2932 tests at the head). Versions: PHP 8.5.13, opcov 0.1.0, Xdebug 3.5.3, phpunit/php-code-coverage 12.5.x-dev@eb15ced29842, phpunit/phpunit 12.5.x-dev@0cc607272780; opcov built from commit fdf74e8dc0ad. Machine at the start of the collection: cpu Intel(R) Core(TM) i5-10400F CPU @ 2.90GHz, logical cpus 12, governor powersave, turbo on (intel_pstate), kernel Linux 6.18.64, memory 31.3 GiB, load average at start 7.59 4.80 6.91.
+Branch: the symfony/string 8.1 patch releases v8.1.0 to v8.1.10, `afd5944f4005..6c6110979c01` of [symfony/string](https://github.com/symfony/string) (2932 tests at the head). Versions: PHP 8.5.13, opcov 0.1.0, Xdebug 3.5.3, phpunit/php-code-coverage 12.5.x-dev@eb15ced29842, phpunit/phpunit 12.5.x-dev@0cc607272780; opcov built from commit c41de9bbf440 with uncommitted changes to crates/. Machine at the start of the collection: cpu Intel(R) Core(TM) i5-10400F CPU @ 2.90GHz, logical cpus 12, governor powersave, turbo on (intel_pstate), kernel Linux 6.18.64, memory 31.3 GiB, load average at start 2.32 1.35 1.20.
 
 #### Coverage step, median of 3 runs
 
 | step | median s | min s | max s | x no coverage | peak RSS MiB |
 |---|---|---|---|---|---|
-| no coverage | 1.1 | 1.0 | 1.5 | 1.00 | 76 |
-| Xdebug path coverage, php-code-coverage `--coverage-php --path-coverage` | 397.9 | 385.6 | 449.5 | 378.07 | 781 |
-| opcov, `opcov-phpunit` launcher and `OpCov\PHPUnit\Extension` | 1.2 | 1.2 | 1.9 | 1.18 | 83 |
+| no coverage | 1.0 | 1.0 | 1.1 | 1.00 | 77 |
+| Xdebug path coverage, php-code-coverage `--coverage-php --path-coverage` | 370.8 | 368.0 | 382.4 | 362.47 | 781 |
+| opcov, `opcov-phpunit` launcher and `OpCov\PHPUnit\Extension` | 1.2 | 1.2 | 1.9 | 1.16 | 84 |
 
-Xdebug path coverage takes 319.1x as long as opcov.
+Xdebug path coverage takes 313.8x as long as opcov.
 
-Evaluating the gate from the finished coverage (median): `opcov gate` 0.012 s, the Xdebug reference gate 0.252 s (loading the `.cov` file).
+Evaluating the gate from the finished coverage (median): `opcov gate` 0.025 s, the Xdebug reference gate 0.406 s (loading the `.cov` file).
 
 #### Findings
 
@@ -207,14 +207,12 @@ Evaluating the gate from the finished coverage (median): `opcov gate` 0.012 s, t
 | finding | reported by | count | explained |
 |---|---|---|---|
 | uncovered line, both | both | 16 | agree |
-| line uncovered for opcov, covered for Xdebug | opcov only | 1 | per entry |
 | Xdebug branch never ran, opcov has an uncovered line in it | both | 18 | agree |
 | Xdebug branch never ran, opcov has an unseen outcome into it | both | 7 | agree |
 | Xdebug branch never ran, entered by an outcome opcov excludes from verdicts (`Engine`, `LoopEnter`/`LoopSkip`) | Xdebug only | 47 | by rule |
 | Xdebug branch never ran, no opcov finding | Xdebug only | 2 | per entry |
 | unseen outcome on a line no test ran | both | 2 | agree |
 | unseen outcome into an Xdebug branch that never ran | both | 18 | agree |
-| unseen outcome of a construct copied into the never-taken `JMP_FRAMELESS` fallback of its line | opcov only | 4 | per entry |
 | unseen `??`/`?:`/`?->` outcome (Xdebug has no branch) | opcov only | 5 | by rule |
 | unseen outcome whose target block ran through another edge (Xdebug counts blocks) | opcov only | 9 | by rule |
 | loop never ran zero times | opcov only | 9 | by rule |
@@ -224,13 +222,8 @@ Differences explained per entry (`tools/measure/gate/explanations.json`):
 
 | where | difference | reason |
 |---|---|---|
-| AbstractUnicodeString.php:555 Symfony\Component\String\AbstractUnicodeString::width | line uncovered for opcov, covered for Xdebug | opcov defect (same root as #34): the last line of a multi-line unqualified `preg_replace(...)` call in a namespace. PHP compiles the arguments twice, for the frameless call and for the `JMP_FRAMELESS` fallback that looks up `Symfony\Component\String\preg_replace`. The frameless copy carries `''` and `$s` in the `OP_DATA` of `FRAMELESS_ICALL_3`, which runs no handler of its own, so line 555's only probed opcodes (`SEND_VAL_EX`, `SEND_VAR_EX`) are in the fallback, which never runs. Raw Xdebug and PCOV also report the line not covered; php-code-coverage marks it covered because it marks every line of a statement once one ran (`markExecutableLineByBranch`). No test can cover it. |
-| CodePointString.php:204 Symfony\Component\String\CodePointString::slice | unseen outcome of a construct copied into the never-taken `JMP_FRAMELESS` fallback of its line (CoalesceFallback) | opcov defect (same root as #34): `max(..., $length ?? ...)` is an unqualified frameless call in a namespace, so PHP compiles the `??` twice, in the `JMP_FRAMELESS` fallback and in the frameless path. The tests take both outcomes of the frameless copy; the fallback copy never runs and its `CoalesceValue` and `CoalesceFallback` are reported as unseen. No test can take them. Xdebug counts the fallback blocks under the `Engine` row. |
-| CodePointString.php:204 Symfony\Component\String\CodePointString::slice | unseen outcome of a construct copied into the never-taken `JMP_FRAMELESS` fallback of its line (CoalesceValue) | opcov defect (same root as #34): `max(..., $length ?? ...)` is an unqualified frameless call in a namespace, so PHP compiles the `??` twice, in the `JMP_FRAMELESS` fallback and in the frameless path. The tests take both outcomes of the frameless copy; the fallback copy never runs and its `CoalesceValue` and `CoalesceFallback` are reported as unseen. No test can take them. Xdebug counts the fallback blocks under the `Engine` row. |
 | Resources/data/wcswidth_table_wide.php:12 {main}@Resources/data/wcswidth_table_wide.php | Xdebug branch never ran, no opcov finding (block at opcode 0, lines 12-1204, entered from line(s) none) | Xdebug 3.5.3 artifact: the file's only block (`return [...]`) ran in `ByteStringTest::testWidth#3`, the test both drivers attribute line 12 to, but Xdebug reports its branch `hit` as 0 because the file is `require`d from inside a method (`self::$tableWide ??= require ...` in `AbstractUnicodeString::wcswidth`). The same file required from top-level code reports `hit` 1. Not a coverage gap. |
 | Resources/data/wcswidth_table_zero.php:12 {main}@Resources/data/wcswidth_table_zero.php | Xdebug branch never ran, no opcov finding (block at opcode 0, lines 12-1504, entered from line(s) none) | Same Xdebug artifact as wcswidth_table_wide.php: the only block ran in `ByteStringTest::testWidth#3` (line 12 covered for both drivers), required from `AbstractUnicodeString::wcswidth`, and Xdebug reports the branch as never hit. |
-| UnicodeString.php:294 Symfony\Component\String\UnicodeString::slice | unseen outcome of a construct copied into the never-taken `JMP_FRAMELESS` fallback of its line (CoalesceFallback) | opcov defect (same root as #34): `max(..., $length ?? ...)` is an unqualified frameless call in a namespace, so PHP compiles the `??` twice, in the `JMP_FRAMELESS` fallback and in the frameless path. The tests take both outcomes of the frameless copy; the fallback copy never runs and its `CoalesceValue` and `CoalesceFallback` are reported as unseen. No test can take them. Xdebug counts the fallback blocks under the `Engine` row. |
-| UnicodeString.php:294 Symfony\Component\String\UnicodeString::slice | unseen outcome of a construct copied into the never-taken `JMP_FRAMELESS` fallback of its line (CoalesceValue) | opcov defect (same root as #34): `max(..., $length ?? ...)` is an unqualified frameless call in a namespace, so PHP compiles the `??` twice, in the `JMP_FRAMELESS` fallback and in the frameless path. The tests take both outcomes of the frameless copy; the fallback copy never runs and its `CoalesceValue` and `CoalesceFallback` are reported as unseen. No test can take them. Xdebug counts the fallback blocks under the `Engine` row. |
 
 Verdict: every difference is explained. 0 unexplained difference(s), 0 stale explanation(s).
 <!-- gate:results:end -->
@@ -238,11 +231,11 @@ Verdict: every difference is explained. 0 unexplained difference(s), 0 stale exp
 What the run shows:
 
 - **Speed.** The coverage step under opcov costs about as much as the test
-  suite without coverage; under Xdebug with path coverage it is two orders of
-  magnitude slower, far beyond the 10x target. The comparison ran on a shared
-  machine with other builds running (see the load average), which widens the
-  min/max spread but not the ratio's order of magnitude. Peak memory follows
-  the same pattern.
+  suite without coverage (1.16x); under Xdebug with path coverage it takes
+  314 times as long as under opcov, far beyond the 10x target. No other
+  measurement ran during the collection; the load average at its start
+  includes the release build that preceded it. Peak memory follows the same
+  pattern (84 MiB against 781 MiB).
 - **Same set of functions.** Both gates selected the same changed functions
   (no "selected by one gate only" row).
 - **opcov is as strict or stricter.** Every Xdebug finding is matched by an
@@ -252,14 +245,15 @@ What the run shows:
   design) and an Xdebug artifact on two data files. opcov's additional
   findings are the `??`/`?:` sides, `&&`/`||` short-circuits whose join block
   ran anyway, and loops never run zero or two or more times.
-- **opcov defects found.** The arguments of an unqualified frameless call in a
-  namespace are compiled twice, and opcov reports the copy in the never-taken
-  fallback: its `??` outcomes as unseen and, when the fallback holds a line's
-  only probed opcodes, that line as uncovered. No test can fix these findings.
-  It is the same root cause as [#34](https://github.com/stubbedev/opcov/issues/34)
-  (closures in such calls reported twice). Until it is fixed, a gate on code
-  that calls frameless functions with `??` or multi-line arguments needs to
-  qualify the call (`\max(...)`) or accept those findings.
+- **The frameless-call defect is gone.** The previous run (opcov built from
+  fdf74e8dc0ad) had four unseen `??` outcomes and one uncovered line that
+  came from the copy of an unqualified frameless call's arguments in its
+  never-taken `JMP_FRAMELESS` fallback (same root as
+  [#34](https://github.com/stubbedev/opcov/issues/34)). opcov now records
+  the fallback copy's outcomes as twins of the frameless copy's and does not
+  count lines only the fallback has
+  ([how-it-works.md](how-it-works.md#compiling-a-file)), so those findings and
+  their three explanations are gone and no row needs an opcov-defect entry.
 - **Paths.** Xdebug enumerated thousands of paths through the changed
   functions and almost all of them were never taken; a path threshold on this
   branch would not be reachable.

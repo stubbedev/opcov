@@ -13,12 +13,14 @@ final readonly class Process
     /**
      * @param list<string> $command
      * @param array<string, string> $environment
+     * @param list<string> $monitor a command prefix that runs GNU time and the command under it (perf stat)
      */
-    public static function run(Toolchain $toolchain, array $command, array $environment, string $cwd, string $log, int $budgetSeconds): ProcessResult
+    public static function run(Toolchain $toolchain, array $command, array $environment, string $cwd, string $log, int $budgetSeconds, array $monitor = []): ProcessResult
     {
         $rss = "$log.time";
         $wrapped = [
             $toolchain->tool('timeout'), '--kill-after=10', (string) $budgetSeconds,
+            ...$monitor,
             $toolchain->tool('time'), '--verbose', '--output=' . $rss,
             ...$command,
         ];

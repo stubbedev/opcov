@@ -67,6 +67,11 @@ final readonly class Toolchain
         return "$this->environment/bin/$name";
     }
 
+    public function library(string $name): string
+    {
+        return "$this->environment/lib/$name";
+    }
+
     public function hasExtension(string $name): bool
     {
         return is_file($this->extensionPath($name));

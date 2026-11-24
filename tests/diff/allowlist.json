@@ -204,6 +204,116 @@
             "aspect": "lines",
             "reason": "Precision case: the `: new Carbon(...)` alternative of a multi-line ternary never ran; the line carries the `return` that consumes the ternary. PCOV and Xdebug mark the line covered whenever the expression ran; opcov does not probe consumer opcodes (docs/configuration.md, Executable lines).",
             "issue": "https://github.com/stubbedev/opcov/issues/5"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/CarbonInterval.php",
+            "line": 1344,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Frameless-call operand line: the constant array element `',' => ' '` on its own line as an argument of the unqualified frameless call `strtr(...)` inside a namespace. PHP compiles the arguments twice; the frameless copy carries this operand as a literal in `FRAMELESS_ICALL_*`/`OP_DATA`, so only the `JMP_FRAMELESS` fallback copy (which runs only if a namespaced `strtr()` exists) has an opcode on the line. PCOV and Xdebug count that never-run fallback `SEND_VAL` and report the line as not covered even when the call ran; opcov does not count lines only the fallback copy has (docs/how-it-works.md, Frameless calls), so the line is not executable.",
+            "issue": "https://github.com/stubbedev/opcov/issues/34"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/CarbonPeriod.php",
+            "line": 782,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Frameless-call operand line: the constant pattern on its own line as an argument of the unqualified frameless call `preg_match(...)` inside a namespace. PHP compiles the arguments twice; the frameless copy carries this operand as a literal in `FRAMELESS_ICALL_*`/`OP_DATA`, so only the `JMP_FRAMELESS` fallback copy (which runs only if a namespaced `preg_match()` exists) has an opcode on the line. PCOV and Xdebug count that never-run fallback `SEND_VAL` and report the line as not covered even when the call ran; opcov does not count lines only the fallback copy has (docs/how-it-works.md, Frameless calls), so the line is not executable.",
+            "issue": "https://github.com/stubbedev/opcov/issues/34"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/Traits/Comparison.php",
+            "line": 1317,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Frameless-call operand line: the constant pattern on its own line as an argument of the unqualified frameless call `preg_match(...)` inside a namespace. PHP compiles the arguments twice; the frameless copy carries this operand as a literal in `FRAMELESS_ICALL_*`/`OP_DATA`, so only the `JMP_FRAMELESS` fallback copy (which runs only if a namespaced `preg_match()` exists) has an opcode on the line. PCOV and Xdebug count that never-run fallback `SEND_VAL` and report the line as not covered even when the call ran; opcov does not count lines only the fallback copy has (docs/how-it-works.md, Frameless calls), so the line is not executable.",
+            "issue": "https://github.com/stubbedev/opcov/issues/34"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/Traits/Localization.php",
+            "line": 750,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Frameless-call operand line: the constant pattern on its own line as an argument of the unqualified frameless call `preg_replace(...)` inside a namespace. PHP compiles the arguments twice; the frameless copy carries this operand as a literal in `FRAMELESS_ICALL_*`/`OP_DATA`, so only the `JMP_FRAMELESS` fallback copy (which runs only if a namespaced `preg_replace()` exists) has an opcode on the line. PCOV and Xdebug count that never-run fallback `SEND_VAL` and report the line as not covered even when the call ran; opcov does not count lines only the fallback copy has (docs/how-it-works.md, Frameless calls), so the line is not executable.",
+            "issue": "https://github.com/stubbedev/opcov/issues/34"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/Traits/Localization.php",
+            "line": 751,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Frameless-call operand line: the constant replacement `''` on its own line as an argument of the unqualified frameless call `preg_replace(...)` inside a namespace. PHP compiles the arguments twice; the frameless copy carries this operand as a literal in `FRAMELESS_ICALL_*`/`OP_DATA`, so only the `JMP_FRAMELESS` fallback copy (which runs only if a namespaced `preg_replace()` exists) has an opcode on the line. PCOV and Xdebug count that never-run fallback `SEND_VAL` and report the line as not covered even when the call ran; opcov does not count lines only the fallback copy has (docs/how-it-works.md, Frameless calls), so the line is not executable.",
+            "issue": "https://github.com/stubbedev/opcov/issues/34"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/Unit.php",
+            "line": 57,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Frameless-call operand line: the constant pattern on its own line as an argument of the unqualified frameless call `preg_replace(...)` inside a namespace. PHP compiles the arguments twice; the frameless copy carries this operand as a literal in `FRAMELESS_ICALL_*`/`OP_DATA`, so only the `JMP_FRAMELESS` fallback copy (which runs only if a namespaced `preg_replace()` exists) has an opcode on the line. PCOV and Xdebug count that never-run fallback `SEND_VAL` and report the line as not covered even when the call ran; opcov does not count lines only the fallback copy has (docs/how-it-works.md, Frameless calls), so the line is not executable.",
+            "issue": "https://github.com/stubbedev/opcov/issues/34"
+        },
+        {
+            "file": "corpus/carbon/src/Carbon/Unit.php",
+            "line": 58,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Frameless-call operand line: the constant replacement `''` on its own line as an argument of the unqualified frameless call `preg_replace(...)` inside a namespace. PHP compiles the arguments twice; the frameless copy carries this operand as a literal in `FRAMELESS_ICALL_*`/`OP_DATA`, so only the `JMP_FRAMELESS` fallback copy (which runs only if a namespaced `preg_replace()` exists) has an opcode on the line. PCOV and Xdebug count that never-run fallback `SEND_VAL` and report the line as not covered even when the call ran; opcov does not count lines only the fallback copy has (docs/how-it-works.md, Frameless calls), so the line is not executable.",
+            "issue": "https://github.com/stubbedev/opcov/issues/34"
+        },
+        {
+            "file": "corpus/symfony-string/AbstractUnicodeString.php",
+            "line": 555,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Frameless-call operand line: the end of the constant pattern, the replacement `''` and `$s` on one line as an argument of the unqualified frameless call `preg_replace(...)` inside a namespace. PHP compiles the arguments twice; the frameless copy carries these operands in `FRAMELESS_ICALL_*`/`OP_DATA`, so only the `JMP_FRAMELESS` fallback copy (which runs only if a namespaced `preg_replace()` exists) has an opcode on the line. PCOV and Xdebug count that never-run fallback `SEND_VAL` and report the line as not covered even when the call ran; opcov does not count lines only the fallback copy has (docs/how-it-works.md, Frameless calls), so the line is not executable.",
+            "issue": "https://github.com/stubbedev/opcov/issues/34"
+        },
+        {
+            "file": "corpus/laravel-query-builder/src/Filters/FiltersPartial.php",
+            "line": 79,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Frameless-call operand line: the constant search array on its own line as an argument of the unqualified frameless call `str_replace(...)` inside a namespace. PHP compiles the arguments twice; the frameless copy carries this operand as a literal in `FRAMELESS_ICALL_*`/`OP_DATA`, so only the `JMP_FRAMELESS` fallback copy (which runs only if a namespaced `str_replace()` exists) has an opcode on the line. PCOV and Xdebug count that never-run fallback `SEND_VAL` and report the line as not covered even when the call ran; opcov does not count lines only the fallback copy has (docs/how-it-works.md, Frameless calls), so the line is not executable.",
+            "issue": "https://github.com/stubbedev/opcov/issues/34"
+        },
+        {
+            "file": "corpus/laravel-query-builder/src/Filters/FiltersPartial.php",
+            "line": 80,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Frameless-call operand line: the constant replacement array on its own line as an argument of the unqualified frameless call `str_replace(...)` inside a namespace. PHP compiles the arguments twice; the frameless copy carries this operand as a literal in `FRAMELESS_ICALL_*`/`OP_DATA`, so only the `JMP_FRAMELESS` fallback copy (which runs only if a namespaced `str_replace()` exists) has an opcode on the line. PCOV and Xdebug count that never-run fallback `SEND_VAL` and report the line as not covered even when the call ran; opcov does not count lines only the fallback copy has (docs/how-it-works.md, Frameless calls), so the line is not executable.",
+            "issue": "https://github.com/stubbedev/opcov/issues/34"
         }
     ]
 }

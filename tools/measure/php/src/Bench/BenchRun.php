@@ -12,6 +12,7 @@ use Opcov\Measure\DocSection;
 use Opcov\Measure\Driver;
 use Opcov\Measure\Json;
 use Opcov\Measure\Mode;
+use Opcov\Measure\Target;
 use Opcov\Measure\Toolchain;
 
 final readonly class BenchRun
@@ -53,7 +54,7 @@ final readonly class BenchRun
             $toolchain,
             $workloads,
             $drivers,
-            $arguments->positiveInt('--runs', 10),
+            $arguments->positiveInt('--runs', 3),
             $arguments->positiveInt('--budget', 900),
             $arguments->flag('--write-docs'),
             $arguments->flag('--check'),
@@ -111,16 +112,43 @@ final readonly class BenchRun
                 }
                 fwrite(STDERR, "bench: {$workload->value} {$driver->value} run $round/{$this->runs}\n");
                 try {
-                    $run = (new Child($this->toolchain, $target, $driver, Mode::Discard))->run("$directory/{$driver->value}-run.json", $this->budgetSeconds);
+                    $sample = $this->sample($target, $driver, "$directory/{$driver->value}-run.json", Allocator::ZendMm);
                 } catch (BudgetExceeded $e) {
                     fwrite(STDERR, "bench: {$e->getMessage()}\n");
                     $result->timedOut($driver);
                     continue;
                 }
-                $result->timed($driver, $run->tests(), $run->process->seconds, $run->process->peakRssBytes ?? throw new \RuntimeException("no peak RSS for {$workload->value} under {$driver->value}"));
+                $result->timed($driver, $sample[0], $sample[1]);
             }
         }
+        foreach ($this->drivers as $driver) {
+            if ($result->hasTimedOut($driver)) {
+                continue;
+            }
+            fwrite(STDERR, "bench: {$workload->value} {$driver->value} system allocator (USE_ZEND_ALLOC=0)\n");
+            try {
+                $sample = $this->sample($target, $driver, "$directory/{$driver->value}-system.json", Allocator::System);
+            } catch (BudgetExceeded $e) {
+                fwrite(STDERR, "bench: {$e->getMessage()}\n");
+                continue;
+            }
+            $result->systemAllocator($driver, $sample[0], $sample[1]);
+        }
         return $result;
+    }
+
+    /** @return array{int, Sample} */
+    private function sample(Target $target, Driver $driver, string $output, Allocator $allocator): array
+    {
+        $instrumented = new Instrumented($this->toolchain, $output, $allocator);
+        $run = (new Child($this->toolchain, $target, $driver, Mode::Discard))->run($output, $this->budgetSeconds, $instrumented);
+        return [$run->tests(), new Sample(
+            $run->process->seconds,
+            $run->process->peakRssBytes ?? throw new \RuntimeException("no peak RSS for {$target->label()} under {$driver->value}"),
+            $run->phpPeakBytes(),
+            $instrumented->counters(),
+            $instrumented->allocations(),
+        )];
     }
 
     /** @return array<string, string> */

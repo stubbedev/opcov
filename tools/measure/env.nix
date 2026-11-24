@@ -25,6 +25,12 @@
     inherit turbocov;
   };
   buildable = lib.filterAttrs (_: drv: !(drv.meta.broken or false)) drivers;
+  allocCount = pkgs.stdenv.mkDerivation {
+    name = "opcov-measure-alloc-count";
+    src = ./alloc;
+    buildPhase = "$CC -O2 -shared -fPIC -Wall -Wextra -Werror -o libcount.so count.c";
+    installPhase = "install -D libcount.so $out/lib/libcount.so";
+  };
 in
   pkgs.linkFarm "opcov-measure-${php}" (
     [
@@ -55,6 +61,14 @@ in
       {
         name = "bin/perf";
         path = lib.getExe pkgs.perf;
+      }
+      {
+        name = "bin/env";
+        path = "${pkgs.coreutils}/bin/env";
+      }
+      {
+        name = "lib/alloc-count.so";
+        path = "${allocCount}/lib/libcount.so";
       }
     ]
     ++ lib.mapAttrsToList (name: drv: {

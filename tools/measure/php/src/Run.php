@@ -54,7 +54,7 @@ final class Run
     public function finish(): void
     {
         $this->endTest();
-        $result = ['driver' => $this->config->driver->value, 'php' => PHP_VERSION, 'tests' => $this->tests];
+        $result = ['driver' => $this->config->driver->value, 'php' => PHP_VERSION, 'tests' => $this->tests, 'php_peak_bytes' => memory_get_peak_usage(true)];
         match ($this->config->mode) {
             Mode::Coverage => $result += $this->completedCoverage(),
             Mode::Payload => $result += ['payload_bytes' => $this->payload, 'report' => $this->session->writeReport("{$this->config->output}.report.json", $this->config->root)->toArray()],

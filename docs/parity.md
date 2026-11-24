@@ -202,33 +202,36 @@ that matched nothing, and a rule that matched nothing, fail the run as stale.
 ## Results
 
 <!-- parity:php85:begin -->
-PHP 8.5.12; opcov 0.1.0, pcov 1.0.12, xdebug 3.5.3.
+PHP 8.5.13; opcov 0.1.0, pcov 1.0.12, xdebug 3.5.3.
 
 |  | golden | fixtures |
 |---|---|---|
-| lines compared | 90 | 216 |
-| lines where PCOV and Xdebug disagree | 0 | 13 |
+| lines compared | 188 | 216 |
+| lines where PCOV and Xdebug disagree | 6 | 13 |
 | files loaded outside every test (only opcov reports them) | 0 | 0 |
 | targets compared with Xdebug in line mode only | 0 | 0 |
-| decisions matched to an Xdebug branch | 31 | 58 |
-| ... of which Xdebug starts a target on an earlier statement line | 0 | 0 |
+| decisions matched to an Xdebug branch | 63 | 58 |
+| ... of which Xdebug starts a target on an earlier statement line | 5 | 0 |
 | functions without Xdebug branch data and without opcov hits | 0 | 6 |
-| opcov-only decisions (??, ?:, ?->) | 5 | 14 |
+| opcov-only decisions (??, ?:, ?->) | 6 | 14 |
 | Xdebug switch jump tables (opcov: case chain) | 0 | 1 |
 | decisions in anonymous classes (Xdebug cannot name) | 0 | 1 |
-| outcome verdicts compared | 51 | 99 |
-| outcome verdicts opcov does not report (Flow edges) | 12 | 21 |
-| opcov-only outcomes and loop flags checked against fixture expectations | 21 | 39 |
-| divergences | 18 | 15 |
+| outcome verdicts compared | 110 | 99 |
+| outcome verdicts opcov does not report (Flow edges) | 17 | 21 |
+| opcov-only outcomes and loop flags checked against fixture expectations | 44 | 39 |
+| divergences | 36 | 15 |
 
-Verdict: passed. 33 allowlisted, 0 unexplained divergences, 0 stale allowlist entries.
+Verdict: passed. 51 allowlisted, 0 unexplained divergences, 0 stale allowlist entries.
 
 | rule | divergences | reason |
 |---|---|---|
-| `declarations-only-return` | 30 | A file whose main code only declares compiles to declaration opcodes and a constant `return`; opcov reports no executable line for it (ADR 0003, docs/adr/0003-declarations-only-files.md), PCOV and Xdebug report the `return` line at the end of the file. ([#13](https://github.com/stubbedev/opcov/issues/13)) |
+| `declarations-only-return` | 45 | A file whose main code only declares compiles to declaration opcodes and a constant `return`; opcov reports no executable line for it (ADR 0003, docs/adr/0003-declarations-only-files.md), PCOV and Xdebug report the `return` line at the end of the file. ([#13](https://github.com/stubbedev/opcov/issues/13)) |
 
 | file:line | aspect | drivers | difference | reason |
 |---|---|---|---|---|
+| golden/enum_method/enum_method.php:9 | lines | opcov~pcov | opcov: not covered, pcov: covered, xdebug-branch: covered | Precision case: the unexecuted last arm of a multi-line match over an enum shares line 9 with the `FREE`, `VERIFY_RETURN_TYPE` and `RETURN` that consume the match result; PCOV and Xdebug mark the line covered whenever the match ran, opcov does not probe consumer opcodes (docs/configuration.md, Executable lines). ([#5](https://github.com/stubbedev/opcov/issues/5)) |
+| golden/generator/generator.php:3 | outcomes | opcov~xdebug-branch | gen: outcome LoopEnter to line 3: opcov taken, Xdebug not taken | Xdebug 3.5.3 artifact: in a generator, Xdebug records neither the hit nor the outgoing edges of the block the body runs in right after the generator starts or resumes (the code after GENERATOR_CREATE or a yield runs in a new execution segment). Reproduced outside the suite: in `function g($a) { $x = yield 1; if ($a) { echo ''; } return 2; }` resumed with `send()`, Xdebug reports branch 0 with hit 0 and both edges not taken while the `if` body's branch has hit 1; the same code without `yield` reports the edge taken. Here the generator's first block holds `foreach`'s `FE_RESET`, so its `LoopEnter` edge is missing from Xdebug's data although the loop body ran. ([#13](https://github.com/stubbedev/opcov/issues/13)) |
+| golden/yield_from/yield_from.php:4 | outcomes | opcov~xdebug-branch | delegate: outcome IfFalse to line 7: opcov taken, Xdebug not taken | Xdebug 3.5.3 artifact: in a generator, Xdebug records neither the hit nor the outgoing edges of the block the body runs in right after the generator starts or resumes (the code after GENERATOR_CREATE or a yield runs in a new execution segment). Reproduced outside the suite: in `function g($a) { $x = yield 1; if ($a) { echo ''; } return 2; }` resumed with `send()`, Xdebug reports branch 0 with hit 0 and both edges not taken while the `if` body's branch has hit 1; the same code without `yield` reports the edge taken. Here the block that resumes after `yield from` ends in the `if ($more)` jump, so its `IfFalse` edge is missing from Xdebug's data although the generator returned through it. ([#13](https://github.com/stubbedev/opcov/issues/13)) |
 | fixtures/hooks/hooks.php:17 | lines | opcov~pcov | opcov: not covered, pcov: not executable, xdebug-branch: not executable | A property hook that never ran is invisible to PCOV and Xdebug (neither walks property hooks); opcov reports its line as executable and not covered. ([#5](https://github.com/stubbedev/opcov/issues/5)) |
 | fixtures/hooks/hooks.php:26 | lines | opcov~pcov | opcov: not covered, pcov: not executable, xdebug-branch: covered | Precision case: the unexecuted `default` arm of a multi-line match carries the expression's consuming opcode; Xdebug marks it covered, opcov does not probe consumer lines. PCOV does not see property hooks at all. ([#5](https://github.com/stubbedev/opcov/issues/5)) |
 | fixtures/matches/matches.php:21 | lines | opcov~pcov | opcov: not covered, pcov: covered, xdebug-branch: covered | Precision case: the unexecuted last arm of a multi-line match shares its line with the `return` that consumes the match result; PCOV and Xdebug mark it covered whenever the match ran, opcov does not probe consumer lines. ([#5](https://github.com/stubbedev/opcov/issues/5)) |
@@ -267,53 +270,42 @@ Verdict: passed. 33 allowlisted, 0 unexplained divergences, 0 stale allowlist en
 | fixtures/matches/matches.php:21 | lines | opcov~pcov | opcov: not covered, pcov: covered, xdebug-branch: covered | Precision case: the unexecuted last arm of a multi-line match shares its line with the `return` that consumes the match result; PCOV and Xdebug mark it covered whenever the match ran, opcov does not probe consumer lines. ([#5](https://github.com/stubbedev/opcov/issues/5)) |
 <!-- parity:php84:end -->
 
-### Corpus, PHP 8.5.12
+### Corpus, PHP 8.5.13
 
-Run with `tools/measure/parity --suite corpus:<name>` against the extension
-built from commit 022dfa0 plus the working tree of 2026-11-23 (debug profile).
+Run once with `tools/measure/parity --suite corpus` on 2026-11-24 against a
+release build of commit c41de9b plus the uncommitted crates/ changes of that
+day (about 25 minutes). Totals over the three projects:
 
-| | symfony/string | Carbon | laravel-query-builder |
-|---|---|---|---|
-| Xdebug mode | branch | lines | lines |
-| tests | 2,932 | 6,349 | 367 |
-| lines compared | 1,356 | 10,876 | 782 |
-| lines where PCOV and Xdebug disagree | 19 | 93 | 25 |
-| decisions matched to an Xdebug branch | 741 | | |
-| outcome verdicts compared with Xdebug | 1,471 | | |
-| opcov-only decisions (`??`, `?:`, `?->`) | 65 | | |
-| `declarations-only-return` (ADR 0003) | 8 | 38 | 42 |
-| allowlisted precision cases | 0 | 12 | 0 |
-| unexplained divergences | 5 | 0 | 0 |
+| | corpus |
+|---|---|
+| lines compared | 13,014 |
+| lines where PCOV and Xdebug disagree | 137 |
+| files loaded outside every test (only opcov reports them) | 13 |
+| decisions matched to an Xdebug branch (symfony/string) | 741 |
+| outcome verdicts compared with Xdebug | 1,471 |
+| opcov-only decisions (`??`, `?:`, `?->`) | 65 |
+| divergences | 110 |
+| allowlisted (rule and entries) | 100 |
+| unexplained | 10, now allowlisted (below) |
+| stale allowlist entries | 0 |
 
-The five unexplained divergences on symfony/string are one opcov bug: a
-closure passed to an unqualified call of a frameless function inside a
-namespace (`str_replace(' ', '', preg_replace_callback(..., static function
-($m) {...}, ...))` in `AbstractUnicodeString::camel()`) appears twice in
-opcov's model. PHP compiles the arguments of such a call twice, once for the
-`JMP_FRAMELESS` fast path and once for the regular call, so the closure has
-two op arrays; opcov names them `{closure}@AbstractUnicodeString.php:167-171`
-and `...:167-171#1` (the ordinal meant for two closures on the same lines),
-records the hits only on the copy that ran and reports the other copy's
-outcomes as never taken, while Xdebug reports one function with the hits.
-Minimal reproduction:
+The five symfony/string divergences of the previous run (a closure passed to
+an unqualified frameless call reported as two functions,
+[#34](https://github.com/stubbedev/opcov/issues/34)) are gone: opcov now
+gives both copies one key and records into one function. Carbon's twelve
+precision-case entries all still matched.
 
-```php
-<?php
-namespace N;
-
-function f(string $s): string
-{
-    return str_replace(' ', '', preg_replace_callback('/./', static function ($m) {
-        return 'x';
-    }, $s));
-}
-```
-
-`\opcov\executable()` lists `{closure}@a.php:6-8` and `{closure}@a.php:6-8#1`;
-without the namespace, or with a non-frameless outer call, it lists one. The
-expected model has one function whose outcomes unite both copies (the copies
-are the same source construct). The divergences stay unexplained until that is
-fixed.
+The run reported ten new divergences, all of one kind: a line that holds
+only an argument of an unqualified frameless call inside a namespace
+(`preg_match`, `preg_replace`, `str_replace`, `strtr`), such as a constant
+pattern on its own line. The frameless copy of the call carries that operand
+as a literal, so only the never-run `JMP_FRAMELESS` fallback copy has an
+opcode on the line; PCOV and Xdebug report the line as not covered, opcov
+now reports it as not executable
+([how-it-works.md](how-it-works.md#compiling-a-file)). Each has an allowlist
+entry (seven in Carbon, `AbstractUnicodeString.php:555` in symfony/string,
+two in laravel-query-builder's `FiltersPartial.php`). The suite was not run
+again after adding them.
 
 PHP 8.6 (8.6.0RC4 in the locked nixpkgs) has no parity run: neither PCOV
 1.0.12 nor Xdebug 3.5.3 builds against it (`php86Extensions.pcov` and

@@ -31,6 +31,11 @@ final readonly class ChildResult
         return ReportSize::fromArray($this->data['report'], $this->process->log);
     }
 
+    public function phpPeakBytes(): int
+    {
+        return is_int($this->data['php_peak_bytes'] ?? null) ? $this->data['php_peak_bytes'] : throw new \RuntimeException("{$this->process->log}: the run reported no memory_get_peak_usage(true)");
+    }
+
     public function payloadBytes(): int
     {
         return is_int($this->data['payload_bytes'] ?? null) ? $this->data['payload_bytes'] : throw new \RuntimeException("{$this->process->log}: the run reported no payload size");

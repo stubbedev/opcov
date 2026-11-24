@@ -16,6 +16,7 @@ final readonly class Machine
             'turbo' => self::turbo(),
             'kernel' => php_uname('s') . ' ' . php_uname('r'),
             'memory' => self::memory(),
+            'perf_event_paranoid' => self::read('/proc/sys/kernel/perf_event_paranoid') ?? 'unknown',
             'load average at start' => implode(' ', array_map(static fn (float $load): string => sprintf('%.2f', $load), sys_getloadavg() ?: throw new \RuntimeException('cannot read the load average'))),
         ];
     }

@@ -1,14 +1,5 @@
 [
     {
-        "category": "line-opcov-only-covered-by-xdebug",
-        "file": "AbstractUnicodeString.php",
-        "function": "Symfony\\Component\\String\\AbstractUnicodeString::width",
-        "lines": [
-            555
-        ],
-        "reason": "opcov defect (same root as #34): the last line of a multi-line unqualified `preg_replace(...)` call in a namespace. PHP compiles the arguments twice, for the frameless call and for the `JMP_FRAMELESS` fallback that looks up `Symfony\\Component\\String\\preg_replace`. The frameless copy carries `''` and `$s` in the `OP_DATA` of `FRAMELESS_ICALL_3`, which runs no handler of its own, so line 555's only probed opcodes (`SEND_VAL_EX`, `SEND_VAR_EX`) are in the fallback, which never runs. Raw Xdebug and PCOV also report the line not covered; php-code-coverage marks it covered because it marks every line of a statement once one ran (`markExecutableLineByBranch`). No test can cover it."
-    },
-    {
         "category": "branch-unmatched",
         "file": "Resources/data/wcswidth_table_wide.php",
         "function": "{main}@Resources/data/wcswidth_table_wide.php",
@@ -25,23 +16,5 @@
             12
         ],
         "reason": "Same Xdebug artifact as wcswidth_table_wide.php: the only block ran in `ByteStringTest::testWidth#3` (line 12 covered for both drivers), required from `AbstractUnicodeString::wcswidth`, and Xdebug reports the branch as never hit."
-    },
-    {
-        "category": "outcome-in-frameless-fallback",
-        "file": "CodePointString.php",
-        "function": "Symfony\\Component\\String\\CodePointString::slice",
-        "lines": [
-            204
-        ],
-        "reason": "opcov defect (same root as #34): `max(..., $length ?? ...)` is an unqualified frameless call in a namespace, so PHP compiles the `??` twice, in the `JMP_FRAMELESS` fallback and in the frameless path. The tests take both outcomes of the frameless copy; the fallback copy never runs and its `CoalesceValue` and `CoalesceFallback` are reported as unseen. No test can take them. Xdebug counts the fallback blocks under the `Engine` row."
-    },
-    {
-        "category": "outcome-in-frameless-fallback",
-        "file": "UnicodeString.php",
-        "function": "Symfony\\Component\\String\\UnicodeString::slice",
-        "lines": [
-            294
-        ],
-        "reason": "opcov defect (same root as #34): `max(..., $length ?? ...)` is an unqualified frameless call in a namespace, so PHP compiles the `??` twice, in the `JMP_FRAMELESS` fallback and in the frameless path. The tests take both outcomes of the frameless copy; the fallback copy never runs and its `CoalesceValue` and `CoalesceFallback` are reported as unseen. No test can take them. Xdebug counts the fallback blocks under the `Engine` row."
     }
 ]

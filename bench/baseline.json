@@ -1,0 +1,28 @@
+{
+    "8.5": {
+        "machine": {
+            "cpu": "Intel(R) Core(TM) i5-10400F CPU @ 2.90GHz",
+            "logical cpus": "12",
+            "governor": "powersave",
+            "turbo": "on (intel_pstate)",
+            "kernel": "Linux 6.18.64",
+            "memory": "31.3 GiB",
+            "perf_event_paranoid": "2",
+            "load average at start": "3.09 5.42 7.95"
+        },
+        "opcov_over_none": {
+            "instructions": {
+                "branchy": 1.9898,
+                "carbon": 1.5623,
+                "laravel-query-builder": 1.016,
+                "tiny-tests": 6.6136
+            },
+            "cycles": {
+                "branchy": 1.8907,
+                "carbon": 1.4243,
+                "laravel-query-builder": 1.0101,
+                "tiny-tests": 4.4687
+            }
+        }
+    }
+}

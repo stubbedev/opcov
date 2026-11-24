@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Opcov\Measure;
 
+use Opcov\Measure\Bench\Instrumented;
+
 final readonly class Child
 {
     public function __construct(
@@ -14,19 +16,21 @@ final readonly class Child
     ) {
     }
 
-    public function run(string $output, int $budgetSeconds): ChildResult
+    public function run(string $output, int $budgetSeconds, ?Instrumented $instrumented = null): ChildResult
     {
+        $instrumented?->prepare();
         $config = new Config($this->driver, $this->mode, $this->target->selection(), $this->target->root(), $output);
         if (is_file($output) && !unlink($output)) {
             throw new \RuntimeException("cannot remove the stale result $output");
         }
         $process = Process::run(
             $this->toolchain,
-            [$this->toolchain->php(), ...$this->driver->iniArguments($this->toolchain, $this->target->selection()), ...$this->target->script()],
+            [...$instrumented?->launcher() ?? [], $this->toolchain->php(), ...$this->driver->iniArguments($this->toolchain, $this->target->selection()), ...$this->target->script()],
             $config->environment() + $this->target->environment(),
             $this->target->cwd(),
             "$output.log",
             $budgetSeconds,
+            $instrumented?->monitor() ?? [],
         );
         $context = sprintf('%s under %s', $this->target->label(), $this->driver->value);
         if ($process->timedOut()) {
