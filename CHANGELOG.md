@@ -11,6 +11,25 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-24
+
+### Fixed
+
+- The aarch64 musl archives did not load in the official Alpine PHP images
+  (`Error loading shared library libgcc_s.so.1`). The musl builds now link
+  libgcc statically, so `opcov.so` depends on musl's libc only, and every musl
+  archive is loaded in a clean official image before it is released.
+- Hash-table access in the extension no longer dereferences a pointer that may
+  be null (CodeQL `rust/access-invalid-pointer`).
+
+### Added
+
+- Pest 5 support in `opcov/phpunit`, tested alongside Pest 4 and PHPUnit 12/13.
+- `opcov/phpunit` is published on Packagist from the read-only split
+  `stubbedev/opcov-phpunit`; `opcov/opcov` installs with `pie install`, which
+  every release now smoke-tests on x86_64 and aarch64 Linux (glibc, musl, ZTS)
+  and macOS arm64.
+
 ## [0.1.0] - 2026-11-24
 
 First release: opcode-level line, branch-outcome and loop coverage for PHP
@@ -68,5 +87,6 @@ changed-code gate's coverage step is about 314x faster than Xdebug path
 coverage. On a 4.97M-line corpus, compiling with every file selected takes
 about 1.6x plain compilation (`docs/scale.md`).
 
-[Unreleased]: https://github.com/stubbedev/opcov/compare/v0.1.0...main
+[Unreleased]: https://github.com/stubbedev/opcov/compare/v0.1.1...main
+[0.1.1]: https://github.com/stubbedev/opcov/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/stubbedev/opcov/releases/tag/v0.1.0

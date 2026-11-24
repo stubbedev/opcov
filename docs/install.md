@@ -7,13 +7,13 @@ was built for: the same PHP minor version (8.4, 8.5, 8.6), the same thread
 safety (NTS or ZTS) and a non-debug build. Pick the artifact that matches
 `php -v`, which prints `NTS` or `ZTS`.
 
-The examples use version `0.1.0`; replace it with the release you install.
+The examples use version `0.1.1`; replace it with the release you install.
 
 | Channel | Platforms | Command |
 |---|---|---|
 | [PIE](#pie) | Linux (glibc, musl), macOS arm64 | `pie install opcov/opcov` |
 | [GitHub release archive](#github-release-archives) | Linux (glibc, musl), macOS arm64 | download, verify, copy |
-| [Docker](#docker) | official Debian-based `php` images, amd64 and arm64 | `COPY --from=ghcr.io/stubbedev/opcov:0.1.0-php8.5 / /` |
+| [Docker](#docker) | official Debian-based `php` images, amd64 and arm64 | `COPY --from=ghcr.io/stubbedev/opcov:0.1.1-php8.5 / /` |
 | [Nix](#nix) | Linux, macOS | `nix shell github:stubbedev/opcov#php85-with-opcov` |
 | [From source](#from-source) | Linux, macOS | `cargo build --release --package opcov-ext` |
 
@@ -50,11 +50,11 @@ for PHP 8.6 NTS on musl:
 
 ```text
 Could not download opcov/opcov using pre-packaged-binary method: Could not
-find release asset for opcov/opcov:v0.1.0 named one of "php_opcov-v0.1.0_php8.6-x86_64-linux-musl.zip,
-php_opcov-v0.1.0_php8.6-x86_64-linux-musl.tgz, php_opcov-v0.1.0_php8.6-x86_64-linux-musl-nts.zip,
-php_opcov-v0.1.0_php8.6-x86_64-linux-musl-nts.tgz, php_opcov-v0.1.0_php8.6-x86_64-linux-anylibc.zip,
-php_opcov-v0.1.0_php8.6-x86_64-linux-anylibc.tgz, php_opcov-v0.1.0_php8.6-x86_64-linux-anylibc-nts.zip,
-php_opcov-v0.1.0_php8.6-x86_64-linux-anylibc-nts.tgz"
+find release asset for opcov/opcov:v0.1.1 named one of "php_opcov-v0.1.1_php8.6-x86_64-linux-musl.zip,
+php_opcov-v0.1.1_php8.6-x86_64-linux-musl.tgz, php_opcov-v0.1.1_php8.6-x86_64-linux-musl-nts.zip,
+php_opcov-v0.1.1_php8.6-x86_64-linux-musl-nts.tgz, php_opcov-v0.1.1_php8.6-x86_64-linux-anylibc.zip,
+php_opcov-v0.1.1_php8.6-x86_64-linux-anylibc.tgz, php_opcov-v0.1.1_php8.6-x86_64-linux-anylibc-nts.zip,
+php_opcov-v0.1.1_php8.6-x86_64-linux-anylibc-nts.tgz"
 ```
 
 The combinations without an archive are PHP 8.6 NTS on musl (the official
@@ -99,7 +99,7 @@ archive has a build-provenance attestation that ties it to the workflow run and
 commit that built it.
 
 ```sh
-version=0.1.0
+version=0.1.1
 asset="php_opcov-v${version}_php8.5-x86_64-linux-glibc-nts.tgz"
 base="https://github.com/stubbedev/opcov/releases/download/v${version}"
 curl -fsSLO "${base}/${asset}"
@@ -147,27 +147,27 @@ extension sits in that image's extension directory and
 
 ```dockerfile
 FROM php:8.5-cli
-COPY --from=ghcr.io/stubbedev/opcov:0.1.0-php8.5 / /
+COPY --from=ghcr.io/stubbedev/opcov:0.1.1-php8.5 / /
 ```
 
 | Official image (and its `fpm`, `apache`, `bookworm`, `trixie` siblings) | opcov image |
 |---|---|
-| `php:8.4-cli` | `ghcr.io/stubbedev/opcov:0.1.0-php8.4` |
-| `php:8.4-zts` | `ghcr.io/stubbedev/opcov:0.1.0-php8.4-zts` |
-| `php:8.5-cli` | `ghcr.io/stubbedev/opcov:0.1.0-php8.5` |
-| `php:8.5-zts` | `ghcr.io/stubbedev/opcov:0.1.0-php8.5-zts` |
-| `php:8.6-cli` | `ghcr.io/stubbedev/opcov:0.1.0-php8.6-zts` |
+| `php:8.4-cli` | `ghcr.io/stubbedev/opcov:0.1.1-php8.4` |
+| `php:8.4-zts` | `ghcr.io/stubbedev/opcov:0.1.1-php8.4-zts` |
+| `php:8.5-cli` | `ghcr.io/stubbedev/opcov:0.1.1-php8.5` |
+| `php:8.5-zts` | `ghcr.io/stubbedev/opcov:0.1.1-php8.5-zts` |
+| `php:8.6-cli` | `ghcr.io/stubbedev/opcov:0.1.1-php8.6-zts` |
 
 The official PHP 8.6 images are thread-safe (ZTS) and there is no NTS 8.6
 image, hence `-php8.6-zts` for `php:8.6-cli`. To copy the extension without
 enabling it, copy the file alone, for example
-`COPY --from=ghcr.io/stubbedev/opcov:0.1.0-php8.5 /usr/local/lib/php/extensions/no-debug-non-zts-20250925/opcov.so /usr/local/lib/php/extensions/no-debug-non-zts-20250925/`.
+`COPY --from=ghcr.io/stubbedev/opcov:0.1.1-php8.5 /usr/local/lib/php/extensions/no-debug-non-zts-20250925/opcov.so /usr/local/lib/php/extensions/no-debug-non-zts-20250925/`.
 
 For the Alpine images, install the musl archive:
 
 ```dockerfile
 FROM php:8.5-cli-alpine
-ARG OPCOV_VERSION=0.1.0
+ARG OPCOV_VERSION=0.1.1
 RUN arch="$(uname -m | sed 's/aarch64/arm64/')" \
     && ts="$(php -r 'echo PHP_ZTS ? "zts" : "nts";')" \
     && minor="$(php -r 'echo PHP_MAJOR_VERSION, ".", PHP_MINOR_VERSION;')" \
