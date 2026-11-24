@@ -126,6 +126,10 @@ mod plan {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "measures scaling on 20,000 loops, which miri's interpreter cannot run in useful time"
+    )]
     fn planning_many_loops_in_one_function_stays_linear() {
         let count: u32 = 20_000;
         let mut blocks = Vec::new();

@@ -332,12 +332,7 @@ impl Engine {
 unsafe fn named_trues(target: *mut zval, prefix: u8, numbers: &[u32]) -> Caught<()> {
     // SAFETY: the caller passes a live array zval; the engine copies every key it builds.
     return caught(unsafe {
-        opcov_add_named_trues(
-            target,
-            prefix,
-            numbers.as_ptr(),
-            numbers.len(),
-        )
+        opcov_add_named_trues(target, prefix, numbers.as_ptr(), numbers.len())
     });
 }
 
