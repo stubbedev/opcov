@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<coverage clover="0.1.0" generated="0">
+<coverage clover="{{version}}" generated="0">
   <project timestamp="0">
     <metrics packages="1" files="1" classes="1" complexity="0" methods="4" coveredmethods="3" conditionals="8" coveredconditionals="5" statements="9" coveredstatements="8" elements="21" coveredelements="16"/>
     <package name="App">

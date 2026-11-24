@@ -13,7 +13,9 @@ fn golden(name: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/golden")
         .join(name);
-    return fs::read_to_string(&path).unwrap();
+    return fs::read_to_string(&path)
+        .unwrap()
+        .replace("{{version}}", env!("CARGO_PKG_VERSION"));
 }
 
 fn convert_report(directory: &Path, report_path: &Path, format: &str) -> String {
