@@ -6,8 +6,8 @@ require __DIR__ . '/../support/coverage.inc';
 if (opcov_opcache_ini() === null) {
     die('skip OPcache is neither built in nor named by OPCOV_OPCACHE_EXTENSION');
 }
-if (!opcov_jit_built(opcov_opcache_ini())) {
-    die('skip this OPcache is built without the JIT');
+if (!opcov_jit_switchable(opcov_opcache_ini())) {
+    die('skip this OPcache cannot switch the JIT on at run time');
 }
 ?>
 --INI--

@@ -66,6 +66,12 @@ function opcov_jit_built(array $opcache): bool
     return opcov_child('<?php echo ini_get("opcache.jit") === false ? "no" : "yes";', $opcache) === 'yes';
 }
 
+function opcov_jit_switchable(array $opcache): bool
+{
+    $settings = ['opcache.enable_cli' => '1', 'opcache.jit' => 'off', 'opcache.jit_buffer_size' => '16M'] + $opcache;
+    return opcov_child('<?php echo @ini_set("opcache.jit", "tracing") === false ? "no" : "yes";', $settings) === 'yes';
+}
+
 function opcov_refusal(): string
 {
     try {
