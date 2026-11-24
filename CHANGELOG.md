@@ -11,34 +11,62 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-24
+
+First release: opcode-level line, branch-outcome and loop coverage for PHP
+8.4, 8.5 and 8.6 (NTS and ZTS) on Linux (glibc and musl, x86_64 and aarch64)
+and macOS arm64.
+
 ### Added
 
-- The `opcov` PHP extension (`opcov.so`), built on opcov's own Zend engine
-  bindings (`opcov-sys`: bindgen over the target PHP's headers plus a C shim of
-  accessors). It loads on PHP 8.4, 8.5 and 8.6, NTS and ZTS, on the HYBRID, CALL
-  and TAILCALL VMs. `\opcov\version()` returns the extension version, and
-  `php --ri opcov` shows the version, PHP API, thread safety, VM kind and
-  whether collection is available. See `docs/adr/0001-bindings.md`.
-- A panic guard at every engine entry point: a panic in the extension disables
-  collection with the reason and leaves PHP running.
-- The CFG snapshot model and the classification of every control-flow edge into
-  an outcome kind, shared by the extension and the reports.
-- The rules that decide which compiled files get probes, from
-  `opcov.collect_paths` and `opcov.exclude_paths` (`:`-separated paths or
-  `@<listfile>`), with exclusion always winning.
-- The mapping of outcomes to the source constructs they come from (`if`, `?:`,
-  `??`, `?->`, `&&`/`||`, `match`, `switch`, loops, `catch`, `finally`), with
-  exact spans, through mago-syntax at report time.
-- The canonical report schema `opcov-report/1` (`schema/opcov-report.v1.json`,
-  documented in `docs/report-schema.md`) with a validating reader.
-- `opcov merge`, which merges per-worker reports into the report a serial run
-  would produce, byte-identically for any input order and in bounded memory.
-- Packaging: release archives per PHP minor, thread safety and platform, named
-  as PIE expects for `pie install opcov/opcov`; Docker images for
-  `COPY --from`; Nix packages for each PHP build, `php*-with-opcov` PHP
-  packages, the `opcov` CLI and an overlay. See `docs/install.md`.
-- Release automation: a tag `v<version>` builds, tests, packages and attests
-  every artifact and publishes the GitHub release with this changelog's
-  section; a nightly job builds against php-src `master`.
+- **The extension** (`opcov.so`), on opcov's own Zend bindings (bindgen over
+  the target PHP's headers plus a C shim). Fire-once probes are swapped into
+  opcode handlers and restore the real handler once they have seen everything,
+  so measured code returns to full speed; HYBRID, CALL and TAILCALL VMs.
+- **Coverage:** executable lines (PCOV's rules); every outcome of every
+  branching construct (`if`/`elseif`/`else` including the implicit `else`,
+  `&&`/`||`/`and`/`or`, `??`, `??=`, `?:`, `?->`, `match` arms including
+  jump tables and no-arm, `switch` cases and default, `catch`, `finally` from
+  normal flow and from an exception); loops that never ran zero times or never
+  ran twice, for `foreach` (arrays, iterators, generators), `for`, `while`,
+  `do`-`while`, including loops that only continue through a `catch`.
+  `docs/branch-semantics.md` defines every outcome.
+- **Collection API:** `\opcov\start()`, `stop(?string $test)`, `reset()`,
+  `executable()`, `write_report()`, `ensure_can_collect()`, `get_status()`,
+  `get_debug_info()`, with per-test attribution whose cost scales with the
+  probes that fired.
+- **File selection** (`opcov.collect_paths`, `opcov.exclude_paths`,
+  `opcov.exclude_pattern`), decided once per compiled file; unselected files
+  run as without opcov.
+- **The canonical report** `opcov-report/1` (`docs/report-schema.md`),
+  streamed by one writer and reader, with lossless encoding of names and paths
+  that are not UTF-8, sha256 of every measured source, and one entry per
+  distinct `eval()`'d source.
+- **The `opcov` CLI:** `merge` (byte-reproducible, bounded memory), `convert`
+  (lcov, Clover, Cobertura, HTML), `gate` (changed-code coverage from a diff,
+  with exit codes for CI) and `doctor` (environment self-test and source
+  mapping check). `docs/cli.md`, `docs/gate.md`.
+- **Source mapping** of outcomes to constructs and exact spans through
+  mago-syntax (99.94% of outcomes on a 4.97M-line corpus).
+- **`opcov/phpunit`** for PHPUnit 12/13 and Pest 4: an extension, a launcher
+  that sets the INI from PHPUnit's `<source>`, paratest support, a PHPUnit 13.3
+  coverage driver with branch coverage, and a `.cov` converter.
+  `docs/phpunit.md`.
+- **Refusals with stable codes** for every unsupported setup (OPcache
+  optimizer, JIT, file cache, preload, protected memory, OPcache under a
+  shared SAPI, Xdebug or PCOV in coverage mode), each with an entry in
+  `docs/troubleshooting.md`; per-file failures skip only that file.
+- **Packaging:** release archives named for PIE, Docker layer images, Nix
+  packages and an overlay. `docs/install.md`.
 
-[Unreleased]: https://github.com/stubbedev/opcov/commits/main
+### Performance
+
+Instructions relative to no coverage (`docs/benchmarks.md`): about 1.02x on a
+Laravel package suite and 1.48x on Carbon's suite with full line, branch and
+loop coverage, below PCOV's line-only overhead; on a real branch the
+changed-code gate's coverage step is about 314x faster than Xdebug path
+coverage. On a 4.97M-line corpus, compiling with every file selected takes
+about 1.6x plain compilation (`docs/scale.md`).
+
+[Unreleased]: https://github.com/stubbedev/opcov/compare/v0.1.0...main
+[0.1.0]: https://github.com/stubbedev/opcov/releases/tag/v0.1.0
