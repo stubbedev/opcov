@@ -990,6 +990,14 @@ pub(crate) fn install(engine: Engine) {
     ENGINE.busy.store(false, Ordering::Release);
 }
 
+pub(crate) fn uninstall() {
+    enter();
+    // SAFETY: as in `with_engine`; called once from module shutdown, after the probes are unregistered.
+    let engine = unsafe { (*ENGINE.engine.get()).take() };
+    ENGINE.busy.store(false, Ordering::Release);
+    drop(engine);
+}
+
 pub(crate) fn after_panic() {
     if threads::foreign() || ENGINE.busy.load(Ordering::Acquire) {
         return;

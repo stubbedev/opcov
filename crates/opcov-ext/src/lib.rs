@@ -177,6 +177,7 @@ unsafe extern "C" fn module_shutdown(module_type: c_int, module_number: c_int) -
         if installed {
             threads::with_handler_table(probes::unregister);
         }
+        engine::uninstall();
         ini::unregister(module_type, module_number);
     });
     return SUCCESS;
