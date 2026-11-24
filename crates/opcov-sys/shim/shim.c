@@ -20,7 +20,7 @@ const uint8_t opcov_internal_function_type = ZEND_INTERNAL_FUNCTION;
 zend_executor_globals *opcov_executor_globals(void)
 {
 #ifdef ZTS
-	return TSRMG_FAST_BULK(executor_globals_offset, zend_executor_globals *);
+	return TSRMG_BULK(executor_globals_id, zend_executor_globals *);
 #else
 	return &executor_globals;
 #endif
@@ -29,7 +29,7 @@ zend_executor_globals *opcov_executor_globals(void)
 zend_compiler_globals *opcov_compiler_globals(void)
 {
 #ifdef ZTS
-	return TSRMG_FAST_BULK(compiler_globals_offset, zend_compiler_globals *);
+	return TSRMG_BULK(compiler_globals_id, zend_compiler_globals *);
 #else
 	return &compiler_globals;
 #endif
