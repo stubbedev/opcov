@@ -11,6 +11,8 @@ final readonly class Baseline
 {
     public const array METRICS = ['instructions', 'cycles'];
 
+    public const array GATING = ['instructions'];
+
     public function __construct(private string $path)
     {
     }
@@ -34,9 +36,24 @@ final readonly class Baseline
     /** @return list<string> */
     public function regressions(string $php, BenchReport $report, float $tolerance): array
     {
+        return $this->exceeding($php, $report, $tolerance, self::GATING);
+    }
+
+    /** @return list<string> */
+    public function warnings(string $php, BenchReport $report, float $tolerance): array
+    {
+        return $this->exceeding($php, $report, $tolerance, array_values(array_diff(self::METRICS, self::GATING)));
+    }
+
+    /**
+     * @param list<string> $metrics
+     * @return list<string>
+     */
+    private function exceeding(string $php, BenchReport $report, float $tolerance, array $metrics): array
+    {
         $stored = Json::read($this->path)[$php]['opcov_over_none'] ?? throw new \RuntimeException("$this->path has no baseline for PHP $php; record one with --update-baseline");
         $regressions = [];
-        foreach (self::METRICS as $metric) {
+        foreach ($metrics as $metric) {
             foreach ($report->workloads as $name => $result) {
                 $baseline = $stored[$metric][$name] ?? throw new \RuntimeException("$this->path has no PHP $php $metric baseline for workload $name");
                 $current = self::ratio($name, $result, $metric);

@@ -80,6 +80,9 @@ final readonly class BenchRun
             $baseline->store($this->toolchain->phpVersion(), $report);
         }
         if ($this->check) {
+            foreach ($baseline->warnings($this->toolchain->phpVersion(), $report, self::REGRESSION_TOLERANCE) as $warning) {
+                fwrite(STDERR, "bench: warning (cycles depend on machine load): $warning\n");
+            }
             $regressions = $baseline->regressions($this->toolchain->phpVersion(), $report, self::REGRESSION_TOLERANCE);
             foreach ($regressions as $regression) {
                 fwrite(STDERR, "bench: regression: $regression\n");
