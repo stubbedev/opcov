@@ -8,7 +8,7 @@ use std::{
 };
 
 use opcov_core::{
-    cfg::{FilePath, FunctionKey, Line},
+    cfg::{FilePath, Line},
     encoding,
     filter::SkipReason,
     output::write_atomically,
@@ -16,11 +16,10 @@ use opcov_core::{
 };
 use opcov_sys::{
     ArgInfo, HashTable, MAXPATHLEN, MAY_BE_ARRAY, MAY_BE_NULL, MAY_BE_STRING, MAY_BE_VOID, ZTS,
-    argument, function_entry, opcov_add_index_trues, opcov_add_named_trues, opcov_array_entry_at,
-    opcov_array_value_at, opcov_getcwd, opcov_parse_array, opcov_parse_optional_string,
-    opcov_parse_path, opcov_parse_path_and_array, opcov_read_bool, opcov_read_string,
-    opcov_type_name, optional_argument, zend_execute_data, zend_function_entry, zend_string,
-    zend_ulong, zval,
+    argument, function_entry, opcov_array_entry_at, opcov_array_value_at, opcov_getcwd,
+    opcov_parse_array, opcov_parse_optional_string, opcov_parse_path, opcov_parse_path_and_array,
+    opcov_read_bool, opcov_read_string, opcov_type_name, optional_argument, zend_execute_data,
+    zend_function_entry, zend_string, zend_ulong, zval,
 };
 use serde_json::{Map, Value, json};
 
@@ -29,10 +28,10 @@ use crate::{
     code::{Code, Explained},
     conflicts::{Conflict, Conflicts, Environment},
     engine::{
-        Covered, Engine, FileId, FileRecord, FiredList, FunctionId, OffReason, Probe, Role, Roles,
-        Unit, Verdict, with_engine,
+        Covered, Engine, FileId, FileRecord, FiredList, OffReason, Probe, Role, Roles, Unit,
+        Verdict, with_engine,
     },
-    guard::{COLLECTION, Caught, EntryPoint, caught, guard},
+    guard::{COLLECTION, Caught, EntryPoint, guard},
     info, ini,
     php::{self, Exception},
     report::{self, Entry},
@@ -83,10 +82,18 @@ pub(crate) const WRITE_REPORT: zend_function_entry =
     function_entry(c"opcov\\write_report", write_report, &REPORT);
 
 fn off_reason() -> Option<OffReason> {
-    return off_reason_in(&Environment::current());
+    let conflicts = with_engine(|engine| {
+        return engine.request.as_mut().map(|request| {
+            request.environment.refresh();
+            return request.environment.conflicts();
+        });
+    })
+    .flatten()
+    .unwrap_or_else(|| return Environment::current().conflicts());
+    return off_reason_in(conflicts);
 }
 
-fn off_reason_in(environment: &Environment) -> Option<OffReason> {
+fn off_reason_in(conflicts: Vec<Conflict>) -> Option<OffReason> {
     if let Some(disabled) = COLLECTION.disabled() {
         return Some(OffReason::Panic(disabled.clone()));
     }
@@ -96,7 +103,7 @@ fn off_reason_in(environment: &Environment) -> Option<OffReason> {
     if let Some(startup) = STARTUP.get() {
         return Some(startup.clone());
     }
-    if let Some(conflicts) = Conflicts::of(environment.conflicts()) {
+    if let Some(conflicts) = Conflicts::of(conflicts) {
         return Some(OffReason::Conflicts(conflicts));
     }
     return with_engine(|engine| {
@@ -124,7 +131,7 @@ impl Engine {
             .filter_map(|verdict| {
                 return match verdict {
                     Verdict::Measure(file) => Some(*file),
-                    Verdict::Skip(_) | Verdict::Off => None,
+                    Verdict::MeasureEval { .. } | Verdict::Skip(_) | Verdict::Off => None,
                 };
             })
             .collect();
@@ -202,205 +209,14 @@ unsafe extern "C" fn start(execute_data: *mut zend_execute_data, _return_value: 
     });
 }
 
-#[derive(Debug)]
-struct FunctionHits<'a> {
-    function: FunctionId,
-    key: &'a FunctionKey,
-    text: &'a str,
-    outcomes: Vec<u32>,
-    loops: Vec<(u32, bool, bool)>,
-}
-
-#[derive(Debug)]
-struct FileHits<'a> {
-    file: FileId,
-    path: &'a FilePath,
-    lines: Vec<u32>,
-    functions: Vec<FunctionHits<'a>>,
-}
-
-fn file_entry<'f, 'a>(
-    files: &'f mut Vec<FileHits<'a>>,
-    file: FileId,
-    path: Option<&'a FilePath>,
-) -> Option<&'f mut FileHits<'a>> {
-    let path = path?;
-    let at = match files.binary_search_by_key(&file, |hits| return hits.file) {
-        Ok(at) => at,
-        Err(at) => {
-            files.insert(
-                at,
-                FileHits {
-                    file,
-                    path,
-                    lines: Vec::new(),
-                    functions: Vec::new(),
-                },
-            );
-            at
-        }
-    };
-    return files.get_mut(at);
-}
-
-impl Engine {
-    fn function_entry<'f, 'a>(
-        &'a self,
-        functions: &'f mut Vec<FunctionHits<'a>>,
-        function: FunctionId,
-    ) -> Option<&'f mut FunctionHits<'a>> {
-        let at = match functions.binary_search_by_key(&function, |hits| return hits.function) {
-            Ok(at) => at,
-            Err(at) => {
-                let record = self.files.function(function)?;
-                functions.insert(
-                    at,
-                    FunctionHits {
-                        function,
-                        key: &record.key,
-                        text: record.key_text(),
-                        outcomes: Vec::new(),
-                        loops: Vec::new(),
-                    },
-                );
-                at
-            }
-        };
-        return functions.get_mut(at);
-    }
-
-    fn file_hits(&self) -> Vec<FileHits<'_>> {
-        let mut files: Vec<FileHits<'_>> = Vec::new();
-        let mut functions: Vec<FunctionHits<'_>> = Vec::new();
-        for &covered in &self.scratch.covered {
-            let (function, number, zero) = match covered {
-                Covered::Line(file, line) => {
-                    if let Some(hits) = file_entry(&mut files, file, self.path(file)) {
-                        hits.lines.push(line.get());
-                    }
-                    continue;
-                }
-                Covered::Outcome(function, number) => {
-                    if let Some(hits) = self.function_entry(&mut functions, function) {
-                        hits.outcomes.push(number);
-                    }
-                    continue;
-                }
-                Covered::Zero(function, number) => (function, number, true),
-                Covered::Second(function, number) => (function, number, false),
-            };
-            let Some(hits) = self.function_entry(&mut functions, function) else {
-                continue;
-            };
-            let at = match hits
-                .loops
-                .binary_search_by_key(&number, |&(looped, ..)| return looped)
-            {
-                Ok(at) => at,
-                Err(at) => {
-                    hits.loops.insert(at, (number, false, false));
-                    at
-                }
-            };
-            if let Some((_, seen_zero, seen_second)) = hits.loops.get_mut(at) {
-                if zero {
-                    *seen_zero = true;
-                } else {
-                    *seen_second = true;
-                }
-            }
-        }
-        for hits in functions {
-            let Some(file) = self
-                .files
-                .function(hits.function)
-                .map(|record| return record.file)
-            else {
-                continue;
-            };
-            if let Some(entry) = file_entry(&mut files, file, self.path(file)) {
-                entry.functions.push(hits);
-            }
-        }
-        for entry in &mut files {
-            entry
-                .functions
-                .sort_unstable_by(|left, right| return left.key.cmp(right.key));
-        }
-        files.sort_unstable_by(|left, right| return left.path.cmp(right.path));
-        return files;
-    }
-}
-
-unsafe fn named_trues(target: *mut zval, prefix: u8, numbers: &[u32]) -> Caught<()> {
-    // SAFETY: the caller passes a live array zval; the engine copies every key it builds.
-    return caught(unsafe {
-        opcov_add_named_trues(target, prefix, numbers.as_ptr(), numbers.len())
-    });
-}
-
-unsafe fn emit_function(target: *mut zval, hits: &FunctionHits<'_>) -> Caught<()> {
-    // SAFETY: the caller passes a writable zval; every child zval is moved into its parent.
-    unsafe {
-        php::array(target, 2)?;
-        let mut outcomes = zval::default();
-        php::array(&raw mut outcomes, hits.outcomes.len())?;
-        named_trues(&raw mut outcomes, b'o', &hits.outcomes)?;
-        php::set(target, "outcomes", &mut outcomes)?;
-        let mut loops = zval::default();
-        php::array(&raw mut loops, hits.loops.len())?;
-        for &(number, zero, second) in &hits.loops {
-            let mut looped = zval::default();
-            php::array(&raw mut looped, 2)?;
-            for (name, flag) in [("zero", zero), ("second", second)] {
-                if flag {
-                    let mut hit = php::bool_value(true);
-                    php::set(&raw mut looped, name, &mut hit)?;
-                }
-            }
-            php::set(&raw mut loops, LoopId::new(number).to_string(), &mut looped)?;
-        }
-        php::set(target, "loops", &mut loops)?;
-    }
-    return Ok(());
-}
-
-unsafe fn emit_hits(engine: &Engine, return_value: *mut zval) -> Caught<()> {
-    let files = engine.file_hits();
-    // SAFETY: the caller passes the engine's return slot; every child zval is moved into its parent.
-    unsafe {
-        php::array(return_value, files.len())?;
-        for file in &files {
-            let mut entry = zval::default();
-            php::array(&raw mut entry, 2)?;
-            let mut covered = zval::default();
-            php::array(&raw mut covered, file.lines.len())?;
-            caught(opcov_add_index_trues(
-                &raw mut covered,
-                file.lines.as_ptr(),
-                file.lines.len(),
-            ))?;
-            php::set(&raw mut entry, "lines", &mut covered)?;
-            let mut functions = zval::default();
-            php::array(&raw mut functions, file.functions.len())?;
-            for hits in &file.functions {
-                let mut function = zval::default();
-                emit_function(&raw mut function, hits)?;
-                php::set(&raw mut functions, hits.text, &mut function)?;
-            }
-            php::set(&raw mut entry, "functions", &mut functions)?;
-            php::set(return_value, file.path.to_bytes(), &mut entry)?;
-        }
-    }
-    return Ok(());
-}
-
 impl Engine {
     fn collect_hits(&mut self) {
         let orders = &mut self.scratch.orders;
         orders.clear();
-        orders.extend(self.fired.covered.drain(..).map(Covered::order));
-        orders.sort_unstable();
+        for list in &mut self.fired.covered {
+            list.sort_unstable();
+            orders.append(list);
+        }
         orders.dedup();
         self.scratch.covered.clear();
         self.scratch.covered.extend(
@@ -475,8 +291,20 @@ unsafe extern "C" fn stop(execute_data: *mut zend_execute_data, return_value: *m
             if let Some(test) = test {
                 engine.attribution.attribute(test, &engine.scratch.covered);
             }
+            let Engine {
+                hits,
+                files,
+                scratch,
+                ..
+            } = engine;
             // SAFETY: the engine passes this call's return slot.
-            unsafe { emit_hits(engine, return_value) }?;
+            match unsafe { hits.emit(files, &scratch.covered, return_value) } {
+                Some(emitted) => emitted?,
+                None => php::throw(
+                    Exception::Runtime,
+                    "opcov\\stop() cannot allocate the keys of its result",
+                ),
+            }
             return Ok(true);
         });
         if matches!(stopped, None | Some(Ok(false))) {
@@ -700,7 +528,7 @@ impl Engine {
             .filter_map(|(name, verdict)| {
                 return match verdict {
                     Verdict::Skip(reason) => Some((name.clone(), Value::String(skip_text(reason)))),
-                    Verdict::Measure(_) | Verdict::Off => None,
+                    Verdict::Measure(_) | Verdict::MeasureEval { .. } | Verdict::Off => None,
                 };
             })
             .collect();
@@ -773,7 +601,7 @@ unsafe extern "C" fn get_status(execute_data: *mut zend_execute_data, return_val
             return;
         }
         let environment = Environment::current();
-        let reason = off_reason_in(&environment);
+        let reason = off_reason_in(environment.conflicts());
         let built =
             with_engine(|engine| return status(Some(engine), reason.as_ref(), &environment))
                 .unwrap_or_else(|| return status(None, reason.as_ref(), &environment));
@@ -858,7 +686,7 @@ impl Engine {
             (_, Some(unmodelled)) => Value::String(unmodelled.to_string()),
             (Some(Verdict::Skip(reason)), None) => Value::String(skip_text(reason)),
             (Some(Verdict::Off), None) => Value::String(String::from("collection is off")),
-            (Some(Verdict::Measure(_)) | None, None) => Value::Null,
+            (Some(Verdict::Measure(_) | Verdict::MeasureEval { .. }) | None, None) => Value::Null,
         };
         let Some(file) = self.find_file(requested) else {
             return json!({"skip_reason": skip, "executable_lines": [], "functions": {}, "probes": [], "units": 0});

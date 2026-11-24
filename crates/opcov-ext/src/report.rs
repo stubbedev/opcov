@@ -26,8 +26,8 @@ use opcov_sys::{ZTS, opcov_php_version, zend_vm_kind};
 use crate::{
     VERSION,
     engine::{
-        AttributedTest, Content, Covered, Engine, FileId, FileRecord, Files, Fingerprint,
-        FunctionId, FunctionRecord, Source,
+        Attribution, Content, Covered, Engine, FileId, FileRecord, Files, Fingerprint, FunctionId,
+        FunctionRecord, Source,
     },
 };
 
@@ -331,7 +331,7 @@ const BATCH_HITS: usize = 1 << 24;
 struct Attributed<'e> {
     files: &'e Files,
     ids: Vec<FileId>,
-    tests: &'e [AttributedTest],
+    tests: &'e Attribution,
     indexes: Vec<TestIndex>,
 }
 
@@ -345,11 +345,8 @@ impl Attributed<'_> {
     }
 
     fn runs(&self, mut visit: impl FnMut(usize, &[Covered], TestIndex)) {
-        for (test, &index) in self.tests.iter().zip(&self.indexes) {
-            for run in test
-                .covered
-                .chunk_by(|left, right| return owner(*left) == owner(*right))
-            {
+        for ((_, covered), &index) in self.tests.tests().zip(&self.indexes) {
+            for run in covered.chunk_by(|left, right| return owner(*left) == owner(*right)) {
                 let Some(&first) = run.first() else {
                     continue;
                 };
@@ -488,8 +485,11 @@ impl Engine {
             .as_ref()
             .and_then(|request| return request.settings.clone())
             .ok_or(ReportError::NotConfigured)?;
-        let tests = self.attribution.tests();
-        let names: Vec<String> = tests.iter().map(|test| return test.name.clone()).collect();
+        let tests = &self.attribution;
+        let names: Vec<String> = tests
+            .tests()
+            .map(|(name, _)| return name.to_owned())
+            .collect();
         let (table, indexes) = TestTable::from_unordered(&names)?;
         drop(names);
         let attributed = Attributed {

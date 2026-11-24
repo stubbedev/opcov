@@ -3,9 +3,10 @@ use std::path::{Path, PathBuf};
 
 use roxmltree::{Document, Node, ParsingOptions};
 
-use super::fixture::{Extras, project, report, run, stderr, workspace};
+use super::fixture::{Extras, project, report, run, stderr, with_eval_entry, workspace};
 
 const ROOT: &str = "/srv/app";
+const EVAL_SITE: &str = "Foo.php(12)";
 const SHA: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 fn golden(name: &str) -> String {
@@ -331,6 +332,26 @@ fn cobertura_has_the_structure_of_its_dtd() {
         Some("0.8888"),
         "rates are truncated to four decimals"
     );
+}
+
+#[test]
+fn eval_entries_are_left_out_of_every_format() {
+    let (directory, report_path) = project("convert_eval", Extras::default());
+    let plain = ["lcov", "clover", "cobertura", "html"]
+        .map(|format| return convert_report(&directory, &report_path, format));
+    let with_eval = with_eval_entry(&fs::read_to_string(&report_path).unwrap());
+    fs::write(&report_path, with_eval).unwrap();
+    for (format, plain) in ["lcov", "clover", "cobertura", "html"].iter().zip(plain) {
+        let converted = convert_report(&directory, &report_path, format);
+        assert!(
+            !converted.contains(EVAL_SITE),
+            "{format} names no eval entry: {converted}"
+        );
+        assert_eq!(
+            converted, plain,
+            "{format} output is the same as without the eval entry"
+        );
+    }
 }
 
 #[test]

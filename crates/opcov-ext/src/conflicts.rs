@@ -264,6 +264,12 @@ impl Environment {
         return found;
     }
 
+    pub(crate) fn refresh(&mut self) {
+        if let Some(opcache) = &mut self.opcache {
+            opcache.refresh(&self.sapi);
+        }
+    }
+
     pub(crate) fn current() -> Self {
         return Self {
             sapi: sapi_name(),
@@ -302,13 +308,31 @@ fn number(name: &CStr) -> i64 {
     return unsafe { opcov_ini_long(name.as_ptr(), name.count_bytes()) };
 }
 
+fn not_utf8(name: &CStr) -> String {
+    return format!("<{} is not valid UTF-8>", name.to_string_lossy());
+}
+
 fn text(name: &'static CStr) -> String {
-    return ini::string(name).unwrap_or_else(|_not_utf8| {
-        return format!("<{} is not valid UTF-8>", name.to_string_lossy());
-    });
+    return ini::string(name).unwrap_or_else(|_not_utf8| return not_utf8(name));
+}
+
+fn refresh_text(name: &'static CStr, current: &mut String) {
+    if ini::refresh_string(name, current).is_err() {
+        *current = not_utf8(name);
+    }
 }
 
 impl Opcache {
+    fn refresh(&mut self, sapi: &str) {
+        if !self.active_under(sapi) {
+            return;
+        }
+        self.enable = flag(c"opcache.enable");
+        if self.jit_buffer_bytes > 0 {
+            refresh_text(c"opcache.jit", &mut self.jit);
+        }
+    }
+
     fn current() -> Self {
         return Self {
             enable: flag(c"opcache.enable"),

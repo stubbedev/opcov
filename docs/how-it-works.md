@@ -357,8 +357,8 @@ sorted list of covered items per test id.
 - **Processes.** After `pcntl_fork()` each process records and reports only its
   own hits.
 - **Files not selectable by path.** Files loaded through a stream wrapper
-  (`phar://`, `vfs://`) run unmeasured; `eval()`'d code is measured under the
-  engine's name `<file>(<line>) : eval()'d code`
+  (`phar://`, `vfs://`) run unmeasured; `eval()`'d code is measured as one
+  entry per distinct source, `<file>(<line>) : eval()'d code #<digest prefix>`
   ([configuration.md](configuration.md#eval-and-stream-wrappers)).
 - **Compiled code only.** opcov sees opcodes, which have no columns; spans
   come from the source when a report is read, and a construct PHP compiles to

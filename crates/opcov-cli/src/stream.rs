@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::thread;
 
+use opcov_core::filter::eval_host;
 use opcov_core::report::{FileCoverage, Header, RawEntry, ReadError, ReportReader, SourcePath};
 
 use crate::failure::Failure;
@@ -188,6 +189,6 @@ where
     });
 }
 
-pub(crate) const fn everything(_path: &SourcePath) -> bool {
-    return true;
+pub(crate) fn source_files(path: &SourcePath) -> bool {
+    return eval_host(path.as_str()).is_none();
 }

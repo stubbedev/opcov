@@ -19,6 +19,7 @@ mod compiler;
 mod conflicts;
 mod engine;
 mod guard;
+mod hits;
 mod info;
 mod ini;
 mod lines;
@@ -38,7 +39,7 @@ use core::{
     ptr,
 };
 
-use conflicts::{Conflicts, Environment};
+use conflicts::Conflicts;
 use engine::{Engine, OffReason, with_engine};
 use guard::{EntryPoint, guard};
 use opcov_sys::{
@@ -205,7 +206,7 @@ fn activate() {
         return;
     }
     let mut request = select::configure();
-    let conflicts = Conflicts::of(Environment::current().conflicts());
+    let conflicts = Conflicts::of(request.environment.conflicts());
     let probing = conflicts.is_none();
     let measuring = probing && request.selection.is_some();
     if let Some(conflicts) = conflicts {

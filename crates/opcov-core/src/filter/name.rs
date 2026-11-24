@@ -1,3 +1,7 @@
+use crate::report::Sha256;
+
+const EVAL_DIGEST_BYTES: usize = 8;
+
 #[must_use]
 pub fn eval_host(reported: &str) -> Option<&str> {
     let mut host = compiling_file(reported)?;
@@ -35,4 +39,24 @@ pub fn stream_scheme(path: &str) -> Option<&str> {
         return Some(scheme);
     }
     return None;
+}
+
+#[must_use]
+pub fn eval_source(compiled: &str, sha256: &Sha256) -> String {
+    let digits = sha256
+        .as_bytes()
+        .iter()
+        .take(EVAL_DIGEST_BYTES)
+        .flat_map(|&byte| return [byte >> 4_u8, byte & 0x0f])
+        .filter_map(|nibble| return char::from_digit(u32::from(nibble), 16));
+    let mut name = String::with_capacity(
+        compiled
+            .len()
+            .saturating_add(2)
+            .saturating_add(EVAL_DIGEST_BYTES.saturating_mul(2)),
+    );
+    name.push_str(compiled);
+    name.push_str(" #");
+    name.extend(digits);
+    return name;
 }

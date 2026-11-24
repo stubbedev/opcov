@@ -103,6 +103,18 @@ array and fits in an unsigned 32-bit integer.
 
 ### `files.<path>`
 
+The key is the measured file's path. Code compiled by `eval()` has no file of
+its own: each distinct evaluated source is an entry named
+`<file>(<line>) : eval()'d code #<digest prefix>`, the engine's name for the
+code (`<file>` relative to the root like any path, the line of the `eval()`
+call, nested `eval()`s appended in the engine's order) followed by ` #` and
+the first 16 lowercase hex digits of the source's `sha256`. The same source
+evaluated at the same site has the same name in every process, so such
+entries merge like files; different sources at one site are different
+entries. They have no file on disk to read: tools that need the source skip
+them (`opcov convert` and `opcov doctor`, see
+[configuration.md](configuration.md#eval-and-stream-wrappers)).
+
 | Member | Type | Meaning |
 |---|---|---|
 | `sha256` | string | SHA-256 of the measured source as PHP compiled it, 64 lowercase hex digits, so a report never applies to a different version of the file. The extension computes it when it writes the report, not while compiling: at compile time it keeps only a 64-bit fingerprint of the compiled bytes, and `write_report()` reads each file again, checks that the fingerprint still matches and hashes it. A measured file changed or removed on disk between compilation and `write_report()` therefore fails the report with an error naming it; code compiled from a string (`eval()`) is hashed when it is compiled. |

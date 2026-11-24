@@ -1,15 +1,38 @@
-use core::ptr;
+use core::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 use opcov_sys::{
     opcov_add_assoc_zval, opcov_add_index_zval, opcov_add_next_index_zval, opcov_array_init,
-    opcov_register_class, opcov_throw, opcov_zval_bool, opcov_zval_long, opcov_zval_null,
-    opcov_zval_stringl, spl_ce_LogicException, spl_ce_RuntimeException, zend_ce_type_error,
-    zend_ce_value_error, zend_class_entry, zval,
+    opcov_persistent_key, opcov_register_class, opcov_string_release, opcov_throw, opcov_zval_bool,
+    opcov_zval_long, opcov_zval_null, opcov_zval_stringl, spl_ce_LogicException,
+    spl_ce_RuntimeException, zend_ce_type_error, zend_ce_value_error, zend_class_entry,
+    zend_string, zval,
 };
 use serde_json::Value;
 
 use crate::guard::{Caught, caught, record};
+
+#[derive(Debug)]
+pub(crate) struct Key(NonNull<zend_string>);
+
+impl Key {
+    pub(crate) fn new(bytes: &[u8]) -> Option<Self> {
+        // SAFETY: copies `bytes` into a new persistent string with its hash computed.
+        return NonNull::new(unsafe { opcov_persistent_key(bytes.as_ptr().cast(), bytes.len()) })
+            .map(Self);
+    }
+
+    pub(crate) const fn get(&self) -> *mut zend_string {
+        return self.0.as_ptr();
+    }
+}
+
+impl Drop for Key {
+    fn drop(&mut self) {
+        // SAFETY: releases the reference this key holds; arrays that use it as a key hold their own.
+        unsafe { opcov_string_release(self.0.as_ptr()) };
+    }
+}
 
 const CANNOT_COLLECT: &str = "opcov\\CannotCollectException";
 
@@ -79,13 +102,6 @@ pub(crate) unsafe fn set_index(array: *mut zval, index: u32, value: &mut zval) -
 pub(crate) unsafe fn push(array: *mut zval, value: &mut zval) -> Caught<()> {
     // SAFETY: the caller passes a live array zval; the array takes ownership of `value`.
     return caught(unsafe { opcov_add_next_index_zval(array, value) });
-}
-
-pub(crate) unsafe fn bool_value(value: bool) -> zval {
-    let mut target = zval::default();
-    // SAFETY: writes a scalar into a local zval.
-    unsafe { opcov_zval_bool(&raw mut target, value) };
-    return target;
 }
 
 pub(crate) unsafe fn emit(target: *mut zval, value: &Value) -> Caught<()> {

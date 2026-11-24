@@ -747,17 +747,21 @@ impl Unit {
         }
     }
 
+    fn loop_entry(&self, looped: u32, index: usize) -> Option<u32> {
+        return get(&self.loops, looped)?.entries.get(index).copied();
+    }
+
     unsafe fn arm_loop(&mut self, looped: u32, label: Handler) {
-        let Some(state) = get(&self.loops, looped) else {
+        let Some(source) = get(&self.loops, looped).map(|state| return state.source) else {
             return;
         };
-        let entries = state.entries.clone();
-        let source = state.source;
-        for entry in entries {
+        let mut index = 0_usize;
+        while let Some(entry) = self.loop_entry(looped, index) {
             // SAFETY: forwarded from the caller.
             unsafe {
                 self.arm(position(entry), Role::LoopEntry, label);
             };
+            index = index.saturating_add(1);
         }
         if let Some(source) = source {
             // SAFETY: forwarded from the caller.
@@ -766,15 +770,13 @@ impl Unit {
     }
 
     unsafe fn disarm_loop_entries(&mut self, looped: u32) {
-        let Some(entries) = get(&self.loops, looped).map(|state| return state.entries.clone())
-        else {
-            return;
-        };
-        for entry in entries {
+        let mut index = 0_usize;
+        while let Some(entry) = self.loop_entry(looped, index) {
             // SAFETY: forwarded from the caller.
             unsafe {
                 self.disarm(position(entry), Role::LoopEntry);
             };
+            index = index.saturating_add(1);
         }
     }
 
@@ -1028,12 +1030,15 @@ impl Engine {
         successor: Successor,
         started: Option<bool>,
     ) {
-        self.take_outcome(recording, id, successor.outcome);
+        let newly_seen = self.take_outcome(recording, id, successor.outcome);
         let role = self
             .units
             .get(id)
             .and_then(|unit| return get(&unit.sources, source))
             .and_then(|found| return found.loop_role);
+        if !newly_seen && role.is_none() {
+            return;
+        }
         match role {
             Some(LoopRole::Skip { looped, skip }) if successor.outcome == skip => {
                 self.take_loop(recording, id, looped, true);
@@ -1083,25 +1088,27 @@ impl Engine {
         };
         let pending = self.pending.swap_remove(position);
         self.unwatch(pending);
-        let candidates: Vec<Successor> = self
+        let only = self
             .units
             .get(id)
             .and_then(|unit| return get(&unit.sources, pending.source))
-            .map_or_else(Vec::new, |found| {
-                return found
+            .and_then(|found| {
+                let mut matching = found
                     .successors
                     .iter()
-                    .filter(|successor| return successor.start == op)
-                    .copied()
-                    .collect();
+                    .filter(|successor| return successor.start == op);
+                return match (matching.next(), matching.next()) {
+                    (Some(successor), None) => Some(*successor),
+                    (None | Some(_), _) => None,
+                };
             });
-        if let [successor] = candidates.as_slice() {
+        if let Some(successor) = only {
             self.taken(
                 recording,
                 id,
                 frame,
                 pending.source,
-                *successor,
+                successor,
                 pending.started,
             );
         }

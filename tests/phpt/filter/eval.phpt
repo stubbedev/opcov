@@ -1,5 +1,5 @@
 --TEST--
-eval() code is measured when its host file is selected and reported under <file>(<line>) : eval()'d code
+eval() code is measured when its host file is selected and reported under <file>(<line>) : eval()'d code #<first 16 hex digits of the source's sha256>
 --INI--
 opcov.enabled=1
 opcov.collect_paths={PWD}/fixtures/app
@@ -21,6 +21,6 @@ foreach (\opcov\get_status()["skipped_files"] as $file => $reason) {
 int(3)
 int(7)
 fixtures/app/evaluates.php: 4
-fixtures/app/evaluates.php(4) : eval()'d code: 2
+fixtures/app/evaluates.php(4) : eval()'d code #085f279b7135a860: 2
 eval.php: not in opcov.collect_paths
 eval.php(5) : eval()'d code: not in opcov.collect_paths

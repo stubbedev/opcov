@@ -81,6 +81,7 @@
       "pattern": "^([^%]|%[0-9A-F]{2})*$"
     },
     "sourcePath": {
+      "description": "The measured file's path. Each distinct source compiled by eval() is an entry named `<file>(<line>) : eval()'d code #<first 16 hex digits of its sha256>`.",
       "allOf": [
         { "$ref": "#/$defs/encodedBytes" },
         {

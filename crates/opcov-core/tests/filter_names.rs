@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod reported_names {
-    use opcov_core::filter::{eval_host, stream_scheme};
+    use opcov_core::filter::{eval_host, eval_source, stream_scheme};
+    use opcov_core::report::Sha256;
 
     #[test]
     fn eval_code_names_yield_the_host_file() {
@@ -62,6 +63,34 @@ mod reported_names {
         ] {
             assert_eq!(eval_host(reported), None, "{reported}");
         }
+    }
+
+    #[test]
+    fn eval_sources_are_named_by_the_first_eight_bytes_of_their_sha256() {
+        let named = eval_source(
+            "/srv/app/x.php(12) : eval()'d code",
+            &Sha256::digest(b"return 1;"),
+        );
+        assert_eq!(
+            named,
+            format!(
+                "/srv/app/x.php(12) : eval()'d code #{}",
+                Sha256::digest(b"return 1;").to_string().get(..16).unwrap()
+            )
+        );
+        assert_eq!(
+            eval_host(&named),
+            Some("/srv/app/x.php"),
+            "the named source still traces back to its host"
+        );
+        assert_ne!(
+            named,
+            eval_source(
+                "/srv/app/x.php(12) : eval()'d code",
+                &Sha256::digest(b"return 2;")
+            ),
+            "another source at the same site gets another name"
+        );
     }
 
     #[test]

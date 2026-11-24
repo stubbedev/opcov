@@ -40,17 +40,33 @@ pub(crate) fn enabled() -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NotUtf8(pub(crate) &'static CStr);
 
-pub(crate) fn string(name: &'static CStr) -> Result<String, NotUtf8> {
+fn with_value<R>(name: &CStr, read: impl FnOnce(&[u8]) -> R) -> R {
     // SAFETY: reads a registered INI entry by its NUL-terminated name and length; the engine keeps
-    // the returned string alive until the entry changes, and it is copied right away.
+    // the returned string alive until the entry changes, which cannot happen while `read` runs.
     let value = unsafe { opcov_ini_string(name.as_ptr(), name.count_bytes()) };
     if value.is_null() {
-        return Ok(String::new());
+        return read(&[]);
     }
     // SAFETY: a non-null INI value is a NUL-terminated string owned by the engine.
-    let text = unsafe { CStr::from_ptr(value) };
-    return text
-        .to_str()
-        .map(str::to_owned)
-        .map_err(|_utf8| return NotUtf8(name));
+    return read(unsafe { CStr::from_ptr(value) }.to_bytes());
+}
+
+pub(crate) fn refresh_string(name: &'static CStr, current: &mut String) -> Result<(), NotUtf8> {
+    return with_value(name, |value| {
+        if value == current.as_bytes() {
+            return Ok(());
+        }
+        let text = str::from_utf8(value).map_err(|_utf8| return NotUtf8(name))?;
+        current.clear();
+        current.push_str(text);
+        return Ok(());
+    });
+}
+
+pub(crate) fn string(name: &'static CStr) -> Result<String, NotUtf8> {
+    return with_value(name, |value| {
+        return str::from_utf8(value)
+            .map(str::to_owned)
+            .map_err(|_utf8| return NotUtf8(name));
+    });
 }

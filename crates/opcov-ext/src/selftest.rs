@@ -6,8 +6,8 @@ use core::{
 use opcov_sys::{
     ArgInfo, IS_UNUSED, MAY_BE_STRING, MAY_BE_VOID, SUCCESS, ZEND_BB_LOOP_HEADER, ZEND_NOP,
     ZEND_USER_OPCODE, ZEND_USER_OPCODE_DISPATCH, function_entry, opcov_arena_create,
-    opcov_arena_destroy, opcov_compiler_globals, opcov_executor_globals, opcov_is_user_code,
-    opcov_op_handler, zend_arena, zend_build_cfg, zend_cfg, zend_cfg_build_predecessors,
+    opcov_arena_destroy, opcov_compiler_globals, opcov_executor_globals, opcov_op_handler,
+    zend_arena, zend_build_cfg, zend_cfg, zend_cfg_build_predecessors,
     zend_cfg_compute_dominators_tree, zend_cfg_identify_loops, zend_compile_file,
     zend_compile_string, zend_execute_data, zend_extension, zend_function_entry,
     zend_get_extension, zend_get_resource_handle, zend_get_user_opcode_handler, zend_op,
@@ -19,7 +19,7 @@ use crate::{
     VERSION, accepts_no_arguments,
     guard::{EntryPoint, guard},
     info::vm_kind,
-    return_string,
+    return_string, zend,
 };
 
 const ARENA_SIZE: usize = 64 * 1024;
@@ -201,7 +201,7 @@ unsafe fn caller_op_array(
         return Err(String::from("the calling frame has no function"));
     }
     // SAFETY: `function` is the live function of a live frame.
-    if !unsafe { opcov_is_user_code(function) } {
+    if !unsafe { zend::is_user_code(function) } {
         return Err(String::from("the caller is not user code"));
     }
     // SAFETY: user code is an op_array.

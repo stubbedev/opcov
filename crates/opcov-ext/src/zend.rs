@@ -1,9 +1,17 @@
 use core::slice;
 
 use opcov_sys::{
-    HashTable, opcov_compiler_globals, opcov_executor_globals, opcov_map_ptr_at, zend_class_entry,
-    zend_compiler_globals, zend_executor_globals, zend_function, zend_string,
+    HashTable, opcov_compiler_globals, opcov_executor_globals, opcov_internal_function_type,
+    opcov_map_ptr_at, zend_class_entry, zend_compiler_globals, zend_executor_globals,
+    zend_function, zend_string,
 };
+
+pub(crate) unsafe fn is_user_code(function: *const zend_function) -> bool {
+    // SAFETY: the caller passes a live function; every arm of the union starts with its type.
+    let kind = unsafe { (*function).type_ };
+    // SAFETY: a constant the shim initialises at load time.
+    return kind != unsafe { opcov_internal_function_type };
+}
 
 pub(crate) const unsafe fn bytes<'a>(string: *const zend_string) -> Option<&'a [u8]> {
     if string.is_null() {

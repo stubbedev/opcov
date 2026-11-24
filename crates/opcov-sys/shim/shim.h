@@ -14,6 +14,7 @@ PHPAPI void php_pcre_match_impl(pcre_cache_entry *pce, zend_string *subject_str,
 	zval *subpats, bool global, zend_long flags, zend_off_t start_offset);
 
 extern const char opcov_module_build_id[];
+extern const uint8_t opcov_internal_function_type;
 
 typedef zend_op_array *(*opcov_compile_file_t)(zend_file_handle *handle, int type);
 typedef zend_op_array *(*opcov_compile_string_t)(zend_string *source, const char *filename, zend_compile_position position);
@@ -49,15 +50,46 @@ bool opcov_read_bool(const zval *value, bool *flag);
 const char *opcov_type_name(const zval *value);
 const char *opcov_getcwd(char *buffer, size_t size);
 const char *opcov_php_version(void);
-bool opcov_is_user_code(const zend_function *function);
 bool opcov_is_user_class(const zend_class_entry *class_entry);
 zend_long opcov_ini_long(const char *name, size_t len);
 const char *opcov_ini_string(const char *name, size_t len);
 void opcov_string_release(zend_string *string);
 bool opcov_array_init(zval *target, uint32_t size);
 bool opcov_add_index_zval(zval *array, zend_ulong index, zval *value);
-bool opcov_add_index_trues(zval *array, const uint32_t *indexes, size_t count);
-bool opcov_add_named_trues(zval *array, uint8_t prefix, const uint32_t *numbers, size_t count);
+
+typedef struct opcov_loop_hit {
+	zend_string *key;
+	bool zero;
+	bool second;
+} opcov_loop_hit;
+
+typedef struct opcov_function_hits {
+	zend_string *key;
+	zend_string *const *outcomes;
+	size_t outcome_count;
+	const opcov_loop_hit *loops;
+	size_t loop_count;
+} opcov_function_hits;
+
+typedef struct opcov_file_hits {
+	zend_string *path;
+	const uint32_t *lines;
+	size_t line_count;
+	const opcov_function_hits *functions;
+	size_t function_count;
+} opcov_file_hits;
+
+typedef struct opcov_hit_keys {
+	zend_string *lines;
+	zend_string *functions;
+	zend_string *outcomes;
+	zend_string *loops;
+	zend_string *zero;
+	zend_string *second;
+} opcov_hit_keys;
+
+zend_string *opcov_persistent_key(const char *bytes, size_t len);
+bool opcov_emit_hits(zval *target, const opcov_hit_keys *keys, const opcov_file_hits *files, size_t count);
 bool opcov_add_next_index_zval(zval *array, zval *value);
 void *opcov_map_ptr_at(const HashTable *map, uint32_t index);
 zval *opcov_array_value_at(HashTable *array, uint32_t index);

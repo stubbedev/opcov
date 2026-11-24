@@ -20,6 +20,17 @@ pub(crate) const UNMATCHED_OUTCOME: &str =
 pub(crate) const UNKNOWN_FUNCTION: &str =
     r#","App\\Foo::gone":{"span":null,"outcomes":[],"loops":[]}"#;
 
+const EVAL_PATH: &str = "app/Foo.php(12) : eval()'d code #0123456789abcdef";
+
+pub(crate) fn with_eval_entry(report: &str) -> String {
+    let entry = format!(
+        r#","{EVAL_PATH}":{{"sha256":"{}","lines":{{"1":[0]}},"functions":{{"{{main}}@{EVAL_PATH}":{{"span":null,"outcomes":[],"loops":[]}}}}}}}}}}"#,
+        sha256(b"return 1;")
+    );
+    let files = report.trim_end().strip_suffix("}}").unwrap();
+    return format!("{files}{entry}\n");
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Extras {
     pub outcomes: &'static str,

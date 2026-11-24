@@ -1,5 +1,6 @@
 use std::io::{self, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use opcov_core::cfg::{FunctionKey, Line};
 use opcov_core::kind::EdgeKind;
@@ -38,6 +39,7 @@ pub(crate) struct FileDiagnosis {
 pub(crate) struct Diagnosis {
     outcomes: usize,
     unmatched: usize,
+    unchecked_eval_entries: usize,
     files: Vec<FileDiagnosis>,
 }
 
@@ -123,12 +125,21 @@ pub(crate) fn diagnose(report: &Path, header: &Header) -> Result<Diagnosis, Fail
     let mut diagnosis = Diagnosis {
         outcomes: 0,
         unmatched: 0,
+        unchecked_eval_entries: 0,
         files: Vec::new(),
+    };
+    let unchecked = AtomicUsize::new(0);
+    let checked = |path: &SourcePath| {
+        let source = stream::source_files(path);
+        if !source {
+            unchecked.fetch_add(1, Ordering::Relaxed);
+        }
+        return source;
     };
     stream::entries(
         report,
         header,
-        &stream::everything,
+        &checked,
         &|_, path, file| {
             let source = source::load(&header.paths, &path, &file)?;
             return Ok(diagnose_file(path, &file, &source));
@@ -144,6 +155,7 @@ pub(crate) fn diagnose(report: &Path, header: &Header) -> Result<Diagnosis, Fail
             return Ok(());
         },
     )?;
+    diagnosis.unchecked_eval_entries = unchecked.into_inner();
     return Ok(diagnosis);
 }
 
@@ -165,6 +177,18 @@ pub(crate) fn render_text(out: &mut dyn Write, diagnosis: &Diagnosis) -> io::Res
                 outcome.function, outcome.id, outcome.kind, outcome.line, outcome.reason
             )?;
         }
+    }
+    if diagnosis.unchecked_eval_entries > 0 {
+        writeln!(
+            out,
+            "doctor: {} eval()'d code entr{} not checked: eval()'d code has no source file to match",
+            diagnosis.unchecked_eval_entries,
+            if diagnosis.unchecked_eval_entries == 1 {
+                "y"
+            } else {
+                "ies"
+            }
+        )?;
     }
     return writeln!(
         out,

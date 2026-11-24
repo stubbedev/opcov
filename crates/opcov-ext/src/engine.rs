@@ -6,7 +6,9 @@ use core::{
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     hash::BuildHasher,
+    ops::Range,
     panic::{self, AssertUnwindSafe},
+    rc::Rc,
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -14,16 +16,18 @@ use foldhash::fast::FixedState;
 
 use opcov_core::{
     cfg::{Analysis, FilePath, FunctionKey, Line, Plan},
-    filter::{Selection, SkipReason},
+    filter::{Selection, SkipReason, eval_source},
     report::{Settings, Sha256},
 };
-use opcov_sys::{ZTS, zend_op, zend_op_array};
+use opcov_sys::{ZTS, zend_op, zend_op_array, zend_string};
 
 use crate::{
     branches::{Activations, LoopState, Owner, Pending, SourceProbe},
     code::{Code, Explained},
-    conflicts::Conflicts,
+    conflicts::{Conflicts, Environment},
     guard::{COLLECTION, Disabled},
+    hits::Hits,
+    php::Key,
     select::{Directories, Pattern},
     threads,
 };
@@ -147,6 +151,13 @@ pub(crate) struct FileId(u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct UnitId(u32);
 
+const ID_BITS: u32 = 30;
+const ID_LIMIT: u32 = 1 << ID_BITS;
+
+fn next_id(count: usize) -> Option<u32> {
+    return u32::try_from(count).ok().filter(|&id| return id < ID_LIMIT);
+}
+
 fn slot_of(id: u32) -> usize {
     return usize::try_from(id).unwrap_or(usize::MAX);
 }
@@ -209,6 +220,10 @@ impl Role {
 pub(crate) struct Roles(u8);
 
 impl Roles {
+    pub(crate) const fn of(role: Role) -> Self {
+        return Self(role.bit());
+    }
+
     pub(crate) const fn contains(self, role: Role) -> bool {
         return self.0 & role.bit() != 0;
     }
@@ -497,7 +512,7 @@ pub(crate) struct FiredRef {
 #[derive(Debug, Default)]
 pub(crate) struct Fired {
     pub(crate) hits: Vec<FiredRef>,
-    pub(crate) covered: Vec<Covered>,
+    pub(crate) covered: [Vec<u64>; Covered::VARIANTS],
     pub(crate) strays: Vec<FiredRef>,
     pub(crate) stopped: Vec<FiredRef>,
 }
@@ -581,15 +596,7 @@ pub(crate) struct FunctionRecord {
     pub(crate) input: opcov_core::cfg::FunctionInput,
     pub(crate) plan: Plan,
     pub(crate) zero_possible: Box<[bool]>,
-    pub(crate) text: OnceCell<Box<str>>,
-}
-
-impl FunctionRecord {
-    pub(crate) fn key_text(&self) -> &str {
-        return self
-            .text
-            .get_or_init(|| return self.key.to_string().into_boxed_str());
-    }
+    pub(crate) name: OnceCell<Key>,
 }
 
 impl FileRecord {
@@ -609,8 +616,10 @@ impl FileRecord {
 #[derive(Debug, Default)]
 pub(crate) struct Files {
     records: Vec<FileRecord>,
+    names: Vec<OnceCell<Key>>,
     by_path: Map<FilePath, FileId>,
     functions: Vec<FunctionRecord>,
+    ranks: Vec<u32>,
 }
 
 impl Files {
@@ -618,7 +627,7 @@ impl Files {
         if let Some(&id) = self.by_path.get(&path) {
             return Some(id);
         }
-        let id = FileId(u32::try_from(self.records.len()).ok()?);
+        let id = FileId(next_id(self.records.len())?);
         self.records.push(FileRecord {
             path: path.clone(),
             unmodelled: None,
@@ -626,6 +635,7 @@ impl Files {
             lines: BTreeSet::new(),
             functions: BTreeMap::new(),
         });
+        self.names.push(OnceCell::new());
         self.by_path.insert(path, id);
         return Some(id);
     }
@@ -654,16 +664,45 @@ impl Files {
         return self.functions.get(slot_of(id.0));
     }
 
+    pub(crate) fn function_key(&self, function: FunctionId) -> Option<*mut zend_string> {
+        let record = self.function(function)?;
+        if let Some(name) = record.name.get() {
+            return Some(name.get());
+        }
+        let file = &self.get(record.file)?.path;
+        let name = Key::new(record.key.in_file(file).to_string().as_bytes())?;
+        return Some(record.name.get_or_init(|| return name).get());
+    }
+
+    pub(crate) fn path_key(&self, file: FileId) -> Option<*mut zend_string> {
+        let cell = self.names.get(slot_of(file.0))?;
+        if let Some(name) = cell.get() {
+            return Some(name.get());
+        }
+        let name = Key::new(&self.get(file)?.path.to_bytes())?;
+        return Some(cell.get_or_init(|| return name).get());
+    }
+
     pub(crate) fn find_function(&self, file: FileId, key: &FunctionKey) -> Option<FunctionId> {
         return self.get(file)?.functions.get(key).copied();
     }
 
     pub(crate) fn add_function(&mut self, record: FunctionRecord) -> Option<FunctionId> {
-        let id = FunctionId(u32::try_from(self.functions.len()).ok()?);
+        let id = FunctionId(next_id(self.functions.len())?);
         let file = self.records.get_mut(slot_of(record.file.0))?;
         file.functions.insert(record.key.clone(), id);
         self.functions.push(record);
+        self.ranks.push(0);
+        for (rank, &FunctionId(function)) in (0..).zip(file.functions.values()) {
+            if let Some(slot) = self.ranks.get_mut(slot_of(function)) {
+                *slot = rank;
+            }
+        }
         return Some(id);
+    }
+
+    pub(crate) fn rank(&self, function: FunctionId) -> Option<u32> {
+        return self.ranks.get(slot_of(function.0)).copied();
     }
 }
 
@@ -676,19 +715,42 @@ pub(crate) enum Covered {
 }
 
 impl Covered {
-    pub(crate) fn order(self) -> u128 {
-        let (variant, owner, number): (u128, u32, u32) = match self {
-            Self::Line(FileId(file), line) => (0, file, line.get()),
-            Self::Outcome(FunctionId(function), number) => (1, function, number),
-            Self::Zero(FunctionId(function), number) => (2, function, number),
-            Self::Second(FunctionId(function), number) => (3, function, number),
+    pub(crate) const VARIANTS: usize = 4;
+
+    const fn variant(self) -> u8 {
+        return match self {
+            Self::Line(..) => 0,
+            Self::Outcome(..) => 1,
+            Self::Zero(..) => 2,
+            Self::Second(..) => 3,
         };
-        return variant.wrapping_shl(64) | u128::from(owner).wrapping_shl(32) | u128::from(number);
     }
 
-    pub(crate) fn from_order(order: u128) -> Option<Self> {
-        let part = |shift: u32| return u32::try_from(order.wrapping_shr(shift) & 0xffff_ffff).ok();
-        let (variant, owner, number) = (part(64)?, part(32)?, part(0)?);
+    fn list(self) -> usize {
+        return usize::from(self.variant());
+    }
+
+    pub(crate) fn order(self) -> u64 {
+        let (owner, number) = match self {
+            Self::Line(FileId(file), line) => (file, line.get()),
+            Self::Outcome(FunctionId(function), number)
+            | Self::Zero(FunctionId(function), number)
+            | Self::Second(FunctionId(function), number) => (function, number),
+        };
+        return u64::from(self.variant()).wrapping_shl(ID_BITS.wrapping_add(32))
+            | u64::from(owner).wrapping_shl(32)
+            | u64::from(number);
+    }
+
+    pub(crate) fn from_order(order: u64) -> Option<Self> {
+        let part = |shift: u32, mask: u64| {
+            return u32::try_from(order.wrapping_shr(shift) & mask).ok();
+        };
+        let (variant, owner, number) = (
+            part(ID_BITS.wrapping_add(32), 0b11)?,
+            part(32, ID_LIMIT.wrapping_sub(1).into())?,
+            part(0, 0xffff_ffff)?,
+        );
         return match variant {
             0 => Line::new(number).map(|line| return Self::Line(FileId(owner), line)),
             1 => Some(Self::Outcome(FunctionId(owner), number)),
@@ -700,15 +762,16 @@ impl Covered {
 }
 
 #[derive(Debug)]
-pub(crate) struct AttributedTest {
-    pub(crate) name: String,
-    pub(crate) covered: Vec<Covered>,
+struct AttributedTest {
+    name: Rc<str>,
+    covered: Range<usize>,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct Attribution {
     tests: Vec<AttributedTest>,
-    by_name: Map<String, usize>,
+    by_name: Map<Rc<str>, usize>,
+    covered: Vec<Covered>,
 }
 
 impl Attribution {
@@ -716,39 +779,56 @@ impl Attribution {
         let position = if let Some(&position) = self.by_name.get(name) {
             position
         } else {
+            let name: Rc<str> = Rc::from(name);
             self.tests.push(AttributedTest {
-                name: name.to_owned(),
-                covered: Vec::new(),
+                name: Rc::clone(&name),
+                covered: 0..0,
             });
             let position = self.tests.len().saturating_sub(1);
-            self.by_name.insert(name.to_owned(), position);
+            self.by_name.insert(name, position);
             position
         };
         let Some(test) = self.tests.get_mut(position) else {
             return;
         };
-        let merge = !test.covered.is_empty();
-        test.covered.extend_from_slice(covered);
-        if merge {
-            test.covered.sort_unstable();
-            test.covered.dedup();
+        let start = self.covered.len();
+        if test.covered.is_empty() {
+            self.covered.extend_from_slice(covered);
+        } else {
+            let mut merged = self
+                .covered
+                .get(test.covered.clone())
+                .unwrap_or_default()
+                .to_vec();
+            merged.extend_from_slice(covered);
+            merged.sort_unstable();
+            merged.dedup();
+            self.covered.append(&mut merged);
         }
+        test.covered = start..self.covered.len();
     }
 
-    pub(crate) fn tests(&self) -> &[AttributedTest] {
-        return &self.tests;
+    pub(crate) fn tests(&self) -> impl Iterator<Item = (&str, &[Covered])> {
+        return self.tests.iter().map(|test| {
+            return (
+                &*test.name,
+                self.covered.get(test.covered.clone()).unwrap_or_default(),
+            );
+        });
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Verdict {
     Measure(FileId),
+    MeasureEval { compiled: FilePath },
     Skip(SkipReason),
     Off,
 }
 
 #[derive(Debug)]
 pub(crate) struct Request {
+    pub(crate) environment: Environment,
     pub(crate) selection: Option<Selection>,
     pub(crate) settings: Option<Settings>,
     pub(crate) pattern: Option<Pattern>,
@@ -778,7 +858,7 @@ impl Counters {
 #[derive(Debug, Default)]
 pub(crate) struct Scratch {
     pub(crate) op_arrays: Vec<*mut zend_op_array>,
-    pub(crate) orders: Vec<u128>,
+    pub(crate) orders: Vec<u64>,
     pub(crate) covered: Vec<Covered>,
     pub(crate) files: Vec<FileId>,
 }
@@ -798,6 +878,7 @@ pub(crate) struct Engine {
     pub(crate) completed_cycles: u64,
     pub(crate) counters: Counters,
     pub(crate) scratch: Scratch,
+    pub(crate) hits: Hits,
 }
 
 impl Engine {
@@ -816,6 +897,7 @@ impl Engine {
             completed_cycles: 0,
             counters: Counters::default(),
             scratch: Scratch::default(),
+            hits: Hits::default(),
         };
     }
 
@@ -847,13 +929,17 @@ impl Engine {
             Hit::Zero(number) => Some(Covered::Zero(unit.function, number)),
             Hit::Second(number) => Some(Covered::Second(unit.function, number)),
         };
-        self.fired.covered.extend(covered);
+        if let Some(covered) = covered
+            && let Some(list) = self.fired.covered.get_mut(covered.list())
+        {
+            list.push(covered.order());
+        }
         self.fired.hits.push(fired);
     }
 
     pub(crate) fn rearm(&mut self, list: FiredList) {
         if list == FiredList::Hits {
-            self.fired.covered.clear();
+            self.fired.covered.iter_mut().for_each(Vec::clear);
         }
         let refs = core::mem::take(self.list(list));
         let label = self
@@ -905,6 +991,20 @@ impl Engine {
         {
             request.problem = Some(reason);
         }
+    }
+
+    pub(crate) fn eval_file(&mut self, compiled: &FilePath, sha256: Sha256) -> Option<FileId> {
+        let path: FilePath = eval_source(compiled.as_str(), &sha256).parse().ok()?;
+        let name = path.as_str().to_owned();
+        let file = self.files.intern(path)?;
+        self.files
+            .get_mut(file)?
+            .compiled_from(Ok(Content::Text(sha256)));
+        self.request
+            .as_mut()?
+            .decisions
+            .insert(name, Verdict::Measure(file));
+        return Some(file);
     }
 
     pub(crate) fn measuring(&self) -> bool {
@@ -1063,10 +1163,10 @@ mod tests {
         let line = |number| return Line::new(number).unwrap();
         let mut items = vec![
             Covered::Second(FunctionId(0), 0),
-            Covered::Line(FileId(u32::MAX), line(u32::MAX)),
+            Covered::Line(FileId(ID_LIMIT - 1), line(u32::MAX)),
             Covered::Outcome(FunctionId(2), 1),
             Covered::Line(FileId(1), line(9)),
-            Covered::Zero(FunctionId(u32::MAX), u32::MAX),
+            Covered::Zero(FunctionId(ID_LIMIT - 1), u32::MAX),
             Covered::Outcome(FunctionId(2), 0),
             Covered::Line(FileId(1), line(1)),
         ];

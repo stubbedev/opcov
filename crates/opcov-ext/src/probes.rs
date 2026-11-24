@@ -3,16 +3,16 @@ use std::sync::OnceLock;
 
 use opcov_sys::{
     IS_UNUSED, ZEND_NOP, ZEND_USER_OPCODE, ZEND_USER_OPCODE_CONTINUE, ZEND_USER_OPCODE_DISPATCH,
-    opcov_is_user_code, user_opcode_handler_t, zend_execute_data, zend_get_user_opcode_handler,
-    zend_op, zend_op_array, zend_set_user_opcode_handler, zend_vm_set_opcode_handler,
+    user_opcode_handler_t, zend_execute_data, zend_get_user_opcode_handler, zend_op, zend_op_array,
+    zend_set_user_opcode_handler, zend_vm_set_opcode_handler,
 };
 
 use crate::{
     branches::{After, Frame},
     compiler,
-    engine::{Engine, Handler, Reserved, with_engine},
+    engine::{Engine, FiredRef, Handler, Reserved, Role, Roles, with_engine},
     guard::{COLLECTION, EntryPoint, guard},
-    threads,
+    threads, zend,
 };
 
 const OPCODES: usize = 256;
@@ -205,16 +205,26 @@ impl Engine {
         let Some(probe) = op.and_then(|op| return unit.probe_at(op)) else {
             return Hit::Done(Outcome::Forward);
         };
-        let armed = unit
-            .probes
-            .get(probe)
-            .is_some_and(|slot| return !slot.armed.is_empty());
-        if !armed {
+        let Some(armed) = unit.probes.get(probe).map(|slot| return slot.armed) else {
+            return Hit::Done(Outcome::Forward);
+        };
+        if armed.is_empty() {
             return Hit::Done(Outcome::Forward);
         }
         #[cfg(feature = "engine-selftest")]
         inject_panic();
         let recording = self.request.is_some() && COLLECTION.disabled().is_none();
+        if armed == Roles::of(Role::Line) && self.pending.is_empty() {
+            // SAFETY: the unit is alive while its probes fire, and the probe is one of its own.
+            unsafe { unit.disarm(probe, Role::Line) };
+            if recording && let Ok(number) = u32::try_from(probe) {
+                self.record(FiredRef {
+                    unit: id,
+                    hit: crate::engine::Hit::Line(number),
+                });
+            }
+            return Hit::Done(Outcome::Continue);
+        }
         // SAFETY: the frame is the one the VM is executing and the probe belongs to its unit.
         let after = unsafe { self.trigger(recording, id, probe, frame) };
         return Hit::Done(match after {
@@ -239,7 +249,7 @@ unsafe fn fire(execute_data: *mut zend_execute_data) -> Outcome {
     // SAFETY: the VM passes the frame of the opcode it is executing.
     let (opline, function) = unsafe { ((*execute_data).opline, (*execute_data).func) };
     // SAFETY: a non-null frame function is live while its frame runs.
-    if function.is_null() || opline.is_null() || !unsafe { opcov_is_user_code(function) } {
+    if function.is_null() || opline.is_null() || !unsafe { zend::is_user_code(function) } {
         return Outcome::Forward;
     }
     // SAFETY: user code is an op array.

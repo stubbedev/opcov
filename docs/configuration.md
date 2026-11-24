@@ -121,9 +121,20 @@ subject up in the jump table itself to record the arm taken.
 ## `eval()` and stream wrappers
 
 - `eval()`'d code is measured when the file that called `eval()` is selected
-  (nested `eval()`s are traced back to the outermost file). Its lines are
-  reported under the engine's name for the code,
-  `<file>(<line>) : eval()'d code`, as a file of its own.
+  (nested `eval()`s are traced back to the outermost file). Each distinct
+  source evaluated at a call site is a file of its own, named after the
+  engine's name for the code and the first 16 hex digits of the SHA-256 of
+  the evaluated string:
+  `<file>(<line>) : eval()'d code #<digest prefix>`, where `<file>` is the
+  resolved path of the calling file. One call site that evaluates different
+  code (mixins, macros, generated classes) therefore yields one entry per
+  source, and the same source evaluated again, in this process or another,
+  is the same entry. `stop()`, `executable()`, `get_status()` and
+  `write_report()` all use this name. The `opcov` CLI's `convert` leaves
+  these entries out (they have no source file to show or point to, as
+  php-code-coverage leaves eval'd code out of its reports), `doctor` counts
+  them without checking them, `merge` keeps them, and `gate` never selects
+  them, since no changed file is eval'd code.
 - Files loaded through a stream wrapper (`phar://`, `vfs://`, a userland
   wrapper) are not selectable by path. They run unmeasured and are listed as
   skipped; nothing fails.
@@ -172,7 +183,7 @@ All functions live in the `opcov` namespace.
 
 | Function | Behaviour |
 |---|---|
-| `ensure_can_collect(): void` | Throws `\opcov\CannotCollectException` (a `RuntimeException`) with the reason when collection is off, or when the setup conflicts with probes (OPcache's optimizer, JIT, file cache or preload, OPcache under a non-CLI SAPI, Xdebug's or PCOV's coverage mode; settings are checked again on every call, so `ini_set('opcache.jit', ...)` is caught). The message ends with a link to its entry in [troubleshooting.md](troubleshooting.md). After at least one `start()`/`stop()` cycle it also throws when no compiled file was selected. |
+| `ensure_can_collect(): void` | Throws `\opcov\CannotCollectException` (a `RuntimeException`) with the reason when collection is off, or when the setup conflicts with probes (OPcache's optimizer, JIT, file cache or preload, OPcache under a non-CLI SAPI, Xdebug's or PCOV's coverage mode; the settings are read once per request, and the ones a script can change at run time, `opcache.enable` and `opcache.jit`, are read again on every call, so `ini_set('opcache.jit', ...)` is caught). The message ends with a link to its entry in [troubleshooting.md](troubleshooting.md). After at least one `start()`/`stop()` cycle it also throws when no compiled file was selected. |
 | `start(): void` | Starts recording. Re-arms the probes that fired while collection was off (bootstrap code), so the collection sees them again. Throws `CannotCollectException` when collection is off and `LogicException` when already collecting. |
 | `stop(?string $test = null): array` | Stops recording and returns what fired since `start()` (shape below), sorted by file, line, function key and id. It does not re-arm the probes, and it discards branch watches still pending, since their frames are gone once a test ends (or `exit()` or a fatal error unwound them). With `$test`, the same hits are also attributed to that test id for `write_report()`. Throws `LogicException` without a `start()`, `CannotCollectException` when collection went off meanwhile, and `ValueError` (before stopping) when `$test` is empty or not UTF-8. |
 | `reset(): void` | Re-arms every probe that fired since the last `reset()`; its cost is proportional to the probes that fired, not to the probes installed. Throws `LogicException` while collecting. |
@@ -274,8 +285,10 @@ foreach ($tests as $test) {
   serves a file from its cache PHP reads nothing, so opcov reads the file once
   at that point; if it changed on disk after OPCache cached it, the recorded
   hash is that of the new content. A file compiled twice from different bytes
-  in one process (a rewritten file included again, one `eval()` site run with
-  different code) has no single hash, and `write_report()` refuses it.
+  in one process (a rewritten file included again) has no single hash, and
+  `write_report()` refuses it. `eval()`'d code cannot hit this: each distinct
+  source is its own entry (see [`eval()` and stream
+  wrappers](#eval-and-stream-wrappers)).
 
 Options (`$options`):
 

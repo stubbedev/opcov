@@ -15,6 +15,7 @@
 	} while (0)
 
 const char opcov_module_build_id[] = ZEND_MODULE_BUILD_ID;
+const uint8_t opcov_internal_function_type = ZEND_INTERNAL_FUNCTION;
 
 zend_executor_globals *opcov_executor_globals(void)
 {
@@ -186,11 +187,6 @@ bool opcov_parse_path_and_array(zend_execute_data *execute_data, const char **pa
 	return true;
 }
 
-bool opcov_is_user_code(const zend_function *function)
-{
-	return ZEND_USER_CODE(function->type);
-}
-
 bool opcov_is_user_class(const zend_class_entry *class_entry)
 {
 	return class_entry->type == ZEND_USER_CLASS;
@@ -226,22 +222,75 @@ bool opcov_add_index_zval(zval *array, zend_ulong index, zval *value)
 	OPCOV_TRY(add_index_zval(array, index, value));
 }
 
-bool opcov_add_index_trues(zval *array, const uint32_t *indexes, size_t count)
+zend_string *opcov_persistent_key(const char *bytes, size_t len)
 {
-	OPCOV_TRY(
-		for (size_t i = 0; i < count; i++) {
-			add_index_bool(array, indexes[i], true);
-		});
+	zend_string *key = zend_string_init(bytes, len, 1);
+	zend_string_hash_val(key);
+	GC_MAKE_PERSISTENT_LOCAL(key);
+	return key;
 }
 
-bool opcov_add_named_trues(zval *array, uint8_t prefix, const uint32_t *numbers, size_t count)
+static void opcov_add_child(HashTable *parent, zend_string *key, uint32_t size, zval *child)
 {
-	OPCOV_TRY(
-		char key[16];
-		for (size_t i = 0; i < count; i++) {
-			int len = snprintf(key, sizeof(key), "%c%u", (char) prefix, (unsigned) numbers[i]);
-			add_assoc_bool_ex(array, key, (size_t) len, true);
-		});
+	if (size == 0) {
+		ZVAL_EMPTY_ARRAY(child);
+	} else {
+		array_init_size(child, size);
+	}
+	zend_hash_add_new(parent, key, child);
+}
+
+static void opcov_emit_function(HashTable *functions, const opcov_hit_keys *keys, const opcov_function_hits *hits)
+{
+	zval function, outcomes, loops, flag;
+	ZVAL_TRUE(&flag);
+	array_init_size(&function, 2);
+	zend_symtable_update(functions, hits->key, &function);
+	opcov_add_child(Z_ARRVAL(function), keys->outcomes, (uint32_t) hits->outcome_count, &outcomes);
+	for (size_t i = 0; i < hits->outcome_count; i++) {
+		zend_hash_add_new(Z_ARRVAL(outcomes), hits->outcomes[i], &flag);
+	}
+	opcov_add_child(Z_ARRVAL(function), keys->loops, (uint32_t) hits->loop_count, &loops);
+	for (size_t i = 0; i < hits->loop_count; i++) {
+		const opcov_loop_hit *hit = &hits->loops[i];
+		zval looped;
+		opcov_add_child(Z_ARRVAL(loops), hit->key, 2, &looped);
+		if (hit->zero) {
+			zend_hash_add_new(Z_ARRVAL(looped), keys->zero, &flag);
+		}
+		if (hit->second) {
+			zend_hash_add_new(Z_ARRVAL(looped), keys->second, &flag);
+		}
+	}
+}
+
+static void opcov_emit_files(zval *target, const opcov_hit_keys *keys, const opcov_file_hits *files, size_t count)
+{
+	zval flag;
+	ZVAL_TRUE(&flag);
+	array_init_size(target, (uint32_t) count);
+	for (size_t f = 0; f < count; f++) {
+		const opcov_file_hits *file = &files[f];
+		zval entry, lines, functions;
+		array_init_size(&entry, 2);
+		zend_symtable_update(Z_ARRVAL_P(target), file->path, &entry);
+		opcov_add_child(Z_ARRVAL(entry), keys->lines, (uint32_t) file->line_count, &lines);
+		if (file->line_count > 0) {
+			zend_hash_real_init_mixed(Z_ARRVAL(lines));
+		}
+		for (size_t i = 0; i < file->line_count; i++) {
+			zend_hash_index_add_new(Z_ARRVAL(lines), file->lines[i], &flag);
+		}
+		opcov_add_child(Z_ARRVAL(entry), keys->functions, (uint32_t) file->function_count, &functions);
+		for (size_t i = 0; i < file->function_count; i++) {
+			opcov_emit_function(Z_ARRVAL(functions), keys, &file->functions[i]);
+		}
+	}
+}
+
+bool opcov_emit_hits(zval *target, const opcov_hit_keys *keys, const opcov_file_hits *files, size_t count)
+{
+	OPCOV_TRY(opcov_emit_files(target, keys, files, count));
 }
 
 bool opcov_add_next_index_zval(zval *array, zval *value)

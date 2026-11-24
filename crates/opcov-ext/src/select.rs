@@ -22,6 +22,7 @@ use opcov_sys::{
 };
 
 use crate::{
+    conflicts::Environment,
     engine::{Map, OffReason, Request, Verdict, with_engine},
     guard::caught,
     ini, zend,
@@ -85,6 +86,7 @@ impl Pattern {
 
 pub(crate) fn configure() -> Request {
     let mut request = Request {
+        environment: Environment::current(),
         selection: None,
         settings: None,
         pattern: None,
@@ -200,10 +202,12 @@ impl Directories {
 
 fn classify(reported: &str, directories: &mut Directories) -> Classified {
     if let Some(host) = eval_host(reported) {
-        let resolved = directories.resolve(host).zip(reported.parse().ok());
-        return resolved.map_or(Classified::Unresolvable, |((host, _), report)| {
-            return Classified::Eval { host, report };
+        let resolved = directories.resolve(host).and_then(|(path, resolved)| {
+            let site = reported.get(host.len()..)?;
+            let report = format!("{resolved}{site}").parse().ok()?;
+            return Some(Classified::Eval { host: path, report });
         });
+        return resolved.unwrap_or(Classified::Unresolvable);
     }
     if stream_scheme(reported).is_some() {
         return Classified::StreamWrapper;
@@ -267,11 +271,12 @@ pub(crate) fn decide(reported: &[u8]) -> Verdict {
         };
         let verdict = match selection.decide(compiled, matched) {
             Decision::Skipped(reason) => Verdict::Skip(reason),
-            Decision::Selected => match &classified {
-                Classified::Resolved { report, .. } | Classified::Eval { report, .. } => engine
+            Decision::Selected => match classified {
+                Classified::Resolved { report, .. } => engine
                     .files
-                    .intern(report.clone())
+                    .intern(report)
                     .map_or(Verdict::Off, Verdict::Measure),
+                Classified::Eval { report, .. } => Verdict::MeasureEval { compiled: report },
                 Classified::StreamWrapper | Classified::Unresolvable => Verdict::Off,
             },
         };

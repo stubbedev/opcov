@@ -12,7 +12,7 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 pub use error::FilterError;
-pub use name::{eval_host, stream_scheme};
+pub use name::{eval_host, eval_source, stream_scheme};
 use path_set::PathSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

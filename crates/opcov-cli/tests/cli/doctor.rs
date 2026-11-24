@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use super::fixture::{
     Extras, UNKNOWN_FUNCTION, UNMATCHED_OUTCOME, project, report, run, sha256, stderr, stdout,
+    with_eval_entry,
 };
 
 fn doctor(report_path: &std::path::Path, format: &str) -> std::process::Output {
@@ -55,6 +56,26 @@ fn passes_when_only_excluded_outcomes_are_unmatched() {
     let unmatched = &result["files"][0]["unmatched_outcomes"][0];
     assert_eq!(unmatched["id"], "o7", "id");
     assert_eq!(unmatched["counts_toward_verdict"], false, "excluded");
+}
+
+#[test]
+fn counts_eval_entries_instead_of_reading_a_source_for_them() {
+    let (_, report_path) = project("doctor_eval", Extras::default());
+    let with_eval = with_eval_entry(&fs::read_to_string(&report_path).unwrap());
+    fs::write(&report_path, with_eval).unwrap();
+    let output = doctor(&report_path, "json");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let result: Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(
+        result["unchecked_eval_entries"], 1,
+        "the eval entry is counted"
+    );
+    assert_eq!(result["outcomes"], 7, "only the source file's outcomes");
+    let text = stdout(&doctor(&report_path, "text"));
+    assert!(
+        text.contains("doctor: 1 eval()'d code entry not checked"),
+        "{text}"
+    );
 }
 
 #[test]

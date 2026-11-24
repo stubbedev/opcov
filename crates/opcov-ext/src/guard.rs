@@ -1,4 +1,4 @@
-use core::cell::Cell;
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::{
     any::Any,
     fmt,
@@ -6,7 +6,7 @@ use std::{
     sync::OnceLock,
 };
 
-use opcov_sys::opcov_bailout;
+use opcov_sys::{ZTS, opcov_bailout};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EntryPoint {
@@ -137,9 +137,41 @@ fn payload_message(payload: &(dyn Any + Send)) -> String {
 
 pub(crate) static COLLECTION: Collection = Collection::new();
 
+struct Nesting {
+    depth: AtomicU32,
+    bailed_out: AtomicBool,
+}
+
+impl Nesting {
+    const fn new() -> Self {
+        return Self {
+            depth: AtomicU32::new(0),
+            bailed_out: AtomicBool::new(false),
+        };
+    }
+
+    fn resume_at_outermost(&self) {
+        if self.depth.load(Ordering::Relaxed) == 0 && self.bailed_out.swap(false, Ordering::Relaxed)
+        {
+            // SAFETY: a fatal error was caught inside a call into the engine and every Rust frame
+            // between that call and the engine's entry into opcov has returned, so the bailout
+            // continues across no frame that owns a value with a destructor.
+            unsafe { opcov_bailout() };
+        }
+    }
+}
+
+static PROCESS_NESTING: Nesting = Nesting::new();
+
 thread_local! {
-    static DEPTH: Cell<u32> = const { Cell::new(0) };
-    static BAILED_OUT: Cell<bool> = const { Cell::new(false) };
+    static THREAD_NESTING: Nesting = const { Nesting::new() };
+}
+
+fn with_nesting<R>(body: impl FnOnce(&Nesting) -> R) -> R {
+    if ZTS {
+        return THREAD_NESTING.with(body);
+    }
+    return body(&PROCESS_NESTING);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,7 +181,7 @@ pub(crate) type Caught<T> = Result<T, Bailout>;
 
 pub(crate) fn record(completed: bool) -> bool {
     if !completed {
-        BAILED_OUT.set(true);
+        with_nesting(|nesting| nesting.bailed_out.store(true, Ordering::Relaxed));
     }
     return completed;
 }
@@ -162,30 +194,27 @@ pub(crate) fn caught(completed: bool) -> Caught<()> {
     };
 }
 
-fn resume_at_outermost() {
-    if DEPTH.get() == 0 && BAILED_OUT.replace(false) {
-        // SAFETY: a fatal error was caught inside a call into the engine and every Rust frame between
-        // that call and the engine's entry into opcov has returned, so the bailout continues across
-        // no frame that owns a value with a destructor.
-        unsafe { opcov_bailout() };
-    }
-}
-
 pub(crate) fn resume_bailout() {
-    BAILED_OUT.set(true);
-    resume_at_outermost();
+    with_nesting(|nesting| {
+        nesting.bailed_out.store(true, Ordering::Relaxed);
+        nesting.resume_at_outermost();
+    });
 }
 
 pub(crate) fn guard<R: Copy>(entry: EntryPoint, on_panic: R, body: impl FnOnce() -> R) -> R {
-    let depth = DEPTH.get();
-    DEPTH.set(depth.saturating_add(1));
-    let result = COLLECTION.run(entry, body).unwrap_or_else(|| {
-        COLLECTION.run(entry, crate::engine::after_panic);
-        return on_panic;
+    return with_nesting(|nesting| {
+        let depth = nesting.depth.load(Ordering::Relaxed);
+        nesting
+            .depth
+            .store(depth.saturating_add(1), Ordering::Relaxed);
+        let result = COLLECTION.run(entry, body).unwrap_or_else(|| {
+            COLLECTION.run(entry, crate::engine::after_panic);
+            return on_panic;
+        });
+        nesting.depth.store(depth, Ordering::Relaxed);
+        nesting.resume_at_outermost();
+        return result;
     });
-    DEPTH.set(depth);
-    resume_at_outermost();
-    return result;
 }
 
 #[cfg(test)]

@@ -97,7 +97,7 @@ impl Context<'_> {
         return stream::entries(
             self.source,
             self.header,
-            &stream::everything,
+            &stream::source_files,
             &|sequence, path, file| {
                 let view = file_view(paths, &path, &file);
                 return work(sequence, &view, &file).map_err(|error| return self.fail(error));

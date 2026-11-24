@@ -11,10 +11,10 @@ use opcov_core::{
 };
 use opcov_sys::{
     ZEND_ACC_DONE_PASS_TWO, ZEND_COMPILE_NO_JUMPTABLES, ZEND_PROPERTY_HOOK_COUNT,
-    opcov_compile_file, opcov_compile_string, opcov_is_user_class, opcov_is_user_code,
-    opcov_string_release, zend_class_entry, zend_compile_file, zend_compile_position,
-    zend_compile_string, zend_file_handle, zend_function, zend_object, zend_op_array,
-    zend_property_info, zend_resolve_path, zend_string, zend_throw_exception_hook,
+    opcov_compile_file, opcov_compile_string, opcov_is_user_class, opcov_string_release,
+    zend_class_entry, zend_compile_file, zend_compile_position, zend_compile_string,
+    zend_file_handle, zend_function, zend_object, zend_op_array, zend_property_info,
+    zend_resolve_path, zend_string, zend_throw_exception_hook,
 };
 
 use crate::{
@@ -106,6 +106,7 @@ impl JumpTables {
         return match verdict {
             Verdict::Skip(opcov_core::filter::SkipReason::Unresolvable)
             | Verdict::Measure(_)
+            | Verdict::MeasureEval { .. }
             | Verdict::Off => Self::Remove,
             Verdict::Skip(_) => Self::Keep,
         };
@@ -262,7 +263,7 @@ unsafe fn gather(list: &mut Vec<*mut zend_op_array>, op_array: *mut zend_op_arra
     let array = unsafe { &*op_array };
     let compiled = !array.opcodes.is_null() && array.fn_flags & ZEND_ACC_DONE_PASS_TWO != 0;
     // SAFETY: an op array is layout-compatible with the zend_function union it is part of.
-    let user = unsafe { opcov_is_user_code(op_array.cast::<zend_function>()) };
+    let user = unsafe { zend::is_user_code(op_array.cast::<zend_function>()) };
     // SAFETY: forwarded from the caller.
     if !user || !compiled || unsafe { Reserved::read(op_array, slot) } != Reserved::Unknown {
         return;
@@ -287,7 +288,7 @@ unsafe fn gather_function(
     slot: usize,
 ) {
     // SAFETY: the caller passes a live function.
-    if !function.is_null() && unsafe { opcov_is_user_code(function) } {
+    if !function.is_null() && unsafe { zend::is_user_code(function) } {
         // SAFETY: user code is an op array.
         unsafe { gather(list, &raw mut (*function).op_array, slot) };
     }
@@ -415,7 +416,7 @@ impl Engine {
                 input,
                 plan,
                 zero_possible,
-                text: OnceCell::new(),
+                name: OnceCell::new(),
             }),
         };
         let Some(function) = function else {
@@ -518,22 +519,42 @@ impl Engine {
     }
 }
 
+#[derive(Debug, Clone)]
+struct EvalSource {
+    compiled: FilePath,
+    file: FileId,
+}
+
 struct Window {
     range: Range<usize>,
     origin: Origin,
+    eval: Option<EvalSource>,
     ordinals: Option<Ordinals>,
     names: Names,
     verdict: Option<(usize, Verdict)>,
 }
 
 impl Window {
-    fn new(range: Range<usize>, origin: Origin) -> Self {
+    fn new(range: Range<usize>, origin: Origin, eval: Option<EvalSource>) -> Self {
         return Self {
             range,
             origin,
+            eval,
             ordinals: None,
             names: Names::default(),
             verdict: None,
+        };
+    }
+
+    fn file(&self, verdict: &Verdict) -> Option<FileId> {
+        return match verdict {
+            Verdict::Measure(file) => Some(*file),
+            Verdict::MeasureEval { compiled } => self
+                .eval
+                .as_ref()
+                .filter(|eval| return eval.compiled == *compiled)
+                .map(|eval| return eval.file),
+            Verdict::Skip(_) | Verdict::Off => None,
         };
     }
 
@@ -576,30 +597,35 @@ unsafe fn process(op_array: *mut zend_op_array, window: &mut Window) {
     }
     // SAFETY: as above.
     let verdict = window.verdict(unsafe { (*op_array).filename });
-    let measured = match verdict {
-        Verdict::Measure(file) => with_engine(|engine| {
-            return engine
-                .files
-                .get(file)
-                .is_some_and(FileRecord::modelled)
-                .then_some(file);
-        })
-        .flatten(),
-        Verdict::Skip(_) | Verdict::Off => None,
-    };
-    let Some(file) = measured else {
-        // SAFETY: as above.
-        unsafe { Reserved::NoProbes.write(op_array, slot) };
-        return;
-    };
     // SAFETY: as above.
     let opcodes = unsafe { (*op_array).opcodes };
-    let shared = with_engine(|engine| return engine.units.find(opcodes)).flatten();
-    if let Some(unit) = shared {
-        // SAFETY: as above.
-        unsafe { Reserved::Unit(unit).write(op_array, slot) };
-        return;
-    }
+    let (measured, shared) = with_engine(|engine| {
+        let shared = engine.units.find(opcodes);
+        let measured = window
+            .file(&verdict)
+            .filter(|&file| return engine.files.get(file).is_some_and(FileRecord::modelled));
+        return (measured, shared);
+    })
+    .unwrap_or_default();
+    let eval_from_elsewhere = matches!(verdict, Verdict::MeasureEval { .. }) && measured.is_none();
+    let file = match (measured, shared) {
+        (Some(file), None) => file,
+        (Some(_), Some(unit)) => {
+            // SAFETY: as above.
+            unsafe { Reserved::Unit(unit).write(op_array, slot) };
+            return;
+        }
+        (None, Some(unit)) if eval_from_elsewhere => {
+            // SAFETY: as above.
+            unsafe { Reserved::Unit(unit).write(op_array, slot) };
+            return;
+        }
+        (None, _) => {
+            // SAFETY: as above.
+            unsafe { Reserved::NoProbes.write(op_array, slot) };
+            return;
+        }
+    };
     // SAFETY: as above.
     let taken = unsafe { window.name(op_array) }
         // SAFETY: as above.
@@ -629,6 +655,7 @@ unsafe fn process(op_array: *mut zend_op_array, window: &mut Window) {
 
 unsafe fn instrument(
     origin: Origin,
+    eval: Option<EvalSource>,
     roots: impl FnOnce(&mut Vec<*mut zend_op_array>, usize),
 ) -> bool {
     let started = with_engine(|engine| {
@@ -638,7 +665,11 @@ unsafe fn instrument(
         roots(&mut engine.scratch.op_arrays, slot);
         // SAFETY: the gathered op arrays are live.
         if unsafe { engine.reset_window(start) } {
-            return Some(Window::new(start..engine.scratch.op_arrays.len(), origin));
+            return Some(Window::new(
+                start..engine.scratch.op_arrays.len(),
+                origin,
+                eval,
+            ));
         }
         engine.scratch.op_arrays.truncate(start);
         return None;
@@ -688,21 +719,35 @@ unsafe fn compiled_content(compiled: Compiled, path: &FilePath) -> Result<Conten
     return Ok(Content::File(Fingerprint::of(bytes)));
 }
 
-unsafe fn record_source(main: *const zend_op_array, compiled: Compiled) {
+unsafe fn eval_source(compiled: Compiled, name: FilePath) -> Option<EvalSource> {
+    let Compiled::String(source) = compiled else {
+        return None;
+    };
+    // SAFETY: the caller passes the live source string of the compilation.
+    let sha256 = Sha256::digest(unsafe { zend::bytes(source) }?);
+    let file = with_engine(|engine| return engine.eval_file(&name, sha256)).flatten()?;
+    return Some(EvalSource {
+        compiled: name,
+        file,
+    });
+}
+
+unsafe fn record_source(main: *const zend_op_array, compiled: Compiled) -> Option<EvalSource> {
     // SAFETY: the caller passes a live, compiled op array.
     let name = unsafe { zend::bytes((*main).filename) }.unwrap_or_default();
-    let Verdict::Measure(file) = decide(name) else {
-        return;
+    let file = match decide(name) {
+        Verdict::Measure(file) => file,
+        // SAFETY: forwarded from the caller.
+        Verdict::MeasureEval { compiled: name } => return unsafe { eval_source(compiled, name) },
+        Verdict::Skip(_) | Verdict::Off => return None,
     };
-    let Some(path) = with_engine(|engine| {
+    let path = with_engine(|engine| {
         return engine
             .files
             .get(file)
             .map(|record| return record.path.clone());
     })
-    .flatten() else {
-        return;
-    };
+    .flatten()?;
     // SAFETY: forwarded from the caller.
     let content = unsafe { compiled_content(compiled, &path) };
     with_engine(|engine| {
@@ -710,6 +755,7 @@ unsafe fn record_source(main: *const zend_op_array, compiled: Compiled) {
             record.compiled_from(content);
         }
     });
+    return None;
 }
 
 unsafe fn after_compile(
@@ -722,10 +768,10 @@ unsafe fn after_compile(
         return;
     }
     // SAFETY: `main` was just compiled from `compiled`, which is still live.
-    unsafe { record_source(main, compiled) };
+    let eval = unsafe { record_source(main, compiled) };
     // SAFETY: the compiler's tables are live; the new entries start at the given positions.
     unsafe {
-        instrument(Origin::Compiled, |list, slot| {
+        instrument(Origin::Compiled, eval, |list, slot| {
             gather(list, main, slot);
             for function in zend::new_functions(first_function) {
                 gather_function(list, function, slot);
@@ -739,7 +785,11 @@ unsafe fn after_compile(
 
 pub(crate) unsafe fn adopt(op_array: *mut zend_op_array) -> bool {
     // SAFETY: the caller passes the running frame's live op array.
-    return unsafe { instrument(Origin::Adopted, |list, slot| gather(list, op_array, slot)) };
+    return unsafe {
+        instrument(Origin::Adopted, None, |list, slot| {
+            gather(list, op_array, slot);
+        })
+    };
 }
 
 pub(crate) unsafe extern "C" fn op_array_dtor(op_array: *mut zend_op_array) {
