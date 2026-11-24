@@ -1,0 +1,75 @@
+name: "pie smoke"
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "The published opcov release to install, without the leading v"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "The published opcov release to install, without the leading v"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PIE_VERSION: "1.6.0"
+  PIE_SHA256: "81041b276f4e23dfdfa6dc941e5745f9adec824a1bcf6141e226181ef43f519e"
+  INSTALL_ATTEMPTS: 5
+  INSTALL_RETRY_SECONDS: 30
+
+jobs:
+  install:
+    name: pie install in ${{ matrix.image || matrix.formula }} on ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-24.04, image: "php:8.5-cli"}
+          - {runner: ubuntu-24.04, image: "php:8.4-zts"}
+          - {runner: ubuntu-24.04, image: "php:8.5-cli-alpine"}
+          - {runner: ubuntu-24.04-arm, image: "php:8.5-cli"}
+          - {runner: ubuntu-24.04-arm, image: "php:8.4-zts"}
+          - {runner: ubuntu-24.04-arm, image: "php:8.5-cli-alpine"}
+          - {runner: macos-latest, formula: "shivammathur/php/php@8.5"}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Install opcov ${{ inputs.version }} with PIE and check the version it reports
+        env:
+          VERSION: ${{ inputs.version }}
+          IMAGE: ${{ matrix.image }}
+          FORMULA: ${{ matrix.formula }}
+        run: |
+          pie="$PWD/pie.phar"
+          curl -fsSL --retry 3 --output "$pie" "https://github.com/php/pie/releases/download/$PIE_VERSION/pie.phar"
+          echo "$PIE_SHA256  $pie" | shasum --algorithm 256 --check --strict
+          if [ -n "$IMAGE" ]; then
+            docker run --detach --name smoke --volume "$pie:$pie:ro" "$IMAGE" tail -f /dev/null
+            php=(docker exec smoke php)
+          else
+            brew install "$FORMULA"
+            php=("$(brew --prefix "$FORMULA")/bin/php")
+          fi
+          "${php[@]}" -v
+          attempt=1
+          until "${php[@]}" "$pie" install "opcov/opcov:$VERSION"; do
+            if [ "$attempt" -ge "$INSTALL_ATTEMPTS" ]; then
+              echo "::error::pie install opcov/opcov:$VERSION failed $attempt times"
+              exit 1
+            fi
+            attempt=$((attempt + 1))
+            sleep "$INSTALL_RETRY_SECONDS"
+          done
+          if ! reported="$("${php[@]}" -r 'echo \opcov\version();' 2>&1)" || [ "$reported" != "$VERSION" ]; then
+            echo "::error::opcov installed by PIE reports $reported, expected $VERSION"
+            exit 1
+          fi

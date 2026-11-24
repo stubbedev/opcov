@@ -189,3 +189,9 @@ jobs:
             prerelease=(--prerelease)
           fi
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "opcov $VERSION" --notes-file notes.md "${prerelease[@]}" dist/*
+
+  pie-smoke:
+    needs: [plan, publish]
+    uses: ./.github/workflows/pie-smoke.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}

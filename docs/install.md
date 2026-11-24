@@ -44,8 +44,39 @@ To install for another PHP on the same machine, pass its binary:
 opcov ships prebuilt binaries only (`download-url-method` is
 `pre-packaged-binary` in `composer.json`). opcov is written in Rust and has no
 `config.m4`, so PIE cannot build it from source: `pie build opcov/opcov` fails by
-design, and `pie install` fails on a combination that has no archive (a debug
-PHP build, a 32-bit system, Windows). Build those from source instead.
+design, and `pie install` never falls back to a source build. On a combination
+that has no archive it stops with the archive names it looked for, for example
+for PHP 8.6 NTS on musl:
+
+```text
+Could not download opcov/opcov using pre-packaged-binary method: Could not
+find release asset for opcov/opcov:v0.1.0 named one of "php_opcov-v0.1.0_php8.6-x86_64-linux-musl.zip,
+php_opcov-v0.1.0_php8.6-x86_64-linux-musl.tgz, php_opcov-v0.1.0_php8.6-x86_64-linux-musl-nts.zip,
+php_opcov-v0.1.0_php8.6-x86_64-linux-musl-nts.tgz, php_opcov-v0.1.0_php8.6-x86_64-linux-anylibc.zip,
+php_opcov-v0.1.0_php8.6-x86_64-linux-anylibc.tgz, php_opcov-v0.1.0_php8.6-x86_64-linux-anylibc-nts.zip,
+php_opcov-v0.1.0_php8.6-x86_64-linux-anylibc-nts.tgz"
+```
+
+The combinations without an archive are PHP 8.6 NTS on musl (the official
+`php:8.6-*-alpine` images are ZTS only, and the musl archives are built in
+them), debug PHP builds, 32-bit systems, Intel macOS and Windows. Build those
+from source instead.
+
+Before resolving the package, PIE checks for the tools a source build would
+need (a C compiler, `make`, `autoconf`, ...) and, in the slim official images,
+prints `The following build tools are missing: ...`. opcov needs none of them;
+the warning is harmless and `--no-build-tools-check` silences it.
+
+PIE has no checksum check for prebuilt binaries, so HTTPS from GitHub's
+release-asset host is its only integrity guarantee. To check what PIE
+installed, download and verify the matching release archive as described in
+[Verifying an archive](#verifying-an-archive), then compare the `opcov.so` line
+of the `SHA256SUMS` inside it with the installed file:
+
+```sh
+tar -xzOf "${asset}" SHA256SUMS
+sha256sum "$(php -r 'echo ini_get("extension_dir");')/opcov.so"
+```
 
 ## GitHub release archives
 
@@ -86,6 +117,24 @@ downloaded with a browser carries the quarantine attribute; clear it with
 `xattr -d com.apple.quarantine opcov.so` before PHP can load it. When PHP has no
 scan directory (`php --ini` prints `(none)`), add `extension=opcov` to the
 `php.ini` it names instead.
+
+### Verifying an archive
+
+The checksums only prove that the download matches the release. The
+build-provenance attestation proves where the archive came from:
+`gh attestation verify` looks up the attestation for the file's SHA-256
+digest, checks its Sigstore signature and that it was issued to
+`stubbedev/opcov`, and exits non-zero otherwise. To also pin the workflow and
+the tag that built it:
+
+```sh
+gh attestation verify "${asset}" --repo stubbedev/opcov \
+  --signer-workflow stubbedev/opcov/.github/workflows/release.yml \
+  --source-ref "refs/tags/v${version}"
+```
+
+A file that no opcov release built fails with
+`Error: HTTP 404: Not Found (https://api.github.com/repos/stubbedev/opcov/attestations/sha256:...)`.
 
 ## Docker
 
