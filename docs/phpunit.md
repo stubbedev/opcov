@@ -1,11 +1,11 @@
 # PHPUnit and Pest
 
 The Composer package `opcov/phpunit` connects the opcov extension to PHPUnit 12,
-PHPUnit 13 and Pest 4. It provides:
+PHPUnit 13, Pest 4 and Pest 5. It provides:
 
 | Piece | What it does |
 |---|---|
-| `OpCov\PHPUnit\Extension` | A PHPUnit extension that measures every test and writes the canonical opcov report ([report-schema.md](report-schema.md)) when the run ends. Works with PHPUnit 12, PHPUnit 13, Pest 4 and paratest. |
+| `OpCov\PHPUnit\Extension` | A PHPUnit extension that measures every test and writes the canonical opcov report ([report-schema.md](report-schema.md)) when the run ends. Works with PHPUnit 12, PHPUnit 13, Pest 4, Pest 5 and paratest. |
 | `vendor/bin/opcov-phpunit` | A launcher that turns PHPUnit's `<source>` into the opcov INI settings and starts the test runner with them. |
 | `OpCov\PHPUnit\Driver` | A php-code-coverage driver for PHPUnit 13.3 and newer, so PHPUnit's own coverage reports (`--coverage-html`, `--coverage-clover`, ...) can use opcov instead of Xdebug or PCOV. |
 | `vendor/bin/opcov-cov` | Converts an opcov report into php-code-coverage's serialized `.cov` format, for `phpcov merge` and PHPUnit's report tooling. |
@@ -47,7 +47,7 @@ major version, or before 1.0.0 a different minor version) with
 </phpunit>
 ```
 
-Pest reads the same `phpunit.xml`, so the same block works for Pest 4.
+Pest reads the same `phpunit.xml`, so the same block works for Pest 4 and Pest 5.
 
 | Parameter | Required | Meaning |
 |---|---|---|
@@ -310,7 +310,7 @@ version's own writer, so the file is what that PHPUnit would write with
 | php-code-coverage | PHPUnit | Writer | Format |
 |---|---|---|---|
 | 12.5 | 12, Pest 4 | `Report\PHP::process()` | `<?php return \unserialize(...)` of the `CodeCoverage` object (its `__serialize()`: filter, settings, processed data, tests) |
-| 14.x | 13 | `Serialization\Serializer::serialize()` | serialization format 4: `buildInformation`, `basePath`, `codeCoverage` (processed data), `testResults` |
+| 14.x | 13, Pest 5 | `Serialization\Serializer::serialize()` | serialization format 4: `buildInformation`, `basePath`, `codeCoverage` (processed data), `testResults` |
 
 How the data goes in:
 

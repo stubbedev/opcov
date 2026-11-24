@@ -46,11 +46,30 @@ updates:
           - "*"
 
   - package-ecosystem: "composer"
+    directory: "/php/phpunit"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "area: dependencies"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      all:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "composer"
     directories:
-      - "/php/phpunit"
       - "/php/phpunit/tests/fixture/phpunit12"
       - "/php/phpunit/tests/fixture/phpunit13"
       - "/php/phpunit/tests/fixture/pest4"
+      - "/php/phpunit/tests/fixture/pest5"
+    ignore:
+      - dependency-name: "pestphp/pest"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "phpunit/phpunit"
+        update-types: ["version-update:semver-major"]
     schedule:
       interval: "monthly"
     labels:

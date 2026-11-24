@@ -96,7 +96,7 @@ php-check:
     export OPCOV_EXTENSION
     cd php/phpunit
     composer install --no-interaction --no-progress --quiet
-    for fixture in tests/fixture/phpunit12 tests/fixture/phpunit13 tests/fixture/pest4; do
+    for fixture in tests/fixture/phpunit12 tests/fixture/phpunit13 tests/fixture/pest4 tests/fixture/pest5; do
         composer install --no-interaction --no-progress --quiet --working-dir="$fixture"
     done
     mago analyze

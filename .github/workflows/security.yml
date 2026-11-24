@@ -95,7 +95,7 @@ jobs:
       - uses: ./.github/actions/setup-nix
       - name: Audit the locked Composer dependencies
         run: |
-          for dir in php/phpunit php/phpunit/tests/fixture/phpunit12 php/phpunit/tests/fixture/phpunit13 php/phpunit/tests/fixture/pest4; do
+          for dir in php/phpunit php/phpunit/tests/fixture/phpunit12 php/phpunit/tests/fixture/phpunit13 php/phpunit/tests/fixture/pest4 php/phpunit/tests/fixture/pest5; do
             echo "::group::$dir"
             nix develop --command composer audit --locked --no-interaction --working-dir="$dir"
             echo "::endgroup::"
