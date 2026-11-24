@@ -131,18 +131,19 @@ git diff -U0 origin/main... | opcov gate --report build/opcov.json --diff -
 ## Benchmarks
 
 Instructions executed with coverage relative to the same run without
-coverage (cycles in parentheses), median of 5 runs, PHP 8.5.13 on an Intel
-Core i5-10400F desktop, load average 3.09 at the start of the run
+coverage (cycles in parentheses), median of 3 runs, PHP 8.5.13 on an Intel
+Core i5-10400F desktop; instruction counts are stable to within 0.01% between
+runs, cycles depend on machine load
 ([docs/benchmarks.md](docs/benchmarks.md) has the full tables with wall time,
 allocations and memory, the method and profiles). opcov collects lines,
 branch outcomes and loops with per-test attribution; PCOV collects lines only.
 
 | Workload | opcov | PCOV | Xdebug lines | Xdebug branch/path |
 |---|---|---|---|---|
-| Laravel feature tests (spatie/laravel-query-builder, 367 tests) | **1.02x** (1.01x) | 2.79x (2.16x) | 8.30x (5.77x) | over 15 min, timed out (no coverage: 4.4 s) |
-| Carbon unit suite (6,349 tests) | **1.56x** (1.42x) | 2.38x (2.09x) | 22.09x (14.92x) | over 15 min, timed out (no coverage: 45 s) |
-| branch-heavy loop, 400k calls | **1.99x** (1.89x) | 3.60x (3.11x) | 17.25x (16.48x) | over 15 min, timed out (no coverage: 0.29 s) |
-| 20,000 tiny tests | **6.61x** (4.47x) | 3.70x (2.34x) | 51.04x (42.72x) | 135.52x (308.95x) |
+| Laravel feature tests (spatie/laravel-query-builder, 367 tests) | **1.01x** (1.06x) | 2.79x (2.12x) | 8.30x (5.57x) | over 15 min, timed out (no coverage: 4.5 s) |
+| Carbon unit suite (6,349 tests) | **1.48x** (1.42x) | 2.38x (2.18x) | 22.09x (14.90x) | over 15 min, timed out (no coverage: 42 s) |
+| branch-heavy loop, 400k calls | **1.84x** (1.69x) | 3.60x (2.92x) | 17.25x (15.88x) | over 15 min, timed out (no coverage: 0.30 s) |
+| 20,000 tiny tests | **3.68x** (3.15x) | 3.70x (3.18x) | 51.03x (53.18x) | 135.50x (382.92x) |
 
 On 20,000 tiny tests opcov's per-test cost (85 k instructions, the largest
 single part of it building the array `stop()` returns) is higher than PCOV's

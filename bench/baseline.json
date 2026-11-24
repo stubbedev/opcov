@@ -8,20 +8,20 @@
             "kernel": "Linux 6.18.64",
             "memory": "31.3 GiB",
             "perf_event_paranoid": "2",
-            "load average at start": "3.09 5.42 7.95"
+            "load average at start": "21.45 17.37 10.50"
         },
         "opcov_over_none": {
             "instructions": {
-                "branchy": 1.9898,
-                "carbon": 1.5623,
-                "laravel-query-builder": 1.016,
-                "tiny-tests": 6.6136
+                "branchy": 1.8445,
+                "carbon": 1.4819,
+                "laravel-query-builder": 1.0141,
+                "tiny-tests": 3.6819
             },
             "cycles": {
-                "branchy": 1.8907,
-                "carbon": 1.4243,
-                "laravel-query-builder": 1.0101,
-                "tiny-tests": 4.4687
+                "branchy": 1.6856,
+                "carbon": 1.4156,
+                "laravel-query-builder": 1.0581,
+                "tiny-tests": 3.1499
             }
         }
     }

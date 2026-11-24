@@ -140,7 +140,7 @@ max are in the tables), so read their medians as approximate. A
 instructions and failed on cycles ([Regression check](#regression-check)).
 
 <!-- bench:php85:begin -->
-PHP 8.5.13, median of 5 runs. Machine: cpu Intel(R) Core(TM) i5-10400F CPU @ 2.90GHz, logical cpus 12, governor powersave, turbo on (intel_pstate), kernel Linux 6.18.64, memory 31.3 GiB, perf_event_paranoid 2, load average at start 3.09 5.42 7.95.
+PHP 8.5.13, median of 3 runs. Machine: cpu Intel(R) Core(TM) i5-10400F CPU @ 2.90GHz, logical cpus 12, governor powersave, turbo on (intel_pstate), kernel Linux 6.18.64, memory 31.3 GiB, perf_event_paranoid 2, load average at start 21.45 17.37 10.50.
 
 Drivers: PHP 8.5.13, opcov 0.1.0, pcov 1.0.12, xdebug 3.5.3, xdebug 3.5.3, turbocov 0.1.1.
 
@@ -152,20 +152,20 @@ Synthetic branch-heavy CPU loop: one collection around 400k calls of a function 
 
 | driver | instructions | x none | cycles | x none | branch misses | cache misses | page faults | task-clock s | wall s (min-max) | x none | peak RSS MiB |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| no coverage | 2.374 G | 1.00 | 1.060 G | 1.00 | 2.531 M | 576.087 k | 3.386 k | 0.275 | 0.291 (0.289-0.327) | 1.00 | 37.3 |
-| opcov (lines, outcomes, loops) | 4.724 G | 1.99 | 2.004 G | 1.89 | 3.972 M | 682.656 k | 3.437 k | 0.508 | 0.524 (0.506-0.619) | 1.80 | 38.5 |
-| PCOV | 8.545 G | 3.60 | 3.296 G | 3.11 | 8.362 M | 873.870 k | 3.398 k | 0.837 | 0.852 (0.795-0.871) | 2.93 | 37.2 |
-| Xdebug (lines) | 40.946 G | 17.25 | 17.467 G | 16.48 | 45.873 M | 3.401 M | 3.530 k | 4.376 | 4.393 (4.215-4.456) | 15.11 | 38.0 |
-| Xdebug (branch) | timed out after 900 s |  |  |  |  |  |  |  |  |  |  |
-| turbocov | 2.402 G | 1.01 | 1.079 G | 1.02 | 2.689 M | 608.265 k | 3.400 k | 0.280 | 0.296 (0.290-0.417) | 1.02 | 37.5 |
+| no coverage | 2.374 G | 1.00 | 1.085 G | 1.00 | 2.510 M | 602.558 k | 3.381 k | 0.283 | 0.305 (0.284-0.308) | 1.00 | 37.3 |
+| opcov (lines, outcomes, loops) | 4.379 G | 1.84 | 1.830 G | 1.69 | 3.787 M | 561.374 k | 3.433 k | 0.460 | 0.475 (0.473-0.491) | 1.56 | 38.6 |
+| PCOV | 8.546 G | 3.60 | 3.165 G | 2.92 | 8.543 M | 596.074 k | 3.394 k | 0.788 | 0.804 (0.802-0.814) | 2.63 | 37.4 |
+| Xdebug (lines) | 40.946 G | 17.25 | 17.239 G | 15.88 | 47.165 M | 1.326 M | 3.527 k | 4.269 | 4.285 (4.226-4.305) | 14.03 | 38.1 |
+| Xdebug (branch) | > 15 min |  |  |  |  |  |  |  |  |  |  |
+| turbocov | 2.402 G | 1.01 | 1.074 G | 0.99 | 2.736 M | 527.149 k | 3.393 k | 0.278 | 0.293 (0.285-0.304) | 0.96 | 37.4 |
 
 | driver | allocation calls (Zend MM) | x none | bytes allocated (Zend MM) | allocation calls (USE_ZEND_ALLOC=0) | x none | bytes allocated (USE_ZEND_ALLOC=0) | PHP peak MiB | payload MiB | report MiB |
 |---|---|---|---|---|---|---|---|---|---|
 | no coverage | 40.380 k | 1.00 | 5.9 MiB | 4.578 M | 1.00 | 565.8 MiB | 2.0 | 0.00 | n/a |
-| opcov (lines, outcomes, loops) | 1.641 M | 40.64 | 152.5 MiB | 6.180 M | 1.35 | 712.7 MiB | 2.0 | 0.00 | 0.00 |
+| opcov (lines, outcomes, loops) | 41.248 k | 1.02 | 6.0 MiB | 4.580 M | 1.00 | 566.2 MiB | 2.0 | 0.00 | 0.00 |
 | PCOV | 40.455 k | 1.00 | 5.9 MiB | 4.578 M | 1.00 | 567.0 MiB | 2.0 | 0.00 | n/a |
 | Xdebug (lines) | 848.339 k | 21.01 | 18.9 MiB | 46.358 M | 10.13 | 5853.9 MiB | 2.0 | 0.00 | n/a |
-| Xdebug (branch) | timed out after 900 s |  |  |  |  |  |  |  |  |
+| Xdebug (branch) | > 15 min |  |  |  |  |  |  |  |  |
 | turbocov | 40.472 k | 1.00 | 5.9 MiB | 4.578 M | 1.00 | 566.0 MiB | 2.0 | 0.00 | n/a |
 
 #### tiny-tests
@@ -174,21 +174,21 @@ Synthetic branch-heavy CPU loop: one collection around 400k calls of a function 
 
 | driver | instructions | x none | cycles | x none | branch misses | cache misses | page faults | task-clock s | wall s (min-max) | x none | peak RSS MiB |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| no coverage | 303.140 M | 1.00 | 208.571 M | 1.00 | 648.146 k | 548.605 k | 3.461 k | 0.063 | 0.080 (0.064-0.106) | 1.00 | 37.5 |
-| opcov (lines, outcomes, loops) | 2.005 G | 6.61 | 932.034 M | 4.47 | 2.198 M | 765.723 k | 6.836 k | 0.248 | 0.266 (0.243-0.462) | 3.32 | 51.1 |
-| PCOV | 1.123 G | 3.70 | 488.185 M | 2.34 | 1.384 M | 614.864 k | 3.474 k | 0.132 | 0.149 (0.146-0.259) | 1.86 | 37.8 |
-| Xdebug (lines) | 15.472 G | 51.04 | 8.909 G | 42.72 | 22.131 M | 1.218 M | 3.894 k | 2.252 | 2.267 (2.139-3.471) | 28.25 | 39.7 |
-| Xdebug (branch) | 41.082 G | 135.52 | 64.439 G | 308.95 | 216.076 M | 856.321 M | 24.447 k | 16.158 | 16.185 (15.177-16.372) | 201.69 | 119.4 |
-| turbocov | 477.105 M | 1.57 | 222.348 M | 1.07 | 666.022 k | 581.618 k | 3.473 k | 0.066 | 0.081 (0.081-0.127) | 1.02 | 37.6 |
+| no coverage | 303.188 M | 1.00 | 155.040 M | 1.00 | 628.107 k | 455.907 k | 3.458 k | 0.048 | 0.063 (0.062-0.079) | 1.00 | 37.6 |
+| opcov (lines, outcomes, loops) | 1.116 G | 3.68 | 488.368 M | 3.15 | 1.292 M | 707.027 k | 6.489 k | 0.136 | 0.155 (0.151-0.157) | 2.48 | 49.8 |
+| PCOV | 1.123 G | 3.70 | 492.312 M | 3.18 | 1.616 M | 548.583 k | 3.471 k | 0.132 | 0.147 (0.145-0.148) | 2.35 | 37.8 |
+| Xdebug (lines) | 15.472 G | 51.03 | 8.245 G | 53.18 | 20.506 M | 662.135 k | 3.897 k | 2.025 | 2.040 (2.032-2.054) | 32.56 | 39.8 |
+| Xdebug (branch) | 41.081 G | 135.50 | 59.368 G | 382.92 | 211.325 M | 767.703 M | 24.506 k | 14.586 | 14.616 (14.603-15.108) | 233.27 | 119.7 |
+| turbocov | 477.161 M | 1.57 | 219.686 M | 1.42 | 704.955 k | 462.103 k | 3.476 k | 0.065 | 0.080 (0.078-0.081) | 1.28 | 37.7 |
 
 | driver | allocation calls (Zend MM) | x none | bytes allocated (Zend MM) | allocation calls (USE_ZEND_ALLOC=0) | x none | bytes allocated (USE_ZEND_ALLOC=0) | PHP peak MiB | payload MiB | report MiB |
 |---|---|---|---|---|---|---|---|---|---|
-| no coverage | 40.380 k | 1.00 | 5.9 MiB | 264.794 k | 1.00 | 30.3 MiB | 2.0 | 0.04 | n/a |
-| opcov (lines, outcomes, loops) | 741.128 k | 18.35 | 84.2 MiB | 2.406 M | 9.09 | 281.2 MiB | 2.0 | 17.26 | 4.29 |
-| PCOV | 40.455 k | 1.00 | 5.9 MiB | 464.955 k | 1.76 | 1457.2 MiB | 4.0 | 8.39 | n/a |
-| Xdebug (lines) | 31.347 M | 776.30 | 1119.0 MiB | 34.572 M | 130.56 | 1602.7 MiB | 2.0 | 18.30 | n/a |
-| Xdebug (branch) | 62.499 M | 1547.76 | 5584.7 MiB | 86.514 M | 326.72 | 7592.2 MiB | 4.0 | 208.36 | n/a |
-| turbocov | 40.486 k | 1.00 | 5.9 MiB | 385.036 k | 1.45 | 81.7 MiB | 2.0 | 5.72 | n/a |
+| no coverage | 40.380 k | 1.00 | 5.9 MiB | 264.836 k | 1.00 | 30.3 MiB | 2.0 | 0.04 | n/a |
+| opcov (lines, outcomes, loops) | 81.243 k | 2.01 | 41.2 MiB | 946.534 k | 3.57 | 199.3 MiB | 2.0 | 17.26 | 4.29 |
+| PCOV | 40.455 k | 1.00 | 5.9 MiB | 464.997 k | 1.76 | 1457.2 MiB | 4.0 | 8.39 | n/a |
+| Xdebug (lines) | 31.347 M | 776.30 | 1119.0 MiB | 34.572 M | 130.54 | 1602.7 MiB | 2.0 | 18.30 | n/a |
+| Xdebug (branch) | 62.499 M | 1547.76 | 5584.7 MiB | 86.514 M | 326.67 | 7592.2 MiB | 4.0 | 208.36 | n/a |
+| turbocov | 40.486 k | 1.00 | 5.9 MiB | 385.078 k | 1.45 | 81.7 MiB | 2.0 | 5.72 | n/a |
 
 #### carbon
 
@@ -196,23 +196,21 @@ Carbon's PHPUnit suite (large unit suite, many small tests, `src/Carbon` measure
 
 | driver | instructions | x none | cycles | x none | branch misses | cache misses | page faults | task-clock s | wall s (min-max) | x none | peak RSS MiB |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| no coverage | 225.036 G | 1.00 | 173.296 G | 1.00 | 1.285 G | 338.939 M | 140.649 k | 44.060 | 45.445 (41.952-59.410) | 1.00 | 190.6 |
-| opcov (lines, outcomes, loops) | 351.563 G | 1.56 | 246.820 G | 1.42 | 1.828 G | 311.767 M | 160.919 k | 61.612 | 62.699 (61.414-108.726) | 1.38 | 270.8 |
-| PCOV | 535.605 G | 2.38 | 362.687 G | 2.09 | 3.537 G | 552.765 M | 142.921 k | 90.180 | 91.294 (87.199-116.689) | 2.01 | 196.9 |
-| Xdebug (lines) | 4971.312 G | 22.09 | 2586.369 G | 14.92 | 9.883 G | 4.767 G | 145.634 k | 646.305 | 648.222 (583.317-720.358) | 14.26 | 207.6 |
-| Xdebug (branch) | timed out after 900 s |  |  |  |  |  |  |  |  |  |  |
-| turbocov | 230.553 G | 1.02 | 165.376 G | 0.95 | 1.272 G | 273.215 M | 141.839 k | 42.037 | 43.122 (42.027-71.528) | 0.95 | 195.2 |
+| no coverage | 225.036 G | 1.00 | 160.364 G | 1.00 | 1.228 G | 169.811 M | 140.703 k | 40.623 | 41.691 (40.390-48.741) | 1.00 | 190.6 |
+| opcov (lines, outcomes, loops) | 333.479 G | 1.48 | 227.012 G | 1.42 | 1.717 G | 112.452 M | 160.997 k | 55.787 | 56.872 (56.578-57.095) | 1.36 | 270.9 |
+| PCOV | 535.605 G | 2.38 | 349.671 G | 2.18 | 3.474 G | 360.898 M | 142.854 k | 85.617 | 86.702 (86.144-90.429) | 2.08 | 197.5 |
+| Xdebug (lines) | 4971.229 G | 22.09 | 2389.669 G | 14.90 | 9.724 G | 621.804 M | 145.522 k | 581.137 | 582.294 (570.555-739.359) | 13.97 | 207.8 |
+| Xdebug (branch) | > 15 min |  |  |  |  |  |  |  |  |  |  |
+| turbocov | 230.560 G | 1.02 | 161.144 G | 1.00 | 1.247 G | 77.463 M | 141.839 k | 39.784 | 40.873 (40.449-41.732) | 0.98 | 195.6 |
 
 | driver | allocation calls (Zend MM) | x none | bytes allocated (Zend MM) | allocation calls (USE_ZEND_ALLOC=0) | x none | bytes allocated (USE_ZEND_ALLOC=0) | PHP peak MiB | payload MiB | report MiB |
 |---|---|---|---|---|---|---|---|---|---|
-| no coverage | 355.888 k | 1.00 | 160.3 MiB | 189.422 M | 1.00 | 33106.1 MiB | 148.5 | 0.01 | n/a |
-| opcov (lines, outcomes, loops) | 26.207 M | 73.64 | 2849.0 MiB | 222.133 M | 1.17 | 39094.7 MiB | 148.5 | 130.95 | refused |
-| PCOV | 355.962 k | 1.00 | 160.3 MiB | 190.153 M | 1.00 | 36152.3 MiB | 154.5 | 243.22 | n/a |
-| Xdebug (lines) | 455.224 M | 1279.12 | 21824.8 MiB | timed out after 900 s | n/a |  | 150.5 | 220.19 | n/a |
-| Xdebug (branch) | timed out after 900 s |  |  |  |  |  |  |  |  |
-| turbocov | 473.169 k | 1.33 | 204.2 MiB | 190.149 M | 1.00 | 35947.8 MiB | 148.5 | 60.74 | n/a |
-
-opcov (lines, outcomes, loops) refused to write the report: opcov\write_report(): cannot build the report for opcov-payload.json.report.json: src/Carbon/Traits/Mixin.php(127) : eval()'d code was compiled from different sources in this process, so no single sha256 describes its coverage
+| no coverage | 355.888 k | 1.00 | 160.3 MiB | 175.994 M | 1.00 | 29563.2 MiB | 148.5 | 0.01 | n/a |
+| opcov (lines, outcomes, loops) | 3.154 M | 8.86 | 722.8 MiB | 181.411 M | 1.03 | 33222.4 MiB | 148.5 | 130.95 | 28.90 |
+| PCOV | 355.962 k | 1.00 | 160.3 MiB | 176.722 M | 1.00 | 32609.0 MiB | 154.5 | 243.22 | n/a |
+| Xdebug (lines) | 455.225 M | 1279.12 | 21824.9 MiB | 2.880 G | 16.36 | 526547.0 MiB | 150.5 | 220.20 | n/a |
+| Xdebug (branch) | > 15 min |  |  |  |  |  |  |  |  |
+| turbocov | 473.169 k | 1.33 | 204.2 MiB | 176.727 M | 1.00 | 32405.3 MiB | 148.5 | 60.74 | n/a |
 
 #### laravel-query-builder
 
@@ -220,128 +218,79 @@ Spatie/laravel-query-builder's Pest suite: Laravel feature tests through Orchest
 
 | driver | instructions | x none | cycles | x none | branch misses | cache misses | page faults | task-clock s | wall s (min-max) | x none | peak RSS MiB |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| no coverage | 20.826 G | 1.00 | 17.187 G | 1.00 | 153.780 M | 94.254 M | 19.792 k | 4.366 | 4.396 (4.324-5.012) | 1.00 | 107.2 |
-| opcov (lines, outcomes, loops) | 21.158 G | 1.02 | 17.361 G | 1.01 | 157.166 M | 99.741 M | 20.287 k | 4.462 | 4.479 (4.415-4.890) | 1.02 | 110.1 |
-| PCOV | 58.159 G | 2.79 | 37.040 G | 2.16 | 289.519 M | 190.177 M | 19.984 k | 9.423 | 9.442 (8.680-9.992) | 2.15 | 107.2 |
-| Xdebug (lines) | 172.906 G | 8.30 | 99.228 G | 5.77 | 505.271 M | 322.379 M | 21.920 k | 24.946 | 24.966 (23.421-25.371) | 5.68 | 114.7 |
-| Xdebug (branch) | timed out after 900 s |  |  |  |  |  |  |  |  |  |  |
-| turbocov | 21.100 G | 1.01 | 17.910 G | 1.04 | 155.207 M | 117.831 M | 19.851 k | 4.622 | 4.639 (4.358-5.077) | 1.06 | 107.3 |
+| no coverage | 20.826 G | 1.00 | 17.404 G | 1.00 | 153.997 M | 104.588 M | 19.791 k | 4.486 | 4.504 (4.435-4.670) | 1.00 | 107.2 |
+| opcov (lines, outcomes, loops) | 21.121 G | 1.01 | 18.416 G | 1.06 | 157.031 M | 143.763 M | 20.433 k | 4.794 | 4.811 (4.625-5.351) | 1.07 | 110.5 |
+| PCOV | 58.158 G | 2.79 | 36.823 G | 2.12 | 290.857 M | 194.443 M | 20.064 k | 9.358 | 9.382 (9.034-9.603) | 2.08 | 107.1 |
+| Xdebug (lines) | 172.911 G | 8.30 | 96.949 G | 5.57 | 500.981 M | 286.285 M | 21.878 k | 24.218 | 24.237 (24.148-24.366) | 5.38 | 114.7 |
+| Xdebug (branch) | > 15 min |  |  |  |  |  |  |  |  |  |  |
+| turbocov | 21.100 G | 1.01 | 17.447 G | 1.00 | 154.847 M | 108.410 M | 19.850 k | 4.508 | 4.526 (4.505-4.670) | 1.01 | 107.5 |
 
 | driver | allocation calls (Zend MM) | x none | bytes allocated (Zend MM) | allocation calls (USE_ZEND_ALLOC=0) | x none | bytes allocated (USE_ZEND_ALLOC=0) | PHP peak MiB | payload MiB | report MiB |
 |---|---|---|---|---|---|---|---|---|---|
-| no coverage | 583.039 k | 1.00 | 220.9 MiB | 18.443 M | 1.00 | 3213.2 MiB | 62.5 | 0.00 | n/a |
-| opcov (lines, outcomes, loops) | 631.456 k | 1.08 | 229.4 MiB | 18.566 M | 1.01 | 3247.9 MiB | 62.5 | 1.43 | 0.24 |
+| no coverage | 583.039 k | 1.00 | 220.9 MiB | 18.444 M | 1.00 | 3213.2 MiB | 62.5 | 0.00 | n/a |
+| opcov (lines, outcomes, loops) | 611.058 k | 1.05 | 227.6 MiB | 18.507 M | 1.00 | 3243.4 MiB | 62.5 | 1.43 | 0.24 |
 | PCOV | 583.113 k | 1.00 | 220.9 MiB | 18.456 M | 1.00 | 3289.6 MiB | 62.5 | 1.05 | n/a |
-| Xdebug (lines) | 52.695 M | 90.38 | 2333.0 MiB | 96.281 M | 5.22 | 19375.0 MiB | 66.5 | 15.90 | n/a |
-| Xdebug (branch) | timed out after 900 s |  |  |  |  |  |  |  |  |
-| turbocov | 584.008 k | 1.00 | 221.4 MiB | 18.485 M | 1.00 | 3237.0 MiB | 62.5 | 0.62 | n/a |
+| Xdebug (lines) | 52.695 M | 90.38 | 2333.0 MiB | 96.278 M | 5.22 | 19374.7 MiB | 66.5 | 15.90 | n/a |
+| Xdebug (branch) | > 15 min |  |  |  |  |  |  |  |  |
+| turbocov | 584.008 k | 1.00 | 221.4 MiB | 18.485 M | 1.00 | 3236.9 MiB | 62.5 | 0.62 | n/a |
 <!-- bench:php85:end -->
 
 ### Reading the results
 
-Instructions with coverage divided by instructions without, median of 5
+Instructions with coverage divided by instructions without, median of 3
 runs (cycles in parentheses):
 
 | workload | opcov | PCOV (lines) | turbocov (lines) | Xdebug lines | Xdebug branch/path |
 |---|---|---|---|---|---|
-| laravel-query-builder | **1.02** (1.01) | 2.79 (2.16) | 1.01 (1.04) | 8.30 (5.77) | over 15 min, timed out |
-| carbon | **1.56** (1.42) | 2.38 (2.09) | 1.02 (0.95) | 22.09 (14.92) | over 15 min, timed out |
-| branchy | **1.99** (1.89) | 3.60 (3.11) | 1.01 (1.02) | 17.25 (16.48) | over 15 min, timed out |
-| tiny-tests | **6.61** (4.47) | 3.70 (2.34) | 1.57 (1.07) | 51.04 (42.72) | 135.52 (308.95) |
+| laravel-query-builder | **1.01** (1.06) | 2.79 (2.12) | 1.01 (1.00) | 8.30 (5.57) | over 15 min, timed out |
+| carbon | **1.48** (1.42) | 2.38 (2.18) | 1.02 (1.00) | 22.09 (14.90) | over 15 min, timed out |
+| branchy | **1.84** (1.69) | 3.60 (2.92) | 1.01 (0.99) | 17.25 (15.88) | over 15 min, timed out |
+| tiny-tests | **3.68** (3.15) | 3.70 (3.18) | 1.57 (1.42) | 51.03 (53.18) | 135.50 (382.92) |
 
 opcov collects lines, branch outcomes and loops with per-test attribution;
 PCOV and turbocov collect lines only.
 
 - **Framework workload.** On the Laravel feature tests opcov's full
-  collection costs 2% more instructions and 1% more cycles than no coverage,
-  which meets the epic's target of branch coverage within 1.2x of no
-  coverage. PCOV executes 2.79 times the instructions for lines only.
-- **Large unit suite.** On Carbon opcov executes 127 G instructions more than
-  no coverage over 6,349 tests (1.56x), PCOV 311 G (2.38x), turbocov 6 G
-  (1.02x). See the profile below.
+  collection executes 1% more instructions than no coverage, which meets the
+  epic's target of branch coverage within 1.2x of no coverage. PCOV executes
+  2.79 times the instructions for lines only.
+- **Large unit suite.** On Carbon opcov executes 108 G instructions more than
+  no coverage over 6,349 tests (1.48x), PCOV 311 G (2.38x), turbocov 6 G
+  (1.02x) for lines only. Most of opcov's extra work is in the probe callback
+  chain of branch sources that a test never saturates, so they fire on every
+  call.
+- **Per-test cost.** On 20,000 tiny tests opcov executes 3.68 times the
+  instructions of no coverage, about 41 k extra per test, level with PCOV
+  (3.70x) while also returning outcomes and loops.
 - **Xdebug branch/path.** The `xdebug-branch` driver passes
   `XDEBUG_CC_BRANCH_CHECK`, which makes Xdebug record branches and enumerate
-  paths. Its first run exceeded the 15-minute budget on branchy, Carbon and
-  the Laravel suite, so those rows show "timed out" and it was not run again
-  for that workload (the reduced-round rule: a single run over 15 minutes).
-  Only tiny-tests finished: 41.1 G instructions and 16.2 s, against opcov's
-  2.0 G and 0.27 s. On a real branch with PHPUnit, Xdebug path coverage took
-  314 times as long as opcov ([gate.md](gate.md#results)). Xdebug lines on
-  Carbon under `USE_ZEND_ALLOC=0` also exceeded the budget, so that cell is
-  empty.
-- **Allocations.** With Zend MM (the normal setup), opcov makes 1.08x the
-  `malloc`-family calls of no coverage on Laravel, 73.6x on Carbon (26.2 M
-  calls, 2.8 GiB requested, against 0.36 M), 40.6x on branchy and 18.4x on
-  tiny-tests; PCOV and turbocov stay at 1.00 to 1.33x because they allocate
-  from Zend MM or not at all per test. opcov's Rust code allocates through
-  `malloc`, so every one of those calls is opcov's own. On branchy that is
-  1.60 M calls beyond no coverage for 400k calls of `classify()`: exactly 4
-  per call, one per resolved successor watch (`Engine::resolve_watch` collects
-  the matching successors into a new `Vec` each time a watched successor
-  fires, and the `FE_RESET` and three `FE_FETCH` runs per call are watched).
-  On tiny-tests it is 35 calls per test, from `stop()` building its per-file
-  and per-function vectors, the per-call conflict check (below) and the
-  `foreach` watches. Xdebug allocates far more: 776x (lines) and 1,548x
-  (branch/path) on tiny-tests. With `USE_ZEND_ALLOC=0`, where PHP's own
-  per-object allocations go through `malloc` too, opcov adds 1.01x (Laravel)
-  to 1.35x (branchy) on the real workloads.
-- **Memory.** opcov's peak RSS is 3% to 42% above no coverage (110 against
-  107 MiB on Laravel, 271 against 191 MiB on Carbon), while PHP's own peak
-  (`memory_get_peak_usage(true)`) is unchanged: opcov's state lives outside
-  Zend MM.
-- **Report size.** Carbon has no report size: `\opcov\write_report()` refuses
-  the report because `Carbon\Traits\Mixin::loadMixinTrait()` runs `eval()` on
-  line 127 with different code for each mixin, so one engine name,
-  `Mixin.php(127) : eval()'d code`, stands for several sources and no single
-  sha256 describes it. The refusal is documented behaviour
-  ([configuration.md](configuration.md)), but it means a Carbon test run
-  cannot produce an opcov report at all. The timed runs do not write reports
-  and are unaffected.
-- **Per-test cost.** tiny-tests is where opcov is slower than PCOV: 85 k
-  extra instructions per test, against PCOV's 41 k and turbocov's 8.7 k
-  (Xdebug lines 758 k, Xdebug branch/path 2.04 M).
+  paths. Its first run exceeded the 15-minute limit on branchy, Carbon and
+  the Laravel suite, so those rows show the timeout and it was not run again
+  for that workload. Only tiny-tests finished, at 135.5x no coverage. On a
+  real branch with PHPUnit, Xdebug path coverage took 314 times as long as
+  opcov ([gate.md](gate.md#results)).
+- **Allocations.** With Zend MM (the normal setup) opcov makes 1.05x the
+  `malloc`-family calls of no coverage on Laravel, 1.02x on branchy, 2.01x on
+  tiny-tests and 8.86x on Carbon (3.15 M calls against 0.36 M); no allocation
+  happens per probe fire or per watch resolution, so what remains is mostly
+  compiling and instrumenting files. With `USE_ZEND_ALLOC=0`, where PHP's own
+  per-object allocations go through `malloc` too, opcov adds 1.00x to 1.03x
+  on the real workloads.
+- **Memory.** opcov's peak RSS is a few percent to about 40% above no
+  coverage (110 against 107 MiB on Laravel, 271 against 191 MiB on Carbon),
+  while PHP's own peak (`memory_get_peak_usage(true)`) is unchanged: opcov's
+  state lives outside Zend MM.
+- **Reports.** Every workload writes a report; Carbon's is 28.9 MiB, with one
+  entry per distinct `eval()`'d source.
 
-### Profiles
+### History
 
-Profiled with `perf record -e cycles:u -g --user-callchains` on a build of the
-same commit with line tables and without stripping (the benchmarked build is
-stripped), one run each, run directly with the harness's settings.
-
-**tiny-tests (opcov slower than PCOV).** User-space cycles for the whole run:
-no coverage 0.15 G, PCOV 0.48 G, opcov 0.90 G. Where opcov's cycles go:
-
-| share of opcov's cycles | where |
-|---|---|
-| 26.3% | `opcov\stop()`, almost all of it (24.3%) building the returned PHP array: per file the `lines` array, per function an `outcomes` array keyed `o<n>` and a `loops` array. The `o<n>` keys alone (`opcov_add_named_trues`, which formats each key with PHP's `snprintf`, 2.3% in `format_converter`, and inserts it as a new string key) take 7.2%. |
-| about 16% | the probe callback chain: `Engine::trigger` 5.6%, `Engine::hit` 4.8%, `probes::probe` 2.8%, `Engine::taken` 2.1%, the VM's `ZEND_USER_OPCODE` handler 1.0% |
-| 4.9% | `conflicts::Environment::current()`, which `start()` and `stop()` call on every test to check for conflicting setups: it reads the SAPI name and about a dozen OPcache, Xdebug and PCOV INI entries, parses them and allocates their strings each time |
-| 2.3% | `Engine::rearm` in `reset()` and `start()` |
-
-The array opcov's `stop()` returns per test is about twice PCOV's
-(17.3 MiB against 8.4 MiB serialized over the run), since it carries
-outcomes and loops besides lines, and building it is the largest single
-cost. The per-test conflict check is pure overhead: the settings it reads do
-not change during a request.
-
-**Carbon (1.51x against turbocov's 1.02x).** User-space cycles: opcov 245 G,
-turbocov 162 G. The difference is the probe callback chain: `Engine::hit`
-7.9%, `Engine::trigger` 5.7%, `probes::probe` 2.7%, `Engine::taken` 2.0%,
-`Engine::decide` 0.9%, `ZEND_USER_OPCODE` 1.1% and `opcov_branch_truth` 0.6%,
-about 21% of opcov's cycles (about 51 G), against 0.8% for all of
-`turbocov.so`. `stop()` takes 0.6% and the compile hook (including PHP's own
-compilation under it) under 3%. A line probe fires once per test in both
-extensions; what turbocov does not have is branch sources, which stay armed
-and fire on every execution until all their outcomes were seen since the last
-`reset()` ([how-it-works.md](how-it-works.md#branch-outcomes)). The branchy
-workload shows the mechanism in isolation: after 3,000 calls
-`\opcov\get_debug_info()` lists exactly four armed sources in `classify()`
-(the two `??` at lines 6 and 7 and the `FE_RESET`/`FE_FETCH` of the
-`foreach`) and nothing else armed that runs; they fire about six times per call,
-which over 400k calls accounts for the 0.22 s opcov adds there (about 90 ns per
-firing, in line with ADR 0002's 37 to 83 ns per armed source run). That
-Carbon's extra time is the same mechanism, sources that one test does not
-saturate re-firing on every execution, is an inference from the profile; the
-harness does not count probe firings.
+The first counter run (6d4f418) measured tiny-tests at 6.61x, above PCOV.
+Its profile put 26% of opcov's cycles in `stop()` building the returned
+array (with `snprintf`-formatted keys), 4.9% in re-reading INI settings on
+every `start()` and `stop()`, and one `Vec` allocation per resolved successor
+watch (26.2 M calls on Carbon). Fixing those (#40) brought tiny-tests to
+3.68x, branchy from 1.99x to 1.84x and Carbon from 1.56x to 1.48x.
 
 ## Regression check
 
