@@ -194,29 +194,10 @@
     ],
     "file": "break_continue_n.php",
     "flags": [],
+    "handlers": [],
     "key": "scan",
     "line_end": 15,
-    "line_start": 2,
-    "loops": [
-      {
-        "body_blocks": [
-          2,
-          3,
-          4,
-          5,
-          7,
-          8
-        ],
-        "header": 1
-      },
-      {
-        "body_blocks": [
-          3,
-          5
-        ],
-        "header": 7
-      }
-    ]
+    "line_start": 2
   },
   "expected": {
     "diagnostics": [],

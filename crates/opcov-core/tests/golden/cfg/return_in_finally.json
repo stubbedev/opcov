@@ -166,10 +166,15 @@
     ],
     "file": "return_in_finally.php",
     "flags": [],
+    "handlers": [
+      {
+        "first_protected": 1,
+        "handler": 6
+      }
+    ],
     "key": "f",
     "line_end": 13,
-    "line_start": 2,
-    "loops": []
+    "line_start": 2
   },
   "expected": {
     "diagnostics": [],

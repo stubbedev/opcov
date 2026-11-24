@@ -74,10 +74,10 @@
     "flags": [
       "Generator"
     ],
+    "handlers": [],
     "key": "delegate",
     "line_end": 7,
-    "line_start": 2,
-    "loops": []
+    "line_start": 2
   },
   "expected": {
     "diagnostics": [],

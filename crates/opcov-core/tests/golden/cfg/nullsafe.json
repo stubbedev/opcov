@@ -88,7 +88,7 @@
         "successors": []
       }
     ],
-    "loops": []
+    "handlers": []
   },
   "expected": {
     "function": {

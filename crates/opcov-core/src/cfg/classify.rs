@@ -2,9 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::model::{
-    Block, BlockId, CfgError, Edge, Loop, LoopInput, LoopShape, OpIndex, check_loop_blocks,
-};
+use super::loops::{NaturalLoop, natural_loops};
+use super::model::{Block, BlockId, CfgError, Edge, HandlerInput, Loop, LoopShape, OpIndex};
 use super::opcode::Opcode;
 use crate::kind::EdgeKind;
 
@@ -212,30 +211,25 @@ fn loop_shape(
 
 fn classify_loops(
     nodes: &[Node<'_>],
-    inputs: &[LoopInput],
+    natural: Vec<NaturalLoop>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<(Vec<Loop>, LoopTests), CfgError> {
-    let mut loops = BTreeMap::new();
+    let mut loops = Vec::with_capacity(natural.len());
     let mut tests = LoopTests::new();
-    for input in inputs {
-        let header = input.header;
+    for NaturalLoop { header, body } in natural {
         let members: BTreeSet<BlockId> = std::iter::once(header)
-            .chain(input.body_blocks.iter().copied())
+            .chain(body.iter().copied())
             .collect();
-        check_loop_blocks(nodes.len(), header, members.iter().copied())?;
         let (shape, test) = loop_shape(nodes, header, &members);
         if shape == LoopShape::Unstructured {
             diagnostics.push(Diagnostic::UnstructuredLoop { header });
         }
-        let classified = Loop::new(header, input.body_blocks.clone(), shape)?;
-        if loops.insert(header, classified).is_some() {
-            return Err(CfgError::DuplicateLoopHeader { header });
-        }
+        loops.push(Loop::new(header, body, shape)?);
         if let Some(test) = test {
             tests.insert(test, members);
         }
     }
-    return Ok((loops.into_values().collect(), tests));
+    return Ok((loops, tests));
 }
 
 fn forward_jmpnz_target(candidate: &Node<'_>, tests: &LoopTests) -> Option<BlockId> {
@@ -480,11 +474,12 @@ fn successor_kinds(
 
 pub(super) fn classify(
     nodes: &[Node<'_>],
-    loop_inputs: &[LoopInput],
+    handlers: &[HandlerInput],
 ) -> Result<Classified, CfgError> {
     check_successors(nodes)?;
     let mut diagnostics = unknown_opcodes(nodes);
-    let (loops, tests) = classify_loops(nodes, loop_inputs, &mut diagnostics)?;
+    let natural = natural_loops(nodes, handlers)?;
+    let (loops, tests) = classify_loops(nodes, natural, &mut diagnostics)?;
     let chains = find_chains(nodes, &tests, &mut diagnostics);
     let mut edges = BTreeSet::new();
     for current in nodes

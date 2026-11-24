@@ -128,10 +128,10 @@
     ],
     "file": "readonly_class.php",
     "flags": [],
+    "handlers": [],
     "key": "Point::withX",
     "line_end": 7,
-    "line_start": 5,
-    "loops": []
+    "line_start": 5
   },
   "expected": {
     "diagnostics": [],

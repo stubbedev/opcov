@@ -157,10 +157,10 @@
     ],
     "file": "enum_method.php",
     "flags": [],
+    "handlers": [],
     "key": "Suit::color",
     "line_end": 11,
-    "line_start": 6,
-    "loops": []
+    "line_start": 6
   },
   "expected": {
     "diagnostics": [],

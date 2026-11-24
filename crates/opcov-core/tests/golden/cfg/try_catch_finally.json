@@ -180,7 +180,16 @@
         "successors": []
       }
     ],
-    "loops": []
+    "handlers": [
+      {
+        "first_protected": 1,
+        "handler": 2
+      },
+      {
+        "first_protected": 1,
+        "handler": 8
+      }
+    ]
   },
   "expected": {
     "function": {

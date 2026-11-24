@@ -90,14 +90,7 @@
         "successors": []
       }
     ],
-    "loops": [
-      {
-        "header": 1,
-        "body_blocks": [
-          2
-        ]
-      }
-    ]
+    "handlers": []
   },
   "expected": {
     "function": {

@@ -245,7 +245,8 @@ left out):
 | `zend_std_cast_object_tostring`, `zend_iterator_unwrap`, `zend_hash_index_find`, `zend_hash_find` | inside the shim's branch evaluators (ADR 0002) |
 | `zend_get_resource_handle` | the `op_array.reserved[]` slot that maps an op array to its unit |
 | `zend_register_extension` | the runtime `zend_extension` whose `op_array_dtor` frees units |
-| `zend_build_cfg`, `zend_cfg_build_predecessors`, `zend_cfg_compute_dominators_tree`, `zend_cfg_identify_loops` | the CFG snapshot (#4) |
+| `zend_build_cfg` | the CFG snapshot (#4); opcov-core finds loops itself (#36) |
+| `zend_cfg_build_predecessors`, `zend_cfg_compute_dominators_tree`, `zend_cfg_identify_loops` | the engine self-test only |
 | `pcre_get_compiled_regex_cache`, `php_pcre_pce_incref`, `php_pcre_pce_decref`, `php_pcre_match_impl` | `opcov.exclude_pattern` |
 | `zend_get_extension` | self-test only (`engine-selftest`) |
 

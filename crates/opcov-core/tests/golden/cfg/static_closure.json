@@ -86,10 +86,10 @@
     "flags": [
       "StaticClosure"
     ],
+    "handlers": [],
     "key": "{closure}@static_closure.php:2-4",
     "line_end": 4,
-    "line_start": 2,
-    "loops": []
+    "line_start": 2
   },
   "expected": {
     "diagnostics": [],

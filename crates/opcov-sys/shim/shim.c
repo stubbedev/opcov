@@ -46,11 +46,7 @@ bool opcov_arena_create_caught(size_t size, zend_arena **arena)
 
 bool opcov_build_cfg(zend_arena **arena, const zend_op_array *op_array, zend_cfg *cfg)
 {
-	OPCOV_TRY(
-		zend_build_cfg(arena, op_array, 0, cfg);
-		zend_cfg_build_predecessors(arena, cfg);
-		zend_cfg_compute_dominators_tree(op_array, cfg);
-		zend_cfg_identify_loops(op_array, cfg));
+	OPCOV_TRY(zend_build_cfg(arena, op_array, 0, cfg));
 }
 
 void opcov_bailout(void)

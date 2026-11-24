@@ -3,11 +3,9 @@ mod plan {
     use std::fs;
     use std::path::Path;
 
-    use std::collections::BTreeSet;
-
     use opcov_core::cfg::{
         Analysis, BlockFlag, BlockFlags, BlockId, BlockInput, FunctionFlags, FunctionInput, Line,
-        LoopInput, LoopShape, LoopTest, Op, Opcode, Origin, Plan,
+        LoopShape, LoopTest, Op, Opcode, Origin, Plan,
     };
     use opcov_core::kind::EdgeKind;
 
@@ -133,7 +131,6 @@ mod plan {
     fn planning_many_loops_in_one_function_stays_linear() {
         let count: u32 = 20_000;
         let mut blocks = Vec::new();
-        let mut loops = Vec::new();
         for index in 0..count {
             let entry = index * 3;
             blocks.push(block(index == 0, &[Opcode::Jmp], &[entry + 2]));
@@ -143,10 +140,6 @@ mod plan {
                 &[Opcode::IsSmaller, Opcode::Jmpnz],
                 &[entry + 1, entry + 3],
             ));
-            loops.push(LoopInput {
-                header: BlockId::new(entry + 2),
-                body_blocks: BTreeSet::from([BlockId::new(entry + 1)]),
-            });
         }
         blocks.push(block(false, &[Opcode::Return], &[]));
         let analysis = Analysis::try_from(FunctionInput {
@@ -156,7 +149,7 @@ mod plan {
             line_end: Line::new(9).unwrap(),
             flags: FunctionFlags::empty(),
             blocks,
-            loops,
+            handlers: Vec::new(),
         })
         .unwrap();
         let plan = Plan::of(&analysis.function);
@@ -207,7 +200,7 @@ mod plan {
                 block(false, &[O::VerifyReturnType, O::Return], &[]),
                 unreachable,
             ],
-            loops: Vec::new(),
+            handlers: Vec::new(),
         })
         .unwrap();
         return Plan::of(&analysis.function);

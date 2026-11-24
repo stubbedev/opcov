@@ -4,7 +4,7 @@ mod model {
 
     use opcov_core::cfg::{
         Analysis, BlockFlag, BlockFlags, BlockId, BlockInput, CfgError, Diagnostic, Function,
-        FunctionFlag, FunctionFlags, FunctionInput, Line, LoopInput, LoopShape, Op, OpIndex,
+        FunctionFlag, FunctionFlags, FunctionInput, HandlerInput, Line, LoopShape, Op, OpIndex,
         Opcode, Successor, opcode_edge_kind,
     };
     use opcov_core::kind::EdgeKind;
@@ -47,7 +47,7 @@ mod model {
         return block;
     }
 
-    fn function(blocks: Vec<BlockInput>, loops: Vec<LoopInput>) -> FunctionInput {
+    fn function(blocks: Vec<BlockInput>, handlers: Vec<HandlerInput>) -> FunctionInput {
         return FunctionInput {
             key: "App\\f".parse().expect("valid key"),
             file: "/app/f.php".parse().expect("valid path"),
@@ -55,16 +55,16 @@ mod model {
             line_end: line(9),
             flags: FunctionFlags::empty(),
             blocks,
-            loops,
+            handlers,
         };
     }
 
-    fn analyze(blocks: Vec<BlockInput>, loops: Vec<LoopInput>) -> Analysis {
-        return Analysis::try_from(function(blocks, loops)).expect("valid snapshot");
+    fn analyze(blocks: Vec<BlockInput>, handlers: Vec<HandlerInput>) -> Analysis {
+        return Analysis::try_from(function(blocks, handlers)).expect("valid snapshot");
     }
 
-    fn rejection(blocks: Vec<BlockInput>, loops: Vec<LoopInput>) -> CfgError {
-        return Analysis::try_from(function(blocks, loops))
+    fn rejection(blocks: Vec<BlockInput>, handlers: Vec<HandlerInput>) -> CfgError {
+        return Analysis::try_from(function(blocks, handlers))
             .expect_err("invalid snapshot")
             .error();
     }
@@ -477,10 +477,7 @@ mod model {
                 reachable(&[Opcode::Echo, Opcode::Jmp], &[1]),
                 reachable(&[Opcode::Return], &[]),
             ],
-            vec![LoopInput {
-                header: BlockId::new(1),
-                body_blocks: body(&[2]),
-            }],
+            vec![],
         );
         assert_eq!(
             analysis.function.loops()[0].kind(),
@@ -498,6 +495,155 @@ mod model {
             edges(&analysis)[1..3],
             [(1, 2, EdgeKind::IfTrue), (1, 3, EdgeKind::IfFalse)],
             "a test that is not the loop's last block keeps its if kinds"
+        );
+    }
+
+    fn catch_block(successors: &[u32]) -> BlockInput {
+        let mut block = reachable(&[Opcode::Catch], successors);
+        block.flags = block.flags.with(BlockFlag::Catch);
+        return block;
+    }
+
+    fn handler(first_protected: u32, handler: u32) -> HandlerInput {
+        return HandlerInput {
+            first_protected: BlockId::new(first_protected),
+            handler: BlockId::new(handler),
+        };
+    }
+
+    fn retry_loop() -> Vec<BlockInput> {
+        return vec![
+            entry(&[Opcode::Recv, Opcode::Jmp], &[4]),
+            reachable(&[Opcode::DoFcall, Opcode::Return], &[]),
+            catch_block(&[3]),
+            reachable(&[Opcode::Echo], &[4]),
+            reachable(&[Opcode::IsSmaller, Opcode::Jmpnz], &[1, 5]),
+            reachable(&[Opcode::Return], &[]),
+        ];
+    }
+
+    fn loop_shapes(analysis: &Analysis) -> Vec<(u32, BTreeSet<BlockId>, LoopShape)> {
+        return analysis
+            .function
+            .loops()
+            .iter()
+            .map(|found| {
+                return (
+                    found.header().get(),
+                    found.body_blocks().clone(),
+                    found.kind(),
+                );
+            })
+            .collect();
+    }
+
+    #[test]
+    fn a_loop_continued_only_by_its_catch_handler_is_a_loop() {
+        let analysis = analyze(retry_loop(), vec![handler(1, 2)]);
+        assert_eq!(
+            loop_shapes(&analysis),
+            [(4, body(&[1, 2, 3]), LoopShape::PreTest)],
+            "the catch handler carries the back edge"
+        );
+        assert_eq!(
+            edges(&analysis)[2..],
+            [
+                (3, 4, EdgeKind::Flow),
+                (4, 1, EdgeKind::LoopBack),
+                (4, 5, EdgeKind::LoopExit),
+            ],
+            "the test's edges are loop edges"
+        );
+        assert!(
+            analysis.diagnostics.is_empty(),
+            "{:?}",
+            analysis.diagnostics
+        );
+    }
+
+    #[test]
+    fn without_its_exception_edge_the_retry_loop_has_no_back_edge() {
+        let analysis = analyze(retry_loop(), vec![]);
+        assert!(analysis.function.loops().is_empty(), "no back edge");
+        assert_eq!(
+            edges(&analysis)[3..],
+            [(4, 1, EdgeKind::IfTrue), (4, 5, EdgeKind::IfFalse)],
+            "the test stays a condition"
+        );
+    }
+
+    #[test]
+    fn a_loop_inside_a_catch_handler_is_a_loop() {
+        let blocks = vec![
+            entry(&[Opcode::Recv], &[1]),
+            reachable(&[Opcode::DoFcall, Opcode::Jmp], &[6]),
+            catch_block(&[3]),
+            reachable(&[Opcode::Jmp], &[5]),
+            reachable(&[Opcode::PreDec], &[5]),
+            reachable(&[Opcode::IsSmaller, Opcode::Jmpnz], &[4, 6]),
+            reachable(&[Opcode::Return], &[]),
+        ];
+        assert!(
+            analyze(blocks.clone(), vec![]).function.loops().is_empty(),
+            "unreachable without the exception edge"
+        );
+        let analysis = analyze(blocks, vec![handler(1, 2)]);
+        assert_eq!(
+            loop_shapes(&analysis),
+            [(5, body(&[4]), LoopShape::PreTest)],
+            "the loop in the handler"
+        );
+        assert_eq!(
+            edges(&analysis)[5..],
+            [(5, 4, EdgeKind::LoopBack), (5, 6, EdgeKind::LoopExit)],
+            "loop edges"
+        );
+    }
+
+    #[test]
+    fn nested_loops_include_the_inner_loop_and_its_handlers() {
+        let blocks = vec![
+            entry(&[Opcode::Recv, Opcode::Jmp], &[8]),
+            reachable(&[Opcode::Assign, Opcode::Jmp], &[6]),
+            reachable(&[Opcode::DoFcall, Opcode::Jmp], &[5]),
+            catch_block(&[4]),
+            reachable(&[Opcode::DoFcall], &[5]),
+            reachable(&[Opcode::PreInc], &[6]),
+            reachable(&[Opcode::IsSmaller, Opcode::Jmpnz], &[2, 7]),
+            reachable(&[Opcode::PreInc], &[8]),
+            reachable(&[Opcode::IsSmaller, Opcode::Jmpnz], &[1, 9]),
+            reachable(&[Opcode::Return], &[]),
+        ];
+        let analysis = analyze(blocks, vec![handler(2, 3)]);
+        assert_eq!(
+            loop_shapes(&analysis),
+            [
+                (6, body(&[2, 3, 4, 5]), LoopShape::PreTest),
+                (8, body(&[1, 2, 3, 4, 5, 6, 7]), LoopShape::PreTest),
+            ],
+            "inner and outer loop"
+        );
+        assert!(
+            analysis.diagnostics.is_empty(),
+            "{:?}",
+            analysis.diagnostics
+        );
+    }
+
+    #[test]
+    fn an_irreducible_cycle_is_not_a_loop() {
+        let analysis = analyze(
+            vec![
+                entry(&[Opcode::Jmpz], &[2, 1]),
+                reachable(&[Opcode::Echo], &[2]),
+                reachable(&[Opcode::IsSmaller, Opcode::Jmpnz], &[1, 3]),
+                reachable(&[Opcode::Return], &[]),
+            ],
+            vec![],
+        );
+        assert!(
+            analysis.function.loops().is_empty(),
+            "the cycle 1 -> 2 -> 1 has two entries and no header that dominates it"
         );
     }
 
@@ -565,40 +711,29 @@ mod model {
         assert_eq!(
             rejection(
                 two_blocks(),
-                vec![LoopInput {
-                    header: BlockId::new(1),
-                    body_blocks: body(&[5])
+                vec![HandlerInput {
+                    first_protected: BlockId::new(0),
+                    handler: BlockId::new(2)
                 }]
             ),
-            CfgError::LoopBlockMissing {
-                header: BlockId::new(1),
-                block: BlockId::new(5)
+            CfgError::HandlerBlockMissing {
+                handler: BlockId::new(2)
             },
-            "loop body block out of range"
+            "handler out of range"
         );
         assert_eq!(
             rejection(
                 two_blocks(),
-                vec![LoopInput {
-                    header: BlockId::new(1),
-                    body_blocks: body(&[1])
+                vec![HandlerInput {
+                    first_protected: BlockId::new(1),
+                    handler: BlockId::new(0)
                 }]
             ),
-            CfgError::LoopHeaderInBody {
-                header: BlockId::new(1)
+            CfgError::HandlerBeforeProtected {
+                first_protected: BlockId::new(1),
+                handler: BlockId::new(0)
             },
-            "header listed in its own body"
-        );
-        let looped = LoopInput {
-            header: BlockId::new(1),
-            body_blocks: body(&[]),
-        };
-        assert_eq!(
-            rejection(two_blocks(), vec![looped.clone(), looped]),
-            CfgError::DuplicateLoopHeader {
-                header: BlockId::new(1)
-            },
-            "two loops with one header"
+            "handler before the blocks it protects"
         );
         let mut inverted = function(two_blocks(), vec![]);
         inverted.line_end = line(1);
@@ -699,11 +834,39 @@ mod model {
         zero["line_start"] = 0.into();
         serde_json::from_value::<Function>(zero).expect_err("line zero is rejected");
 
-        let mut flags = valid;
+        let mut flags = valid.clone();
         flags["blocks"][0]["flags"] = serde_json::json!(["Reachable", "Start"]);
         assert!(
             deserialization_error(flags).contains("must be unique and listed in the order"),
             "flag order"
+        );
+
+        let with_loops = |loops: serde_json::Value| {
+            let mut looped = valid.clone();
+            looped["loops"] = loops;
+            return deserialization_error(looped);
+        };
+        let loop_json = |header: u32, body: &[u32]| {
+            return serde_json::json!({"header": header, "body_blocks": body, "kind": "PreTest"});
+        };
+        assert!(
+            with_loops(serde_json::json!([loop_json(1, &[5])]))
+                .contains("references missing block BB5"),
+            "loop body block out of range"
+        );
+        assert!(
+            with_loops(serde_json::json!([loop_json(1, &[1])])).contains("in its own body"),
+            "header listed in its own body"
+        );
+        assert!(
+            with_loops(serde_json::json!([loop_json(1, &[]), loop_json(1, &[])]))
+                .contains("two loops share the header BB1"),
+            "two loops with one header"
+        );
+        assert!(
+            with_loops(serde_json::json!([loop_json(2, &[]), loop_json(1, &[])]))
+                .contains("out of header order"),
+            "loops out of header order"
         );
     }
 

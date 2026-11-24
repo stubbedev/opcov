@@ -77,14 +77,7 @@
         "successors": []
       }
     ],
-    "loops": [
-      {
-        "header": 2,
-        "body_blocks": [
-          1
-        ]
-      }
-    ]
+    "handlers": []
   },
   "expected": {
     "function": {

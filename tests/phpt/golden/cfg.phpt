@@ -53,10 +53,12 @@ do_while: match
 enum_method: match
 first_class_callable: match
 for: match
+for_try_catch: match
 foreach: match
 foreach_by_ref: match
 foreach_generator: match
 foreach_iterator: match
+foreach_try_catch_finally: match
 generator: match
 if_elseif_else: match
 if_without_else: match
@@ -64,6 +66,7 @@ match_chain_default: match
 match_chain_no_default: match
 match_jumptable: match
 nested_loops_break: match
+nested_loops_try_catch: match
 nullsafe: match
 property_hook: match
 readonly_class: match
@@ -74,4 +77,6 @@ switch_expr_no_default: match
 switch_fallthrough: match
 try_catch_finally: match
 while: match
+while_true_try_catch: match
+while_try_catch: match
 yield_from: match

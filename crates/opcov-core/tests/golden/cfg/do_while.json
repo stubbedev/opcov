@@ -63,12 +63,7 @@
         "successors": []
       }
     ],
-    "loops": [
-      {
-        "header": 1,
-        "body_blocks": []
-      }
-    ]
+    "handlers": []
   },
   "expected": {
     "function": {

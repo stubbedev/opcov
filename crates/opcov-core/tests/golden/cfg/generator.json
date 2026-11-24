@@ -120,19 +120,10 @@
     "flags": [
       "Generator"
     ],
+    "handlers": [],
     "key": "gen",
     "line_end": 9,
-    "line_start": 2,
-    "loops": [
-      {
-        "body_blocks": [
-          2,
-          3,
-          4
-        ],
-        "header": 1
-      }
-    ]
+    "line_start": 2
   },
   "expected": {
     "diagnostics": [],

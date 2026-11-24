@@ -277,10 +277,10 @@ pub struct BlockInput {
     pub successors: Vec<BlockId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LoopInput {
-    pub header: BlockId,
-    pub body_blocks: BTreeSet<BlockId>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct HandlerInput {
+    pub first_protected: BlockId,
+    pub handler: BlockId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -291,7 +291,7 @@ pub struct FunctionInput {
     pub line_end: Line,
     pub flags: FunctionFlags,
     pub blocks: Vec<BlockInput>,
-    pub loops: Vec<LoopInput>,
+    pub handlers: Vec<HandlerInput>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -364,6 +364,13 @@ pub enum CfgError {
     },
     LoopOutOfOrder {
         header: BlockId,
+    },
+    HandlerBlockMissing {
+        handler: BlockId,
+    },
+    HandlerBeforeProtected {
+        first_protected: BlockId,
+        handler: BlockId,
     },
 }
 
@@ -454,6 +461,18 @@ impl fmt::Display for CfgError {
             }
             Self::LoopOutOfOrder { header } => {
                 write!(f, "the loop headed by {header} is out of header order")
+            }
+            Self::HandlerBlockMissing { handler } => {
+                write!(f, "the exception handler {handler} is a missing block")
+            }
+            Self::HandlerBeforeProtected {
+                first_protected,
+                handler,
+            } => {
+                write!(
+                    f,
+                    "the exception handler {handler} precedes the first block it protects, {first_protected}"
+                )
             }
         };
     }
@@ -860,7 +879,7 @@ fn validate_edges(blocks: &[Block], edges: &[Edge]) -> Result<(), CfgError> {
     return Ok(());
 }
 
-pub(super) fn check_loop_blocks(
+fn check_loop_blocks(
     block_count: usize,
     header: BlockId,
     members: impl Iterator<Item = BlockId>,
@@ -960,7 +979,7 @@ fn analyze(input: FunctionInput) -> Result<Analysis, CfgError> {
             };
         })
         .collect();
-    let classified = classify(&nodes, &input.loops)?;
+    let classified = classify(&nodes, &input.handlers)?;
     let function = Function::try_from(FunctionRepr {
         key: input.key,
         file: input.file,

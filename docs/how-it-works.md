@@ -127,10 +127,13 @@ sequenceDiagram
   (error observer, `gc_collect_cycles`, exception hook) would have to be
   proven to precede all of these paths in every supported PHP version.
 - **CFG snapshot.** For each function, opcov runs the engine's own
-  `zend_build_cfg`, `zend_cfg_build_predecessors`,
-  `zend_cfg_compute_dominators_tree` and `zend_cfg_identify_loops` in a
-  temporary arena, copies the blocks, successors and loop headers into the
-  owned model of `opcov-core` (`opcov_core::cfg::Function`) and frees the arena.
+  `zend_build_cfg` in a temporary arena, copies the blocks, successors and
+  try/catch/finally boundaries into the owned model of `opcov-core`
+  (`opcov_core::cfg::Function`) and frees the arena. opcov-core finds the
+  loops itself, counting an exception in a `try` as an edge to its `catch`
+  and `finally`: the engine's `zend_cfg_identify_loops` skips catch blocks,
+  which have no CFG predecessors, so it misses retry loops that only
+  continue through a `catch` and loops inside a `catch`.
   The engine's CFG already understands every jump opcode, `try`/`catch`/
   `finally`, generators and unreachable blocks. A function whose snapshot
   fails leaves its file out with `snapshot-failed` in `get_status()`'s

@@ -271,7 +271,8 @@ every file selected, PHP 8.5.13), with `write_report()` and `opcov doctor
 | | outcomes | `Engine` | source outcomes | with a span |
 |---|---|---|---|---|
 | before | 381,982 | 33,508 | 348,474 | 344,827 (98.95 %) |
-| after | 381,982 | 33,508 | 348,474 | **348,195 (99.92 %)** |
+| after | 381,982 | 33,508 | 348,474 | 348,195 (99.92 %) |
+| loops around `try`/`catch` | 381,982 | 33,508 | 348,474 | **348,251 (99.94 %)** |
 
 `Engine` outcomes (the fallback edge of a frameless call) have no source
 construct by design and are left out. What changed:
@@ -290,16 +291,22 @@ construct by design and are left out. What changed:
   closure when they differed only in the unused operand bits of a call on
   `$this`, or when the closure was nested in such a copy, which left an extra
   `#1` key that the source does not declare.
+- Loops around `try`/`catch`: PHP's own loop analysis ignores blocks reached
+  only by an exception, so a loop continued only through its `catch` (a retry
+  loop whose `try` returns) and a loop inside a `catch` were no loops, and
+  their tests were `IfTrue`/`IfFalse`. opcov now finds loops itself, with an
+  edge from every block of a `try` to its `catch` and `finally`; this mapped
+  56 of the 60 unmatched outcomes on loop tests.
 
-The 279 outcomes still without a span:
+The 223 outcomes still without a span:
 
 | Outcomes | Cause |
 |---|---|
-| 114 | `IfTrue`/`IfFalse` on the test of a loop whose body PHP's CFG does not see as a structured loop (a `while (true)` whose body is a `try`/`catch`, some `do`-`while`): the CFG names the test a plain condition, the source a loop test. |
+| 70 | `IfTrue`/`IfFalse` on a line without a condition of its own: an `if` condition or a ternary written across several lines, whose conditional jump carries the line of an inner array element or argument (44); a ternary sharing a line with another condition, inside an arm or an argument list (16); a condition PHP folds at compile time (10). |
 | 50 | `&&`/`\|\|` with an operand PHP folds at compile time: `\DIRECTORY_SEPARATOR`, `\PHP_SAPI` and `PHP_VERSION_ID` are substituted, so `'\\' === \DIRECTORY_SEPARATOR` is a constant and its short-circuit disappears, leaving fewer opcodes than constructs on the line. |
 | 49 | `MatchArm`/`MatchNoArm` of a `match` that is the body of an outer arm on the same line: the outer arm's comparison and the inner `match` claim one line. Ambiguous by design. |
 | 46 | `??` on lines with several `??` where PHP emits a different number of `COALESCE` opcodes than the source shows. |
-| 16 | Ternaries that share a line with another condition (a ternary inside an arm or an argument list). |
+| 4 | `IfTrue`/`IfFalse` on the test of a `for` and a `while (true)` whose body always returns or throws: no path reaches a second iteration, so the CFG has no loop, while the source has one. |
 | 4 | A `finally` entered from two places on one line, and one loop test. |
 
 ## Loop findings
@@ -331,6 +338,9 @@ The report's loop `kind` is the compiled shape:
 - `foreach` counts iterations from the iterator's position. It never calls an
   `Iterator` method on opcov's behalf: iterating a user `Iterator` under opcov
   calls `rewind`, `valid`, `current` and `next` exactly as without it.
+- An exception thrown in a `try` counts as a path to its `catch` and
+  `finally`, so a loop continued only through its `catch` (a retry loop whose
+  `try` returns) and a loop inside a `catch` are loops like any other.
 - Loops built from `goto` have no shape and are not reported.
 
 From `tests/phpt/loops/fixtures/loops.php`:

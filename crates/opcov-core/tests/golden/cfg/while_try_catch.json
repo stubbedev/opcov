@@ -1,0 +1,325 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nfunction f($c) {\n    while ($c) {\n        try {\n            $c = g($c);\n        } catch (E $e) {\n            $c = h($e);\n        }\n    }\n}\n",
+  "input": {
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 2,
+            "opcode": "RECV"
+          },
+          {
+            "line": 3,
+            "opcode": "JMP"
+          }
+        ],
+        "successors": [
+          4
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 5,
+            "opcode": "INIT_FCALL_BY_NAME"
+          },
+          {
+            "line": 5,
+            "opcode": "SEND_VAR_EX"
+          },
+          {
+            "line": 5,
+            "opcode": "DO_FCALL_BY_NAME"
+          },
+          {
+            "line": 5,
+            "opcode": "ASSIGN"
+          },
+          {
+            "line": 5,
+            "opcode": "JMP"
+          }
+        ],
+        "successors": [
+          4
+        ]
+      },
+      {
+        "flags": [
+          "Catch",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 6,
+            "opcode": "CATCH"
+          }
+        ],
+        "successors": [
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 7,
+            "opcode": "INIT_FCALL_BY_NAME"
+          },
+          {
+            "line": 7,
+            "opcode": "SEND_VAR_EX"
+          },
+          {
+            "line": 7,
+            "opcode": "DO_FCALL_BY_NAME"
+          },
+          {
+            "line": 7,
+            "opcode": "ASSIGN"
+          }
+        ],
+        "successors": [
+          4
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 3,
+            "opcode": "JMPNZ"
+          }
+        ],
+        "successors": [
+          1,
+          5
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 10,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "file": "while_try_catch.php",
+    "flags": [],
+    "handlers": [
+      {
+        "first_protected": 1,
+        "handler": 2
+      }
+    ],
+    "key": "f",
+    "line_end": 10,
+    "line_start": 2
+  },
+  "expected": {
+    "diagnostics": [],
+    "function": {
+      "blocks": [
+        {
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "id": 0,
+          "line_end": 3,
+          "line_start": 2,
+          "op_end": 1,
+          "op_start": 0,
+          "ops": [
+            {
+              "line": 2,
+              "opcode": "RECV"
+            },
+            {
+              "line": 3,
+              "opcode": "JMP"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 1,
+          "line_end": 5,
+          "line_start": 5,
+          "op_end": 6,
+          "op_start": 2,
+          "ops": [
+            {
+              "line": 5,
+              "opcode": "INIT_FCALL_BY_NAME"
+            },
+            {
+              "line": 5,
+              "opcode": "SEND_VAR_EX"
+            },
+            {
+              "line": 5,
+              "opcode": "DO_FCALL_BY_NAME"
+            },
+            {
+              "line": 5,
+              "opcode": "ASSIGN"
+            },
+            {
+              "line": 5,
+              "opcode": "JMP"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Catch",
+            "Reachable"
+          ],
+          "id": 2,
+          "line_end": 6,
+          "line_start": 6,
+          "op_end": 7,
+          "op_start": 7,
+          "ops": [
+            {
+              "line": 6,
+              "opcode": "CATCH"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 3,
+          "line_end": 7,
+          "line_start": 7,
+          "op_end": 11,
+          "op_start": 8,
+          "ops": [
+            {
+              "line": 7,
+              "opcode": "INIT_FCALL_BY_NAME"
+            },
+            {
+              "line": 7,
+              "opcode": "SEND_VAR_EX"
+            },
+            {
+              "line": 7,
+              "opcode": "DO_FCALL_BY_NAME"
+            },
+            {
+              "line": 7,
+              "opcode": "ASSIGN"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 4,
+          "line_end": 3,
+          "line_start": 3,
+          "op_end": 12,
+          "op_start": 12,
+          "ops": [
+            {
+              "line": 3,
+              "opcode": "JMPNZ"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 5,
+          "line_end": 10,
+          "line_start": 10,
+          "op_end": 13,
+          "op_start": 13,
+          "ops": [
+            {
+              "line": 10,
+              "opcode": "RETURN"
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "kind": "Flow",
+          "to": 4
+        },
+        {
+          "from": 1,
+          "kind": "Flow",
+          "to": 4
+        },
+        {
+          "from": 2,
+          "kind": "Catch",
+          "to": 3
+        },
+        {
+          "from": 3,
+          "kind": "Flow",
+          "to": 4
+        },
+        {
+          "from": 4,
+          "kind": "LoopBack",
+          "to": 1
+        },
+        {
+          "from": 4,
+          "kind": "LoopExit",
+          "to": 5
+        }
+      ],
+      "file": "while_try_catch.php",
+      "flags": [],
+      "key": "f",
+      "line_end": 10,
+      "line_start": 2,
+      "loops": [
+        {
+          "body_blocks": [
+            1,
+            2,
+            3
+          ],
+          "header": 4,
+          "kind": "PreTest"
+        }
+      ]
+    }
+  }
+}

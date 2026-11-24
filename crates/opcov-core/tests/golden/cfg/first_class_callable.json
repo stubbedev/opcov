@@ -112,10 +112,10 @@
     ],
     "file": "first_class_callable.php",
     "flags": [],
+    "handlers": [],
     "key": "f",
     "line_end": 6,
-    "line_start": 2,
-    "loops": []
+    "line_start": 2
   },
   "expected": {
     "diagnostics": [],

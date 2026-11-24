@@ -1,16 +1,15 @@
 use core::{fmt, slice};
-use std::collections::{BTreeMap, BTreeSet};
 
 use opcov_core::cfg::{
     Analysis, BlockFlags, BlockId, BlockInput, ClassRef, FilePath, FunctionFlags, FunctionInput,
-    FunctionKey, KeyError, Line, LineSpan, LoopInput, Op, Opcode, PhpVersion, QualifiedName,
+    FunctionKey, HandlerInput, KeyError, Line, LineSpan, Op, Opcode, PhpVersion, QualifiedName,
     SnapshotError,
 };
 use opcov_sys::{
     OPCOV_ENGINE_VERSION_ID, ZEND_ACC_ANON_CLASS, ZEND_ACC_CLOSURE, ZEND_BB_CATCH, ZEND_BB_FINALLY,
-    ZEND_BB_FINALLY_END, ZEND_BB_LOOP_HEADER, ZEND_BB_REACHABLE, ZEND_BB_RECV_ENTRY, ZEND_BB_START,
-    ZEND_MODULE_API_NO, opcov_arena_create_caught, opcov_arena_destroy, opcov_build_cfg,
-    zend_arena, zend_basic_block, zend_cfg, zend_class_entry, zend_op, zend_op_array, zend_string,
+    ZEND_BB_FINALLY_END, ZEND_BB_REACHABLE, ZEND_BB_RECV_ENTRY, ZEND_BB_START, ZEND_MODULE_API_NO,
+    opcov_arena_create_caught, opcov_arena_destroy, opcov_build_cfg, zend_arena, zend_basic_block,
+    zend_cfg, zend_class_entry, zend_op, zend_op_array, zend_string, zend_try_catch_element,
 };
 
 use crate::{
@@ -54,6 +53,9 @@ pub(crate) enum SnapshotFailure {
     Unranked {
         what: &'static str,
     },
+    HandlerBoundary {
+        op: usize,
+    },
     Cfg(SnapshotError),
     Bailout,
     #[cfg(feature = "engine-selftest")]
@@ -77,6 +79,10 @@ impl fmt::Display for SnapshotFailure {
                 f,
                 "the {what} was not ranked among the declarations sharing its line span"
             ),
+            Self::HandlerBoundary { op } => write!(
+                f,
+                "the try/catch boundary at opcode {op} does not start a basic block"
+            ),
             Self::Cfg(error) => write!(f, "{error}"),
             Self::Bailout => write!(f, "a fatal error interrupted building the CFG"),
             #[cfg(feature = "engine-selftest")]
@@ -99,7 +105,6 @@ struct RawBlock {
     start: usize,
     len: usize,
     successors: Vec<usize>,
-    loop_header: Option<usize>,
 }
 
 fn count(value: impl TryInto<usize>, what: &'static str) -> Result<usize, SnapshotFailure> {
@@ -260,7 +265,6 @@ unsafe fn raw_block(block: &zend_basic_block) -> Result<RawBlock, SnapshotFailur
             .iter()
             .map(|&successor| return count(successor, "successor"))
             .collect::<Result<_, _>>()?,
-        loop_header: usize::try_from(block.loop_header).ok(),
     });
 }
 
@@ -297,39 +301,36 @@ unsafe fn raw_cfg(op_array: *const zend_op_array) -> Result<Vec<RawBlock>, Snaps
     return blocks;
 }
 
-fn loops(raw: &[RawBlock]) -> Vec<LoopInput> {
-    let mut bodies: BTreeMap<usize, BTreeSet<BlockId>> = raw
-        .iter()
-        .enumerate()
-        .filter(|(_, block)| return block.flags & ZEND_BB_LOOP_HEADER != 0)
-        .map(|(index, _)| return (index, BTreeSet::new()))
-        .collect();
-    for (index, block) in raw.iter().enumerate() {
-        let Ok(member) = u32::try_from(index).map(BlockId::new) else {
-            continue;
+fn block_starting_at(raw: &[RawBlock], op: u32) -> Result<BlockId, SnapshotFailure> {
+    let op = count(op, "try/catch opcode")?;
+    let index = raw
+        .binary_search_by_key(&op, |block| return block.start)
+        .map_err(|_between| return SnapshotFailure::HandlerBoundary { op })?;
+    let id = u32::try_from(index).map_err(|_overflow| {
+        return SnapshotFailure::Count {
+            what: "block index",
         };
-        let mut header = block.loop_header;
-        for _ in 0..raw.len() {
-            let Some(current) = header else {
-                break;
-            };
-            if let Some(body) = bodies.get_mut(&current) {
-                body.insert(member);
+    })?;
+    return Ok(BlockId::new(id));
+}
+
+fn handlers(
+    elements: &[zend_try_catch_element],
+    raw: &[RawBlock],
+) -> Result<Vec<HandlerInput>, SnapshotFailure> {
+    let mut handlers = Vec::with_capacity(elements.len().saturating_mul(2));
+    for element in elements {
+        let first_protected = block_starting_at(raw, element.try_op)?;
+        for handler_op in [element.catch_op, element.finally_op] {
+            if handler_op != 0 {
+                handlers.push(HandlerInput {
+                    first_protected,
+                    handler: block_starting_at(raw, handler_op)?,
+                });
             }
-            header = raw.get(current).and_then(|outer| return outer.loop_header);
         }
     }
-    return bodies
-        .into_iter()
-        .filter_map(|(header, body_blocks)| {
-            return u32::try_from(header).ok().map(|id| {
-                return LoopInput {
-                    header: BlockId::new(id),
-                    body_blocks,
-                };
-            });
-        })
-        .collect();
+    return Ok(handlers);
 }
 
 fn block_input(raw: &RawBlock, instrs: &[Instr]) -> Result<BlockInput, SnapshotFailure> {
@@ -403,6 +404,14 @@ pub(crate) unsafe fn take(
     let instrs = instrs(opcodes)?;
     // SAFETY: forwarded from the caller.
     let raw = unsafe { raw_cfg(op_array)? };
+    let try_count = count(array.last_try_catch, "try/catch count")?;
+    let elements = if try_count == 0 {
+        &[][..]
+    } else {
+        // SAFETY: a compiled op array owns `last_try_catch` elements at `try_catch_array`;
+        // zend_build_cfg, which ran above, only moves their boundaries onto block starts.
+        unsafe { slice::from_raw_parts(array.try_catch_array, try_count) }
+    };
     let input = FunctionInput {
         key: named.key,
         file: named.file,
@@ -413,7 +422,7 @@ pub(crate) unsafe fn take(
             .iter()
             .map(|block| return block_input(block, &instrs))
             .collect::<Result<_, _>>()?,
-        loops: loops(&raw),
+        handlers: handlers(elements, &raw)?,
     };
     #[cfg(feature = "engine-selftest")]
     let kept = input.clone();

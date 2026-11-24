@@ -1,5 +1,6 @@
 mod classify;
 mod key;
+mod loops;
 mod model;
 mod opcode;
 mod plan;
@@ -11,7 +12,7 @@ pub use key::{
 };
 pub use model::{
     Analysis, Block, BlockFlag, BlockFlags, BlockId, BlockInput, CfgError, Edge, Flag, FlagSet,
-    Function, FunctionFlag, FunctionFlags, FunctionInput, Line, Loop, LoopInput, LoopShape, Op,
+    Function, FunctionFlag, FunctionFlags, FunctionInput, HandlerInput, Line, Loop, LoopShape, Op,
     OpIndex, SnapshotError,
 };
 pub use opcode::{Opcode, PhpVersion};

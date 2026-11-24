@@ -101,17 +101,10 @@
     ],
     "file": "foreach_iterator.php",
     "flags": [],
+    "handlers": [],
     "key": "sum",
     "line_end": 8,
-    "line_start": 2,
-    "loops": [
-      {
-        "body_blocks": [
-          2
-        ],
-        "header": 1
-      }
-    ]
+    "line_start": 2
   },
   "expected": {
     "diagnostics": [],

@@ -70,10 +70,10 @@
     ],
     "file": "arrow_function.php",
     "flags": [],
+    "handlers": [],
     "key": "{closure}@arrow_function.php:2-2",
     "line_end": 2,
-    "line_start": 2,
-    "loops": []
+    "line_start": 2
   },
   "expected": {
     "diagnostics": [],

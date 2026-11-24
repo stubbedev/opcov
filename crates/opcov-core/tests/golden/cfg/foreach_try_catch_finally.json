@@ -1,0 +1,522 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nfunction f($items) {\n    foreach ($items as $item) {\n        try {\n            g($item);\n        } catch (E $e) {\n            h($e);\n        } finally {\n            k($item);\n        }\n    }\n}\n",
+  "input": {
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 2,
+            "opcode": "RECV"
+          },
+          {
+            "line": 3,
+            "opcode": "FE_RESET_R"
+          }
+        ],
+        "successors": [
+          10,
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 3,
+            "opcode": "FE_FETCH_R"
+          }
+        ],
+        "successors": [
+          10,
+          2
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 5,
+            "opcode": "INIT_FCALL_BY_NAME"
+          },
+          {
+            "line": 5,
+            "opcode": "SEND_VAR_EX"
+          },
+          {
+            "line": 5,
+            "opcode": "DO_FCALL_BY_NAME"
+          },
+          {
+            "line": 5,
+            "opcode": "JMP"
+          }
+        ],
+        "successors": [
+          5
+        ]
+      },
+      {
+        "flags": [
+          "Catch",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 6,
+            "opcode": "CATCH"
+          }
+        ],
+        "successors": [
+          4
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 7,
+            "opcode": "INIT_FCALL_BY_NAME"
+          },
+          {
+            "line": 7,
+            "opcode": "SEND_VAR_EX"
+          },
+          {
+            "line": 7,
+            "opcode": "DO_FCALL_BY_NAME"
+          }
+        ],
+        "successors": [
+          5
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 8,
+            "opcode": "FAST_CALL"
+          }
+        ],
+        "successors": [
+          7,
+          6
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 8,
+            "opcode": "JMP"
+          }
+        ],
+        "successors": [
+          9
+        ]
+      },
+      {
+        "flags": [
+          "Finally",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 9,
+            "opcode": "INIT_FCALL_BY_NAME"
+          },
+          {
+            "line": 9,
+            "opcode": "SEND_VAR_EX"
+          },
+          {
+            "line": 9,
+            "opcode": "DO_FCALL_BY_NAME"
+          }
+        ],
+        "successors": [
+          8
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 9,
+            "opcode": "FAST_RET"
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 3,
+            "opcode": "JMP"
+          }
+        ],
+        "successors": [
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 3,
+            "opcode": "FE_FREE"
+          },
+          {
+            "line": 12,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "file": "foreach_try_catch_finally.php",
+    "flags": [],
+    "handlers": [
+      {
+        "first_protected": 2,
+        "handler": 3
+      },
+      {
+        "first_protected": 2,
+        "handler": 7
+      }
+    ],
+    "key": "f",
+    "line_end": 12,
+    "line_start": 2
+  },
+  "expected": {
+    "diagnostics": [],
+    "function": {
+      "blocks": [
+        {
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "id": 0,
+          "line_end": 3,
+          "line_start": 2,
+          "op_end": 1,
+          "op_start": 0,
+          "ops": [
+            {
+              "line": 2,
+              "opcode": "RECV"
+            },
+            {
+              "line": 3,
+              "opcode": "FE_RESET_R"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 1,
+          "line_end": 3,
+          "line_start": 3,
+          "op_end": 2,
+          "op_start": 2,
+          "ops": [
+            {
+              "line": 3,
+              "opcode": "FE_FETCH_R"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 2,
+          "line_end": 5,
+          "line_start": 5,
+          "op_end": 6,
+          "op_start": 3,
+          "ops": [
+            {
+              "line": 5,
+              "opcode": "INIT_FCALL_BY_NAME"
+            },
+            {
+              "line": 5,
+              "opcode": "SEND_VAR_EX"
+            },
+            {
+              "line": 5,
+              "opcode": "DO_FCALL_BY_NAME"
+            },
+            {
+              "line": 5,
+              "opcode": "JMP"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Catch",
+            "Reachable"
+          ],
+          "id": 3,
+          "line_end": 6,
+          "line_start": 6,
+          "op_end": 7,
+          "op_start": 7,
+          "ops": [
+            {
+              "line": 6,
+              "opcode": "CATCH"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 4,
+          "line_end": 7,
+          "line_start": 7,
+          "op_end": 10,
+          "op_start": 8,
+          "ops": [
+            {
+              "line": 7,
+              "opcode": "INIT_FCALL_BY_NAME"
+            },
+            {
+              "line": 7,
+              "opcode": "SEND_VAR_EX"
+            },
+            {
+              "line": 7,
+              "opcode": "DO_FCALL_BY_NAME"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 5,
+          "line_end": 8,
+          "line_start": 8,
+          "op_end": 11,
+          "op_start": 11,
+          "ops": [
+            {
+              "line": 8,
+              "opcode": "FAST_CALL"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 6,
+          "line_end": 8,
+          "line_start": 8,
+          "op_end": 12,
+          "op_start": 12,
+          "ops": [
+            {
+              "line": 8,
+              "opcode": "JMP"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Finally",
+            "Reachable"
+          ],
+          "id": 7,
+          "line_end": 9,
+          "line_start": 9,
+          "op_end": 15,
+          "op_start": 13,
+          "ops": [
+            {
+              "line": 9,
+              "opcode": "INIT_FCALL_BY_NAME"
+            },
+            {
+              "line": 9,
+              "opcode": "SEND_VAR_EX"
+            },
+            {
+              "line": 9,
+              "opcode": "DO_FCALL_BY_NAME"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 8,
+          "line_end": 9,
+          "line_start": 9,
+          "op_end": 16,
+          "op_start": 16,
+          "ops": [
+            {
+              "line": 9,
+              "opcode": "FAST_RET"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 9,
+          "line_end": 3,
+          "line_start": 3,
+          "op_end": 17,
+          "op_start": 17,
+          "ops": [
+            {
+              "line": 3,
+              "opcode": "JMP"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 10,
+          "line_end": 12,
+          "line_start": 3,
+          "op_end": 19,
+          "op_start": 18,
+          "ops": [
+            {
+              "line": 3,
+              "opcode": "FE_FREE"
+            },
+            {
+              "line": 12,
+              "opcode": "RETURN"
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "kind": "LoopEnter",
+          "to": 1
+        },
+        {
+          "from": 0,
+          "kind": "LoopSkip",
+          "to": 10
+        },
+        {
+          "from": 1,
+          "kind": "LoopBack",
+          "to": 2
+        },
+        {
+          "from": 1,
+          "kind": "LoopExit",
+          "to": 10
+        },
+        {
+          "from": 2,
+          "kind": "Flow",
+          "to": 5
+        },
+        {
+          "from": 3,
+          "kind": "Catch",
+          "to": 4
+        },
+        {
+          "from": 4,
+          "kind": "Flow",
+          "to": 5
+        },
+        {
+          "from": 5,
+          "kind": "Flow",
+          "to": 6
+        },
+        {
+          "from": 5,
+          "kind": "Finally",
+          "to": 7
+        },
+        {
+          "from": 6,
+          "kind": "Flow",
+          "to": 9
+        },
+        {
+          "from": 7,
+          "kind": "Flow",
+          "to": 8
+        },
+        {
+          "from": 9,
+          "kind": "Flow",
+          "to": 1
+        }
+      ],
+      "file": "foreach_try_catch_finally.php",
+      "flags": [],
+      "key": "f",
+      "line_end": 12,
+      "line_start": 2,
+      "loops": [
+        {
+          "body_blocks": [
+            2,
+            3,
+            4,
+            5,
+            6,
+            9
+          ],
+          "header": 1,
+          "kind": "Foreach"
+        }
+      ]
+    }
+  }
+}

@@ -77,10 +77,10 @@
     ],
     "file": "property_hook.php",
     "flags": [],
+    "handlers": [],
     "key": "Temperature::$celsius::set",
     "line_end": 9,
-    "line_start": 4,
-    "loops": []
+    "line_start": 4
   },
   "expected": {
     "diagnostics": [],

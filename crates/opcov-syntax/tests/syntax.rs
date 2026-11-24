@@ -757,13 +757,18 @@ mod syntax {
     fn expected_loops(name: &str) -> Vec<LoopKind> {
         return match name {
             "do_while" => vec![LoopKind::DoWhile],
-            "for" => vec![LoopKind::For],
+            "for" | "for_try_catch" => vec![LoopKind::For],
             "nested_loops_break" | "break_continue_n" => {
                 vec![LoopKind::Foreach, LoopKind::While]
             }
-            "foreach" | "foreach_by_ref" | "generator" | "foreach_iterator"
-            | "foreach_generator" => vec![LoopKind::Foreach],
-            "while" => vec![LoopKind::While],
+            "nested_loops_try_catch" => vec![LoopKind::Foreach, LoopKind::For],
+            "foreach"
+            | "foreach_by_ref"
+            | "generator"
+            | "foreach_iterator"
+            | "foreach_generator"
+            | "foreach_try_catch_finally" => vec![LoopKind::Foreach],
+            "while" | "while_try_catch" | "while_true_try_catch" => vec![LoopKind::While],
             _ => Vec::new(),
         };
     }
