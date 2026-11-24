@@ -334,7 +334,7 @@ unsafe fn named_trues(target: *mut zval, prefix: u8, numbers: &[u32]) -> Caught<
     return caught(unsafe {
         opcov_add_named_trues(
             target,
-            prefix.cast_signed(),
+            prefix,
             numbers.as_ptr(),
             numbers.len(),
         )
