@@ -1,0 +1,187 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13"
+  ],
+  "source": "<?php\nclass Temperature {\n    public float $celsius {\n        set(float $value) {\n            if ($value < -273.15) {\n                throw new ValueError('below absolute zero');\n            }\n            $this->celsius = $value;\n        }\n    }\n}\n",
+  "input": {
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 4,
+            "opcode": "RECV"
+          },
+          {
+            "line": 5,
+            "opcode": "IS_SMALLER"
+          },
+          {
+            "line": 5,
+            "opcode": "JMPZ"
+          }
+        ],
+        "successors": [
+          2,
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 6,
+            "opcode": "NEW"
+          },
+          {
+            "line": 6,
+            "opcode": "SEND_VAL_EX"
+          },
+          {
+            "line": 6,
+            "opcode": "DO_FCALL"
+          },
+          {
+            "line": 6,
+            "opcode": "THROW"
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 8,
+            "opcode": "ASSIGN_OBJ"
+          },
+          {
+            "line": 8,
+            "opcode": "OP_DATA"
+          },
+          {
+            "line": 9,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "file": "property_hook.php",
+    "flags": [],
+    "key": "Temperature::$celsius::set",
+    "line_end": 9,
+    "line_start": 4,
+    "loops": []
+  },
+  "expected": {
+    "diagnostics": [],
+    "function": {
+      "blocks": [
+        {
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "id": 0,
+          "line_end": 5,
+          "line_start": 4,
+          "op_end": 2,
+          "op_start": 0,
+          "ops": [
+            {
+              "line": 4,
+              "opcode": "RECV"
+            },
+            {
+              "line": 5,
+              "opcode": "IS_SMALLER"
+            },
+            {
+              "line": 5,
+              "opcode": "JMPZ"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 1,
+          "line_end": 6,
+          "line_start": 6,
+          "op_end": 6,
+          "op_start": 3,
+          "ops": [
+            {
+              "line": 6,
+              "opcode": "NEW"
+            },
+            {
+              "line": 6,
+              "opcode": "SEND_VAL_EX"
+            },
+            {
+              "line": 6,
+              "opcode": "DO_FCALL"
+            },
+            {
+              "line": 6,
+              "opcode": "THROW"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 2,
+          "line_end": 9,
+          "line_start": 8,
+          "op_end": 9,
+          "op_start": 7,
+          "ops": [
+            {
+              "line": 8,
+              "opcode": "ASSIGN_OBJ"
+            },
+            {
+              "line": 8,
+              "opcode": "OP_DATA"
+            },
+            {
+              "line": 9,
+              "opcode": "RETURN"
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "kind": "IfTrue",
+          "to": 1
+        },
+        {
+          "from": 0,
+          "kind": "IfFalse",
+          "to": 2
+        }
+      ],
+      "file": "property_hook.php",
+      "flags": [],
+      "key": "Temperature::$celsius::set",
+      "line_end": 9,
+      "line_start": 4,
+      "loops": []
+    }
+  }
+}

@@ -1,0 +1,259 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nfunction numbers() {\n    yield 1;\n    yield 2;\n}\nfunction consume() {\n    $total = 0;\n    foreach (numbers() as $number) {\n        $total += $number;\n    }\n    return $total;\n}\n",
+  "input": {
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 7,
+            "opcode": "ASSIGN"
+          },
+          {
+            "line": 8,
+            "opcode": "INIT_FCALL"
+          },
+          {
+            "line": 8,
+            "opcode": "DO_UCALL"
+          },
+          {
+            "line": 8,
+            "opcode": "FE_RESET_R"
+          }
+        ],
+        "successors": [
+          3,
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 8,
+            "opcode": "FE_FETCH_R"
+          }
+        ],
+        "successors": [
+          3,
+          2
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 9,
+            "opcode": "ASSIGN_OP"
+          },
+          {
+            "line": 8,
+            "opcode": "JMP"
+          }
+        ],
+        "successors": [
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 8,
+            "opcode": "FE_FREE"
+          },
+          {
+            "line": 11,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [],
+        "ops": [
+          {
+            "line": 12,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "file": "foreach_generator.php",
+    "flags": [],
+    "key": "consume",
+    "line_end": 12,
+    "line_start": 6,
+    "loops": [
+      {
+        "body_blocks": [
+          2
+        ],
+        "header": 1
+      }
+    ]
+  },
+  "expected": {
+    "diagnostics": [],
+    "function": {
+      "blocks": [
+        {
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "id": 0,
+          "line_end": 8,
+          "line_start": 7,
+          "op_end": 3,
+          "op_start": 0,
+          "ops": [
+            {
+              "line": 7,
+              "opcode": "ASSIGN"
+            },
+            {
+              "line": 8,
+              "opcode": "INIT_FCALL"
+            },
+            {
+              "line": 8,
+              "opcode": "DO_UCALL"
+            },
+            {
+              "line": 8,
+              "opcode": "FE_RESET_R"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 1,
+          "line_end": 8,
+          "line_start": 8,
+          "op_end": 4,
+          "op_start": 4,
+          "ops": [
+            {
+              "line": 8,
+              "opcode": "FE_FETCH_R"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 2,
+          "line_end": 9,
+          "line_start": 8,
+          "op_end": 6,
+          "op_start": 5,
+          "ops": [
+            {
+              "line": 9,
+              "opcode": "ASSIGN_OP"
+            },
+            {
+              "line": 8,
+              "opcode": "JMP"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 3,
+          "line_end": 11,
+          "line_start": 8,
+          "op_end": 8,
+          "op_start": 7,
+          "ops": [
+            {
+              "line": 8,
+              "opcode": "FE_FREE"
+            },
+            {
+              "line": 11,
+              "opcode": "RETURN"
+            }
+          ]
+        },
+        {
+          "flags": [],
+          "id": 4,
+          "line_end": 12,
+          "line_start": 12,
+          "op_end": 9,
+          "op_start": 9,
+          "ops": [
+            {
+              "line": 12,
+              "opcode": "RETURN"
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "kind": "LoopEnter",
+          "to": 1
+        },
+        {
+          "from": 0,
+          "kind": "LoopSkip",
+          "to": 3
+        },
+        {
+          "from": 1,
+          "kind": "LoopBack",
+          "to": 2
+        },
+        {
+          "from": 1,
+          "kind": "LoopExit",
+          "to": 3
+        },
+        {
+          "from": 2,
+          "kind": "Flow",
+          "to": 1
+        }
+      ],
+      "file": "foreach_generator.php",
+      "flags": [],
+      "key": "consume",
+      "line_end": 12,
+      "line_start": 6,
+      "loops": [
+        {
+          "body_blocks": [
+            2
+          ],
+          "header": 1,
+          "kind": "Foreach"
+        }
+      ]
+    }
+  }
+}

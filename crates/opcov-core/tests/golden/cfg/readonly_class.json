@@ -1,0 +1,302 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nfinal readonly class Point {\n    public function __construct(public int $x, public int $y) {}\n\n    public function withX(int $x): static {\n        return $x === $this->x ? $this : new static($x, $this->y);\n    }\n}\n",
+  "input": {
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 5,
+            "opcode": "RECV"
+          },
+          {
+            "line": 6,
+            "opcode": "FETCH_OBJ_R"
+          },
+          {
+            "line": 6,
+            "opcode": "IS_IDENTICAL"
+          },
+          {
+            "line": 6,
+            "opcode": "JMPZ"
+          }
+        ],
+        "successors": [
+          2,
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 6,
+            "opcode": "FETCH_THIS"
+          },
+          {
+            "line": 6,
+            "opcode": "QM_ASSIGN"
+          },
+          {
+            "line": 6,
+            "opcode": "JMP"
+          }
+        ],
+        "successors": [
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 6,
+            "opcode": "NEW"
+          },
+          {
+            "line": 6,
+            "opcode": "SEND_VAR_EX"
+          },
+          {
+            "line": 6,
+            "opcode": "CHECK_FUNC_ARG"
+          },
+          {
+            "line": 6,
+            "opcode": "FETCH_OBJ_FUNC_ARG"
+          },
+          {
+            "line": 6,
+            "opcode": "SEND_FUNC_ARG"
+          },
+          {
+            "line": 6,
+            "opcode": "DO_FCALL"
+          },
+          {
+            "line": 6,
+            "opcode": "QM_ASSIGN"
+          }
+        ],
+        "successors": [
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 6,
+            "opcode": "VERIFY_RETURN_TYPE"
+          },
+          {
+            "line": 6,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [],
+        "ops": [
+          {
+            "line": 7,
+            "opcode": "VERIFY_RETURN_TYPE"
+          },
+          {
+            "line": 7,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "file": "readonly_class.php",
+    "flags": [],
+    "key": "Point::withX",
+    "line_end": 7,
+    "line_start": 5,
+    "loops": []
+  },
+  "expected": {
+    "diagnostics": [],
+    "function": {
+      "blocks": [
+        {
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "id": 0,
+          "line_end": 6,
+          "line_start": 5,
+          "op_end": 3,
+          "op_start": 0,
+          "ops": [
+            {
+              "line": 5,
+              "opcode": "RECV"
+            },
+            {
+              "line": 6,
+              "opcode": "FETCH_OBJ_R"
+            },
+            {
+              "line": 6,
+              "opcode": "IS_IDENTICAL"
+            },
+            {
+              "line": 6,
+              "opcode": "JMPZ"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 1,
+          "line_end": 6,
+          "line_start": 6,
+          "op_end": 6,
+          "op_start": 4,
+          "ops": [
+            {
+              "line": 6,
+              "opcode": "FETCH_THIS"
+            },
+            {
+              "line": 6,
+              "opcode": "QM_ASSIGN"
+            },
+            {
+              "line": 6,
+              "opcode": "JMP"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 2,
+          "line_end": 6,
+          "line_start": 6,
+          "op_end": 13,
+          "op_start": 7,
+          "ops": [
+            {
+              "line": 6,
+              "opcode": "NEW"
+            },
+            {
+              "line": 6,
+              "opcode": "SEND_VAR_EX"
+            },
+            {
+              "line": 6,
+              "opcode": "CHECK_FUNC_ARG"
+            },
+            {
+              "line": 6,
+              "opcode": "FETCH_OBJ_FUNC_ARG"
+            },
+            {
+              "line": 6,
+              "opcode": "SEND_FUNC_ARG"
+            },
+            {
+              "line": 6,
+              "opcode": "DO_FCALL"
+            },
+            {
+              "line": 6,
+              "opcode": "QM_ASSIGN"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 3,
+          "line_end": 6,
+          "line_start": 6,
+          "op_end": 15,
+          "op_start": 14,
+          "ops": [
+            {
+              "line": 6,
+              "opcode": "VERIFY_RETURN_TYPE"
+            },
+            {
+              "line": 6,
+              "opcode": "RETURN"
+            }
+          ]
+        },
+        {
+          "flags": [],
+          "id": 4,
+          "line_end": 7,
+          "line_start": 7,
+          "op_end": 17,
+          "op_start": 16,
+          "ops": [
+            {
+              "line": 7,
+              "opcode": "VERIFY_RETURN_TYPE"
+            },
+            {
+              "line": 7,
+              "opcode": "RETURN"
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "kind": "IfTrue",
+          "to": 1
+        },
+        {
+          "from": 0,
+          "kind": "IfFalse",
+          "to": 2
+        },
+        {
+          "from": 1,
+          "kind": "Flow",
+          "to": 3
+        },
+        {
+          "from": 2,
+          "kind": "Flow",
+          "to": 3
+        }
+      ],
+      "file": "readonly_class.php",
+      "flags": [],
+      "key": "Point::withX",
+      "line_end": 7,
+      "line_start": 5,
+      "loops": []
+    }
+  }
+}

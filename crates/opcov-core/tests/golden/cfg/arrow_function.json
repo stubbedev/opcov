@@ -1,0 +1,179 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\n$f = fn ($a, $b) => $a ?? $b;\n",
+  "input": {
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 2,
+            "opcode": "RECV"
+          },
+          {
+            "line": 2,
+            "opcode": "RECV"
+          },
+          {
+            "line": 2,
+            "opcode": "COALESCE"
+          }
+        ],
+        "successors": [
+          2,
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 2,
+            "opcode": "QM_ASSIGN"
+          }
+        ],
+        "successors": [
+          2
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 2,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [],
+        "ops": [
+          {
+            "line": 2,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "file": "arrow_function.php",
+    "flags": [],
+    "key": "{closure}@arrow_function.php:2-2",
+    "line_end": 2,
+    "line_start": 2,
+    "loops": []
+  },
+  "expected": {
+    "diagnostics": [],
+    "function": {
+      "blocks": [
+        {
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "id": 0,
+          "line_end": 2,
+          "line_start": 2,
+          "op_end": 2,
+          "op_start": 0,
+          "ops": [
+            {
+              "line": 2,
+              "opcode": "RECV"
+            },
+            {
+              "line": 2,
+              "opcode": "RECV"
+            },
+            {
+              "line": 2,
+              "opcode": "COALESCE"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 1,
+          "line_end": 2,
+          "line_start": 2,
+          "op_end": 3,
+          "op_start": 3,
+          "ops": [
+            {
+              "line": 2,
+              "opcode": "QM_ASSIGN"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 2,
+          "line_end": 2,
+          "line_start": 2,
+          "op_end": 4,
+          "op_start": 4,
+          "ops": [
+            {
+              "line": 2,
+              "opcode": "RETURN"
+            }
+          ]
+        },
+        {
+          "flags": [],
+          "id": 3,
+          "line_end": 2,
+          "line_start": 2,
+          "op_end": 5,
+          "op_start": 5,
+          "ops": [
+            {
+              "line": 2,
+              "opcode": "RETURN"
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "kind": "CoalesceFallback",
+          "to": 1
+        },
+        {
+          "from": 0,
+          "kind": "CoalesceValue",
+          "to": 2
+        },
+        {
+          "from": 1,
+          "kind": "Flow",
+          "to": 2
+        }
+      ],
+      "file": "arrow_function.php",
+      "flags": [],
+      "key": "{closure}@arrow_function.php:2-2",
+      "line_end": 2,
+      "line_start": 2,
+      "loops": []
+    }
+  }
+}

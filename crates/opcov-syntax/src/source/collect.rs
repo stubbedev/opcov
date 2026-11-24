@@ -2,13 +2,14 @@ use std::mem;
 
 use mago_span::HasSpan;
 use mago_syntax::cst::{
-    AnonymousClass, ArrowFunction, Assignment, AssignmentOperator, AttributeList, Binary,
-    BinaryOperator, Break, Class, ClassLikeConstant, Closure, Conditional, Constant, Continue,
-    DoWhile, Enum, EnumCase, Expression, For, Foreach, ForeachTarget, Function,
-    FunctionLikeParameter, FunctionLikeParameterDefaultValue, Goto, Hint, HookedProperty,
-    Identifier, If, IfBody, Interface, Literal, Match, MatchArm, Method, Namespace,
-    NullSafeMethodCall, NullSafePropertyAccess, Program, PropertyConcreteItem, PropertyHook,
-    PropertyItem, Return, Sequence, Statement, Switch, SwitchBody, SwitchCase, Trait, Try, While,
+    AnonymousClass, Argument, ArgumentList, ArrowFunction, Assignment, AssignmentOperator,
+    AttributeList, Binary, BinaryOperator, Break, Call, Class, ClassLikeConstant, Closure,
+    Conditional, Constant, Continue, DoWhile, Enum, EnumCase, Expression, For, Foreach,
+    ForeachTarget, Function, FunctionLikeParameter, FunctionLikeParameterDefaultValue, Goto, Hint,
+    HookedProperty, Identifier, If, IfBody, Interface, IssetConstruct, Literal, Match, MatchArm,
+    Method, Namespace, NullSafeMethodCall, NullSafePropertyAccess, Program, PropertyConcreteItem,
+    PropertyHook, PropertyItem, Return, Sequence, Statement, Switch, SwitchBody, SwitchCase, Trait,
+    Try, While,
 };
 use mago_syntax::walker::{
     MutWalker, walk_attribute_list_mut, walk_class_like_constant_mut, walk_constant_mut,
@@ -28,7 +29,7 @@ pub(super) enum RawClass {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum RawKey {
+pub(super) enum RawDeclaration {
     Main,
     Function {
         name: Vec<u8>,
@@ -44,13 +45,27 @@ pub(super) enum RawKey {
         hook: Vec<u8>,
         at: u32,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RawClosure {
+    Braced { start: u32, end: u32 },
+    Arrow { start: u32, body_end: u32 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Placement {
+    pub(super) order: u32,
+    pub(super) root: RawDeclaration,
+    pub(super) deferred: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum RawKey {
+    Declaration(RawDeclaration),
     Closure {
-        start: u32,
-        end: u32,
-    },
-    Arrow {
-        start: u32,
-        body_end: u32,
+        closure: RawClosure,
+        placement: Placement,
     },
 }
 
@@ -58,6 +73,12 @@ pub(super) enum RawKey {
 pub(super) struct RawConstruct {
     pub(super) span: ByteSpan,
     pub(super) shape: Shape<ByteSpan>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Nesting {
+    Root,
+    Nested,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,12 +104,14 @@ enum Unwind {
 #[derive(Debug)]
 struct Scope {
     function: RawFunction,
+    root: RawDeclaration,
+    deferred: bool,
     unwind: Vec<Unwind>,
     constant: bool,
 }
 
 impl Scope {
-    const fn new(key: RawKey, span: ByteSpan) -> Self {
+    const fn new(key: RawKey, span: ByteSpan, root: RawDeclaration, deferred: bool) -> Self {
         return Self {
             function: RawFunction {
                 key,
@@ -96,6 +119,8 @@ impl Scope {
                 constructs: Vec::new(),
                 sites: Vec::new(),
             },
+            root,
+            deferred,
             unwind: Vec::new(),
             constant: false,
         };
@@ -111,6 +136,8 @@ struct Collector {
     parents: Vec<Scope>,
     finished: Vec<RawFunction>,
     anonymous_classes: Vec<ByteSpan>,
+    closures: u32,
+    enclosing_statements: u32,
 }
 
 pub(super) fn collect(program: &Program<'_>, length: u32) -> Collected {
@@ -118,10 +145,17 @@ pub(super) fn collect(program: &Program<'_>, length: u32) -> Collected {
         namespace: None,
         classes: Vec::new(),
         properties: Vec::new(),
-        current: Scope::new(RawKey::Main, ByteSpan::new(0, length)),
+        current: Scope::new(
+            RawKey::Declaration(RawDeclaration::Main),
+            ByteSpan::new(0, length),
+            RawDeclaration::Main,
+            false,
+        ),
         parents: Vec::new(),
         finished: Vec::new(),
         anonymous_classes: Vec::new(),
+        closures: 0,
+        enclosing_statements: 0,
     };
     collector.walk_program(program, &mut ());
     let mut functions = collector.finished;
@@ -227,6 +261,50 @@ const fn loop_levels(level: Option<&Expression<'_>>) -> Option<u64> {
     };
 }
 
+fn last_argument<'ast, 'arena>(
+    arguments: &'ast ArgumentList<'arena>,
+) -> Option<&'ast Expression<'arena>> {
+    return arguments.arguments.last().map(Argument::value);
+}
+
+fn compiled_last<'ast, 'arena>(expression: &'ast Expression<'arena>) -> &'ast Expression<'arena> {
+    let mut current = expression;
+    loop {
+        let next = match current {
+            Expression::Binary(binary)
+                if !matches!(binary.operator, BinaryOperator::Instanceof(_)) =>
+            {
+                Some(binary.rhs)
+            }
+            Expression::Parenthesized(inner) => Some(inner.expression),
+            Expression::UnaryPrefix(unary) => Some(unary.operand),
+            Expression::Assignment(assignment) if !is_destructuring(assignment.lhs) => {
+                Some(assignment.rhs)
+            }
+            Expression::Conditional(conditional) => Some(conditional.r#else),
+            Expression::Call(Call::Function(call)) => last_argument(&call.argument_list),
+            Expression::Call(Call::Method(call)) => last_argument(&call.argument_list),
+            Expression::Call(Call::NullSafeMethod(call)) => last_argument(&call.argument_list),
+            Expression::Call(Call::StaticMethod(call)) => last_argument(&call.argument_list),
+            Expression::Instantiation(instantiation) => {
+                instantiation.argument_list.as_ref().and_then(last_argument)
+            }
+            _ => None,
+        };
+        let Some(next) = next else {
+            return current;
+        };
+        current = next;
+    }
+}
+
+const fn encloses(statement: &Statement<'_>) -> bool {
+    return !matches!(
+        statement,
+        Statement::Namespace(_) | Statement::Block(_) | Statement::Function(_)
+    );
+}
+
 const fn is_destructuring(expression: &Expression<'_>) -> bool {
     return matches!(
         expression,
@@ -242,9 +320,45 @@ impl Collector {
         return [namespace.as_slice(), b"\\", name].concat();
     }
 
-    fn enter(&mut self, key: RawKey, span: mago_span::Span) {
-        let parent = mem::replace(&mut self.current, Scope::new(key, ByteSpan::of(span)));
+    fn push(&mut self, scope: Scope) {
+        let parent = mem::replace(&mut self.current, scope);
         self.parents.push(parent);
+    }
+
+    fn enter_declaration(
+        &mut self,
+        declaration: RawDeclaration,
+        span: mago_span::Span,
+        nesting: Nesting,
+    ) {
+        let root = match nesting {
+            Nesting::Root => declaration.clone(),
+            Nesting::Nested => self.current.root.clone(),
+        };
+        let deferred = self.current.deferred || self.current.constant;
+        self.push(Scope::new(
+            RawKey::Declaration(declaration),
+            ByteSpan::of(span),
+            root,
+            deferred,
+        ));
+    }
+
+    fn enter_closure(&mut self, closure: RawClosure, span: mago_span::Span) {
+        self.closures = self.closures.saturating_add(1);
+        let placement = Placement {
+            order: self.closures,
+            root: self.current.root.clone(),
+            deferred: self.current.deferred || self.current.constant,
+        };
+        let root = placement.root.clone();
+        let deferred = placement.deferred;
+        self.push(Scope::new(
+            RawKey::Closure { closure, placement },
+            ByteSpan::of(span),
+            root,
+            deferred,
+        ));
     }
 
     fn leave(&mut self) {
@@ -309,7 +423,7 @@ impl Collector {
             condition.span(),
             kind,
             SiteClass::Condition,
-            condition.span(),
+            compiled_last(condition).span(),
         );
     }
 
@@ -418,9 +532,26 @@ impl<'ast, 'arena> MutWalker<'ast, 'arena, ()> for Collector {
         self.leave_class();
     }
 
+    fn walk_in_statement(&mut self, statement: &'ast Statement<'arena>, (): &mut ()) {
+        if encloses(statement) {
+            self.enclosing_statements = self.enclosing_statements.saturating_add(1);
+        }
+    }
+
+    fn walk_out_statement(&mut self, statement: &'ast Statement<'arena>, (): &mut ()) {
+        if encloses(statement) {
+            self.enclosing_statements = self.enclosing_statements.saturating_sub(1);
+        }
+    }
+
     fn walk_in_function(&mut self, function: &'ast Function<'arena>, (): &mut ()) {
         let name = self.qualify(function.name.value);
-        self.enter(RawKey::Function { name }, function.span());
+        let nesting = if self.parents.is_empty() && self.enclosing_statements == 0 {
+            Nesting::Root
+        } else {
+            Nesting::Nested
+        };
+        self.enter_declaration(RawDeclaration::Function { name }, function.span(), nesting);
     }
 
     fn walk_out_function(&mut self, _: &'ast Function<'arena>, (): &mut ()) {
@@ -428,12 +559,12 @@ impl<'ast, 'arena> MutWalker<'ast, 'arena, ()> for Collector {
     }
 
     fn walk_in_method(&mut self, method: &'ast Method<'arena>, (): &mut ()) {
-        let key = RawKey::Method {
+        let key = RawDeclaration::Method {
             class: self.classes.last().cloned(),
             method: method.name.value.to_vec(),
             at: method.name.span.start.offset,
         };
-        self.enter(key, method.span());
+        self.enter_declaration(key, method.span(), Nesting::Root);
     }
 
     fn walk_out_method(&mut self, _: &'ast Method<'arena>, (): &mut ()) {
@@ -441,11 +572,11 @@ impl<'ast, 'arena> MutWalker<'ast, 'arena, ()> for Collector {
     }
 
     fn walk_in_closure(&mut self, closure: &'ast Closure<'arena>, (): &mut ()) {
-        let key = RawKey::Closure {
+        let key = RawClosure::Braced {
             start: closure.function.span.start.offset,
             end: closure.body.right_brace.start.offset,
         };
-        self.enter(key, closure.span());
+        self.enter_closure(key, closure.span());
     }
 
     fn walk_out_closure(&mut self, _: &'ast Closure<'arena>, (): &mut ()) {
@@ -453,11 +584,11 @@ impl<'ast, 'arena> MutWalker<'ast, 'arena, ()> for Collector {
     }
 
     fn walk_in_arrow_function(&mut self, arrow: &'ast ArrowFunction<'arena>, (): &mut ()) {
-        let key = RawKey::Arrow {
+        let key = RawClosure::Arrow {
             start: arrow.r#fn.span.start.offset,
             body_end: arrow.expression.span().end.offset,
         };
-        self.enter(key, arrow.span());
+        self.enter_closure(key, arrow.span());
     }
 
     fn walk_out_arrow_function(&mut self, _: &'ast ArrowFunction<'arena>, (): &mut ()) {
@@ -494,13 +625,13 @@ impl<'ast, 'arena> MutWalker<'ast, 'arena, ()> for Collector {
     }
 
     fn walk_in_property_hook(&mut self, hook: &'ast PropertyHook<'arena>, (): &mut ()) {
-        let key = RawKey::Hook {
+        let key = RawDeclaration::Hook {
             class: self.classes.last().cloned(),
             property: self.properties.last().cloned(),
             hook: hook.name.value.to_vec(),
             at: hook.name.span.start.offset,
         };
-        self.enter(key, hook.span());
+        self.enter_declaration(key, hook.span(), Nesting::Root);
     }
 
     fn walk_out_property_hook(&mut self, _: &'ast PropertyHook<'arena>, (): &mut ()) {
@@ -573,7 +704,7 @@ impl<'ast, 'arena> MutWalker<'ast, 'arena, ()> for Collector {
 
     fn walk_conditional(&mut self, conditional: &'ast Conditional<'arena>, context: &mut ()) {
         self.walk_expression(conditional.condition, context);
-        let claim = conditional.condition.span();
+        let claim = compiled_last(conditional.condition).span();
         if let Some(then) = conditional.then {
             self.branch(
                 conditional.span(),
@@ -604,7 +735,7 @@ impl<'ast, 'arena> MutWalker<'ast, 'arena, ()> for Collector {
         };
         self.walk_expression(binary.lhs, context);
         if let Some((kind, class)) = branch {
-            self.branch(binary.span(), kind, class, binary.lhs.span());
+            self.branch(binary.span(), kind, class, compiled_last(binary.lhs).span());
         }
         self.walk_expression(binary.rhs, context);
     }
@@ -616,7 +747,7 @@ impl<'ast, 'arena> MutWalker<'ast, 'arena, ()> for Collector {
                 assignment.span(),
                 BranchKind::CoalesceAssign,
                 SiteClass::Coalesce,
-                assignment.lhs.span(),
+                compiled_last(assignment.lhs).span(),
             );
             self.walk_expression(assignment.rhs, context);
             return;
@@ -630,6 +761,31 @@ impl<'ast, 'arena> MutWalker<'ast, 'arena, ()> for Collector {
         self.walk_expression(assignment.rhs, context);
     }
 
+    fn walk_isset_construct(&mut self, isset: &'ast IssetConstruct<'arena>, context: &mut ()) {
+        let values = isset.values.as_slice();
+        let Some(first) = values.first() else {
+            return;
+        };
+        for (value, next) in values
+            .iter()
+            .zip(values.iter().skip(1).map(Some).chain([None]))
+        {
+            self.walk_expression(value, context);
+            if let Some(next) = next {
+                let id = self.record(
+                    ByteSpan::between(first.span(), next.span()),
+                    Shape::Branch(BranchKind::Isset),
+                );
+                self.site(
+                    id,
+                    SiteClass::ShortCircuit,
+                    vec![ByteSpan::of(compiled_last(value).span())],
+                    Detail::Whole,
+                );
+            }
+        }
+    }
+
     fn walk_null_safe_property_access(
         &mut self,
         access: &'ast NullSafePropertyAccess<'arena>,
@@ -640,7 +796,7 @@ impl<'ast, 'arena> MutWalker<'ast, 'arena, ()> for Collector {
             access.span(),
             BranchKind::NullsafeProperty,
             SiteClass::Nullsafe,
-            access.object.span(),
+            compiled_last(access.object).span(),
         );
         self.walk_class_like_member_selector(&access.property, context);
     }
@@ -655,7 +811,7 @@ impl<'ast, 'arena> MutWalker<'ast, 'arena, ()> for Collector {
             call.span(),
             BranchKind::NullsafeMethodCall,
             SiteClass::Nullsafe,
-            call.object.span(),
+            compiled_last(call.object).span(),
         );
         self.walk_class_like_member_selector(&call.method, context);
         self.walk_argument_list(&call.argument_list, context);

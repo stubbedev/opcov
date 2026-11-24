@@ -88,6 +88,8 @@ impl fmt::Display for SnapshotFailure {
 #[derive(Debug)]
 pub(crate) struct Snapshot {
     pub(crate) analysis: Analysis,
+    #[cfg(feature = "engine-selftest")]
+    pub(crate) input: FunctionInput,
     pub(crate) instrs: Vec<Instr>,
     pub(crate) blocks: Vec<LineBlock>,
 }
@@ -413,9 +415,13 @@ pub(crate) unsafe fn take(
             .collect::<Result<_, _>>()?,
         loops: loops(&raw),
     };
+    #[cfg(feature = "engine-selftest")]
+    let kept = input.clone();
     let analysis = Analysis::try_from(input).map_err(SnapshotFailure::Cfg)?;
     return Ok(Snapshot {
         analysis,
+        #[cfg(feature = "engine-selftest")]
+        input: kept,
         blocks: line_blocks(&raw),
         instrs,
     });

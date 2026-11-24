@@ -69,6 +69,10 @@ function logic($a, $b)
 `logic(1, 1)`: the `&&` evaluates `$b`, then the `||` short-circuits.
 `logic(0, 1)`: the `&&` short-circuits, then the `||` evaluates.
 
+`isset($a, $b, $c)` is `isset($a) && isset($b) && isset($c)` to PHP, so an
+`isset` with n arguments has n - 1 short-circuit sites; the source mapping
+names them `Isset` constructs, one per added argument.
+
 ### `CoalesceValue`, `CoalesceFallback`
 
 `COALESCE`: `??` and `??=` found a non-null value, or used the fallback.
@@ -248,6 +252,55 @@ taken:
 `opcov gate` reports an unseen outcome only when it counts; `opcov convert`
 writes only counting outcomes as branches; `opcov doctor` fails only on
 unmatched outcomes that count ([cli.md](cli.md)).
+
+## Source mapping coverage
+
+A report's outcomes carry the line of their opcode only; `opcov-syntax` adds
+the construct and its exact span when a report is read, and `opcov doctor
+--report` lists every outcome it cannot map. It matches by line, construct
+kind and compilation order: the opcode of an `&&`, `||`, `??`, `?:`, `?->` or
+condition carries the line of the last sub-expression PHP compiled before it
+(the right end of a multi-line left operand, the last argument of a call), so
+each construct claims those lines and no others.
+
+Measured on the scale corpus of [scale.md](scale.md) (symfony, laravel,
+drupal, doctrine/orm, doctrine/dbal and phpunit, 34,607 files compiled with
+every file selected, PHP 8.5.13), with `write_report()` and `opcov doctor
+--report`:
+
+| | outcomes | `Engine` | source outcomes | with a span |
+|---|---|---|---|---|
+| before | 381,982 | 33,508 | 348,474 | 344,827 (98.95 %) |
+| after | 381,982 | 33,508 | 348,474 | **348,195 (99.92 %)** |
+
+`Engine` outcomes (the fallback edge of a frameless call) have no source
+construct by design and are left out. What changed:
+
+- `isset` with several arguments: each added argument is a short-circuit of
+  its own (above) and had no construct.
+- `&&`/`||` chains written one operand per line: the outer operator claimed
+  every line of its left operand, overlapping the inner one, so both were
+  ambiguous; claims now cover only the lines of the last compiled
+  sub-expression.
+
+  Together these two mapped 3,392 of the 3,442 unmatched `ShortCircuit` and
+  `Evaluate` outcomes.
+- Closures passed to a frameless function (`implode(',', array_map(fn ...))`
+  in a namespace) are compiled twice; the copies were not recognised as one
+  closure when they differed only in the unused operand bits of a call on
+  `$this`, or when the closure was nested in such a copy, which left an extra
+  `#1` key that the source does not declare.
+
+The 279 outcomes still without a span:
+
+| Outcomes | Cause |
+|---|---|
+| 114 | `IfTrue`/`IfFalse` on the test of a loop whose body PHP's CFG does not see as a structured loop (a `while (true)` whose body is a `try`/`catch`, some `do`-`while`): the CFG names the test a plain condition, the source a loop test. |
+| 50 | `&&`/`\|\|` with an operand PHP folds at compile time: `\DIRECTORY_SEPARATOR`, `\PHP_SAPI` and `PHP_VERSION_ID` are substituted, so `'\\' === \DIRECTORY_SEPARATOR` is a constant and its short-circuit disappears, leaving fewer opcodes than constructs on the line. |
+| 49 | `MatchArm`/`MatchNoArm` of a `match` that is the body of an outer arm on the same line: the outer arm's comparison and the inner `match` claim one line. Ambiguous by design. |
+| 46 | `??` on lines with several `??` where PHP emits a different number of `COALESCE` opcodes than the source shows. |
+| 16 | Ternaries that share a line with another condition (a ternary inside an arm or an argument list). |
+| 4 | A `finally` entered from two places on one line, and one loop test. |
 
 ## Loop findings
 

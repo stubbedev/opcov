@@ -18,6 +18,7 @@ pub enum BranchKind {
     Or,
     LogicalAnd,
     LogicalOr,
+    Isset,
 }
 
 impl BranchKind {
@@ -35,6 +36,7 @@ impl BranchKind {
             Self::Or => "Or",
             Self::LogicalAnd => "LogicalAnd",
             Self::LogicalOr => "LogicalOr",
+            Self::Isset => "Isset",
         };
     }
 
@@ -48,7 +50,7 @@ impl BranchKind {
             Self::NullsafeProperty | Self::NullsafeMethodCall => {
                 [EdgeKind::NullsafeValue, EdgeKind::NullsafeNull]
             }
-            Self::And | Self::Or | Self::LogicalAnd | Self::LogicalOr => {
+            Self::And | Self::Or | Self::LogicalAnd | Self::LogicalOr | Self::Isset => {
                 [EdgeKind::Evaluate, EdgeKind::ShortCircuit]
             }
         };

@@ -1,0 +1,386 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nenum Suit {\n    case Hearts;\n    case Spades;\n\n    public function color(): string {\n        return match ($this) {\n            Suit::Hearts => 'Red',\n            Suit::Spades => 'Black',\n        };\n    }\n}\n",
+  "input": {
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 7,
+            "opcode": "FETCH_THIS"
+          },
+          {
+            "line": 8,
+            "opcode": "FETCH_CLASS_CONSTANT"
+          },
+          {
+            "line": 8,
+            "opcode": "CASE_STRICT"
+          },
+          {
+            "line": 8,
+            "opcode": "JMPNZ"
+          }
+        ],
+        "successors": [
+          4,
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 9,
+            "opcode": "FETCH_CLASS_CONSTANT"
+          },
+          {
+            "line": 9,
+            "opcode": "CASE_STRICT"
+          },
+          {
+            "line": 9,
+            "opcode": "JMPNZ"
+          }
+        ],
+        "successors": [
+          5,
+          2
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 9,
+            "opcode": "JMP"
+          }
+        ],
+        "successors": [
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 9,
+            "opcode": "MATCH_ERROR"
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 8,
+            "opcode": "QM_ASSIGN"
+          },
+          {
+            "line": 8,
+            "opcode": "JMP"
+          }
+        ],
+        "successors": [
+          6
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 9,
+            "opcode": "QM_ASSIGN"
+          },
+          {
+            "line": 9,
+            "opcode": "JMP"
+          }
+        ],
+        "successors": [
+          6
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 9,
+            "opcode": "FREE"
+          },
+          {
+            "line": 9,
+            "opcode": "VERIFY_RETURN_TYPE"
+          },
+          {
+            "line": 9,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [],
+        "ops": [
+          {
+            "line": 11,
+            "opcode": "VERIFY_RETURN_TYPE"
+          },
+          {
+            "line": 11,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "file": "enum_method.php",
+    "flags": [],
+    "key": "Suit::color",
+    "line_end": 11,
+    "line_start": 6,
+    "loops": []
+  },
+  "expected": {
+    "diagnostics": [],
+    "function": {
+      "blocks": [
+        {
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "id": 0,
+          "line_end": 8,
+          "line_start": 7,
+          "op_end": 3,
+          "op_start": 0,
+          "ops": [
+            {
+              "line": 7,
+              "opcode": "FETCH_THIS"
+            },
+            {
+              "line": 8,
+              "opcode": "FETCH_CLASS_CONSTANT"
+            },
+            {
+              "line": 8,
+              "opcode": "CASE_STRICT"
+            },
+            {
+              "line": 8,
+              "opcode": "JMPNZ"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 1,
+          "line_end": 9,
+          "line_start": 9,
+          "op_end": 6,
+          "op_start": 4,
+          "ops": [
+            {
+              "line": 9,
+              "opcode": "FETCH_CLASS_CONSTANT"
+            },
+            {
+              "line": 9,
+              "opcode": "CASE_STRICT"
+            },
+            {
+              "line": 9,
+              "opcode": "JMPNZ"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 2,
+          "line_end": 9,
+          "line_start": 9,
+          "op_end": 7,
+          "op_start": 7,
+          "ops": [
+            {
+              "line": 9,
+              "opcode": "JMP"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 3,
+          "line_end": 9,
+          "line_start": 9,
+          "op_end": 8,
+          "op_start": 8,
+          "ops": [
+            {
+              "line": 9,
+              "opcode": "MATCH_ERROR"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 4,
+          "line_end": 8,
+          "line_start": 8,
+          "op_end": 10,
+          "op_start": 9,
+          "ops": [
+            {
+              "line": 8,
+              "opcode": "QM_ASSIGN"
+            },
+            {
+              "line": 8,
+              "opcode": "JMP"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 5,
+          "line_end": 9,
+          "line_start": 9,
+          "op_end": 12,
+          "op_start": 11,
+          "ops": [
+            {
+              "line": 9,
+              "opcode": "QM_ASSIGN"
+            },
+            {
+              "line": 9,
+              "opcode": "JMP"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 6,
+          "line_end": 9,
+          "line_start": 9,
+          "op_end": 15,
+          "op_start": 13,
+          "ops": [
+            {
+              "line": 9,
+              "opcode": "FREE"
+            },
+            {
+              "line": 9,
+              "opcode": "VERIFY_RETURN_TYPE"
+            },
+            {
+              "line": 9,
+              "opcode": "RETURN"
+            }
+          ]
+        },
+        {
+          "flags": [],
+          "id": 7,
+          "line_end": 11,
+          "line_start": 11,
+          "op_end": 17,
+          "op_start": 16,
+          "ops": [
+            {
+              "line": 11,
+              "opcode": "VERIFY_RETURN_TYPE"
+            },
+            {
+              "line": 11,
+              "opcode": "RETURN"
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "kind": "Flow",
+          "to": 1
+        },
+        {
+          "from": 0,
+          "kind": {
+            "MatchArm": 0
+          },
+          "to": 4
+        },
+        {
+          "from": 1,
+          "kind": "Flow",
+          "to": 2
+        },
+        {
+          "from": 1,
+          "kind": {
+            "MatchArm": 1
+          },
+          "to": 5
+        },
+        {
+          "from": 2,
+          "kind": "MatchNoArm",
+          "to": 3
+        },
+        {
+          "from": 4,
+          "kind": "Flow",
+          "to": 6
+        },
+        {
+          "from": 5,
+          "kind": "Flow",
+          "to": 6
+        }
+      ],
+      "file": "enum_method.php",
+      "flags": [],
+      "key": "Suit::color",
+      "line_end": 11,
+      "line_start": 6,
+      "loops": []
+    }
+  }
+}

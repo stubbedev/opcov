@@ -20,7 +20,9 @@ pub use construct::{BranchKind, Construct, ConstructKind, ConstructOutcome, Loca
 pub use matching::{MatchedOutcome, Matching, OutcomeRef, outcome_refs};
 pub use position::{Column, Position, Span};
 
-use collect::{RawClass, RawConstruct, RawFunction, RawKey, collect};
+use collect::{
+    Placement, RawClass, RawClosure, RawConstruct, RawDeclaration, RawFunction, RawKey, collect,
+};
 use matching::Site;
 use position::{ByteSpan, LineIndex, LineRange, OffsetOutOfRange, next_token};
 
@@ -182,11 +184,6 @@ struct Keyed {
     raw: RawFunction,
 }
 
-struct Ranks {
-    anonymous: Vec<(LineSpan, u32)>,
-    closures: Vec<(LineSpan, u32)>,
-}
-
 impl Builder<'_> {
     fn fail(&self, kind: SyntaxErrorKind) -> SyntaxError {
         return SyntaxError {
@@ -250,7 +247,7 @@ impl Builder<'_> {
         &self,
         class: Option<&RawClass>,
         at: u32,
-        ranks: &Ranks,
+        anonymous: &[(LineSpan, u32)],
     ) -> Result<ClassRef, SyntaxError> {
         return match class {
             None => Err(self.fail(SyntaxErrorKind::MemberOutsideClass {
@@ -264,7 +261,7 @@ impl Builder<'_> {
                 Ok(ClassRef::Anonymous {
                     file: self.path.clone(),
                     lines,
-                    ordinal: self.count(ordinal_in(&ranks.anonymous, &lines, span.start))?,
+                    ordinal: self.count(ordinal_in(anonymous, &lines, span.start))?,
                 })
             }
         };
@@ -289,47 +286,38 @@ impl Builder<'_> {
         });
     }
 
-    fn closure_span(&self, raw: &RawKey) -> Result<Option<ByteSpan>, SyntaxError> {
-        return Ok(match raw {
-            RawKey::Closure { start, end } => Some(ByteSpan::new(*start, *end)),
-            RawKey::Arrow { start, body_end } => {
-                Some(ByteSpan::new(*start, self.arrow_end(*body_end)?))
+    fn closure_span(&self, closure: RawClosure) -> Result<ByteSpan, SyntaxError> {
+        return Ok(match closure {
+            RawClosure::Braced { start, end } => ByteSpan::new(start, end),
+            RawClosure::Arrow { start, body_end } => {
+                ByteSpan::new(start, self.arrow_end(body_end)?)
             }
-            RawKey::Main
-            | RawKey::Function { .. }
-            | RawKey::Method { .. }
-            | RawKey::Hook { .. } => None,
         });
     }
 
-    fn closure(&self, span: ByteSpan, ranks: &Ranks) -> Result<FunctionKey, SyntaxError> {
-        let lines = self.line_span(span)?;
-        return Ok(FunctionKey::Closure {
-            file: self.path.clone(),
-            lines,
-            ordinal: self.count(ordinal_in(&ranks.closures, &lines, span.start))?,
-        });
-    }
-
-    fn key(&self, raw: &RawKey, ranks: &Ranks) -> Result<FunctionKey, SyntaxError> {
+    fn declaration(
+        &self,
+        raw: &RawDeclaration,
+        anonymous: &[(LineSpan, u32)],
+    ) -> Result<FunctionKey, SyntaxError> {
         return Ok(match raw {
-            RawKey::Main => FunctionKey::Main {
+            RawDeclaration::Main => FunctionKey::Main {
                 file: self.path.clone(),
             },
-            RawKey::Function { name } => FunctionKey::Function {
+            RawDeclaration::Function { name } => FunctionKey::Function {
                 name: self.name(name, QualifiedName::from_bytes)?,
             },
-            RawKey::Method { class, method, at } => FunctionKey::Method {
-                class: self.class(class.as_ref(), *at, ranks)?,
+            RawDeclaration::Method { class, method, at } => FunctionKey::Method {
+                class: self.class(class.as_ref(), *at, anonymous)?,
                 method: self.name(method, Identifier::from_bytes)?,
             },
-            RawKey::Hook {
+            RawDeclaration::Hook {
                 class,
                 property,
                 hook,
                 at,
             } => {
-                let class = self.class(class.as_ref(), *at, ranks)?;
+                let class = self.class(class.as_ref(), *at, anonymous)?;
                 let Some(property) = property else {
                     return Err(self.fail(SyntaxErrorKind::HookOutsideProperty {
                         line: self.line(*at)?,
@@ -341,11 +329,43 @@ impl Builder<'_> {
                     hook: self.hook(hook, *at)?,
                 }
             }
-            RawKey::Closure { start, end } => self.closure(ByteSpan::new(*start, *end), ranks)?,
-            RawKey::Arrow { start, body_end } => {
-                self.closure(ByteSpan::new(*start, self.arrow_end(*body_end)?), ranks)?
-            }
         });
+    }
+
+    fn rank_closures(
+        &self,
+        closures: Vec<(RawClosure, Placement, RawFunction)>,
+        anonymous: &[(LineSpan, u32)],
+    ) -> Result<Vec<Keyed>, SyntaxError> {
+        let mut ranked = closures
+            .into_iter()
+            .map(|(closure, placement, raw)| {
+                let lines = self.line_span(self.closure_span(closure)?)?;
+                let root = self.declaration(&placement.root, anonymous)?;
+                return Ok(((lines, placement.deferred, root, placement.order), raw));
+            })
+            .collect::<Result<Vec<_>, SyntaxError>>()?;
+        ranked.sort_unstable_by(|left, right| return left.0.cmp(&right.0));
+        let mut keyed = Vec::with_capacity(ranked.len());
+        let mut previous = None;
+        let mut ordinal = 0_u32;
+        for ((lines, ..), raw) in ranked {
+            ordinal = if previous == Some(lines) {
+                ordinal.saturating_add(1)
+            } else {
+                0
+            };
+            previous = Some(lines);
+            keyed.push(Keyed {
+                key: FunctionKey::Closure {
+                    file: self.path.clone(),
+                    lines,
+                    ordinal,
+                },
+                raw,
+            });
+        }
+        return Ok(keyed);
     }
 
     fn function(&self, keyed: Keyed) -> Result<FunctionSource, SyntaxError> {
@@ -390,24 +410,20 @@ impl Builder<'_> {
             .map(|span| return Ok((self.line_span(*span)?, span.start)))
             .collect::<Result<Vec<(LineSpan, u32)>, SyntaxError>>()?;
         anonymous.sort_unstable();
+        let mut keyed = Vec::with_capacity(functions.len());
         let mut closures = Vec::new();
-        for function in &functions {
-            if let Some(span) = self.closure_span(&function.key)? {
-                closures.push((self.line_span(span)?, span.start));
+        for raw in functions {
+            match &raw.key {
+                RawKey::Declaration(declaration) => keyed.push(Keyed {
+                    key: self.declaration(declaration, &anonymous)?,
+                    raw,
+                }),
+                RawKey::Closure { closure, placement } => {
+                    closures.push((*closure, placement.clone(), raw));
+                }
             }
         }
-        closures.sort_unstable();
-        let ranks = Ranks {
-            anonymous,
-            closures,
-        };
-        let mut keyed = functions
-            .into_iter()
-            .map(|raw| {
-                let key = self.key(&raw.key, &ranks)?;
-                return Ok(Keyed { key, raw });
-            })
-            .collect::<Result<Vec<Keyed>, SyntaxError>>()?;
+        keyed.extend(self.rank_closures(closures, &anonymous)?);
         keyed.sort_by(|left, right| {
             return (left.raw.span.start, right.raw.span.end, &left.key).cmp(&(
                 right.raw.span.start,

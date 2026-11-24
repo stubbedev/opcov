@@ -152,6 +152,51 @@ mod syntax {
     }
 
     #[test]
+    fn multi_line_chains_and_isset_lists_match_each_short_circuit() {
+        let source = b"<?php\nfunction f($a, $b, $c, $x) {\n    if ($a\n        && $b\n        && $c) {\n        return isset($x['a'], $x['b'], $x['c']);\n    }\n}\n";
+        let file = SourceFile::parse("chains.php".parse().unwrap(), source).unwrap();
+        let chains = function(&file, "f");
+        let found: Vec<(ConstructKind, String)> = locate(
+            chains,
+            &[
+                outcome(4, EdgeKind::ShortCircuit, 3),
+                outcome(6, EdgeKind::ShortCircuit, 4),
+                outcome(10, EdgeKind::ShortCircuit, 6),
+                outcome(12, EdgeKind::Evaluate, 6),
+            ],
+        )
+        .into_iter()
+        .map(|result| {
+            let location = result.unwrap();
+            return (location.construct, location.span.to_string());
+        })
+        .collect();
+        assert_eq!(
+            found,
+            vec![
+                (
+                    ConstructKind::Branch(BranchKind::And),
+                    String::from("3:9-4:14")
+                ),
+                (
+                    ConstructKind::Branch(BranchKind::And),
+                    String::from("3:9-5:14")
+                ),
+                (
+                    ConstructKind::Branch(BranchKind::Isset),
+                    String::from("6:22-6:38")
+                ),
+                (
+                    ConstructKind::Branch(BranchKind::Isset),
+                    String::from("6:22-6:47")
+                ),
+            ],
+            "the opcode of a chained `&&` carries the line of the last operand compiled before \
+             it, and `isset` with three arguments short-circuits after the first and the second"
+        );
+    }
+
+    #[test]
     fn nested_multi_line_ternaries_match_by_condition_line() {
         let file = parse("branches");
         let branches = function(&file, "branches");
@@ -482,6 +527,91 @@ mod syntax {
         );
     }
 
+    fn keys_fixture(name: &str) -> (Vec<u8>, SourceFile) {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/phpt/keys/fixtures")
+            .join(name);
+        let source = fs::read(&path).unwrap();
+        let file = SourceFile::parse(name.parse().unwrap(), &source).unwrap();
+        return (source, file);
+    }
+
+    fn text_at(source: &[u8], function: &FunctionSource) -> String {
+        let start = function.span().start();
+        let line = source
+            .split(|&byte| return byte == b'\n')
+            .nth(usize::try_from(start.line().get().checked_sub(1).unwrap()).unwrap())
+            .unwrap();
+        let column = usize::try_from(start.column().get().checked_sub(1).unwrap()).unwrap();
+        return String::from_utf8(line[column..].to_vec()).unwrap();
+    }
+
+    #[test]
+    fn closures_sharing_a_span_across_declarations_are_keyed_like_the_engine_ranks_them() {
+        let (source, file) = keys_fixture("roots.php");
+        for (key, text) in [
+            ("{closure}@roots.php:2-2", "fn () => 2;"),
+            ("{closure}@roots.php:2-2#1", "fn () => 1;"),
+            ("{closure}@roots.php:3-3", "fn () => 4;"),
+            ("{closure}@roots.php:3-3#1", "fn () => 3;"),
+            ("{closure}@roots.php:4-4", "fn () => 6;"),
+            ("{closure}@roots.php:4-4#1", "fn () => 5;"),
+            ("{closure}@roots.php:5-5", "fn () => 9;"),
+            ("{closure}@roots.php:5-5#1", "fn () => 7;"),
+            ("{closure}@roots.php:5-5#2", "fn () => 8;"),
+            ("{closure}@roots.php:6-6", "fn () => 10;"),
+            ("{closure}@roots.php:6-6#1", "fn () => 11;"),
+            ("{closure}@roots.php:7-7", "fn () => 13;"),
+            ("{closure}@roots.php:7-7#1", "fn () => 12;"),
+            ("{closure}@roots.php:8-8", "fn () => 15;"),
+            ("{closure}@roots.php:8-8#1", "fn () => 14;"),
+            ("{closure}@roots.php:9-9", "fn () => 17;"),
+            ("{closure}@roots.php:9-9#1", "fn () => 16)"),
+            ("{closure}@roots.php:10-10", "function () { [$d"),
+            ("{closure}@roots.php:10-10#1", "fn () => 19]"),
+            ("{closure}@roots.php:10-10#2", "fn () => 18)"),
+            ("{closure}@roots.php:11-11", "fn () => [fn () => 20"),
+            ("{closure}@roots.php:11-11#1", "fn () => 20,"),
+            (
+                "{closure}@roots.php:11-11#2",
+                "function () { return fn () => 21",
+            ),
+            ("{closure}@roots.php:11-11#3", "fn () => 21;"),
+        ] {
+            let found = text_at(&source, function(&file, key));
+            assert!(
+                found.starts_with(text),
+                "{key} is the closure tests/phpt/keys/roots.phpt runs as it: expected `{text}`, \
+                 found `{found}`"
+            );
+        }
+        let closures = file
+            .functions()
+            .iter()
+            .filter(|function| return matches!(function.key(), FunctionKey::Closure { .. }))
+            .count();
+        assert_eq!(closures, 24, "every closure of the fixture is keyed once");
+    }
+
+    #[test]
+    fn closures_in_constant_expressions_rank_after_the_closures_compiled_with_the_file() {
+        let (source, file) = keys_fixture("deferred.php");
+        for (key, text) in [
+            ("{closure}@deferred.php:2-2", "fn () => 'compiled'"),
+            (
+                "{closure}@deferred.php:2-2#1",
+                "static function () { return 'deferred'; }",
+            ),
+        ] {
+            let found = text_at(&source, function(&file, key));
+            assert!(
+                found.starts_with(text),
+                "{key} is the closure tests/phpt/keys/deferred.phpt runs as it: expected \
+                 `{text}`, found `{found}`"
+            );
+        }
+    }
+
     #[test]
     fn multibyte_and_heredoc_text_keeps_byte_columns() {
         let file = parse("columns");
@@ -591,6 +721,7 @@ mod syntax {
                         | BranchKind::Or
                         | BranchKind::LogicalAnd
                         | BranchKind::LogicalOr
+                        | BranchKind::Isset
                 )
             ),
             EdgeKind::CoalesceValue | EdgeKind::CoalesceFallback => matches!(
@@ -627,8 +758,11 @@ mod syntax {
         return match name {
             "do_while" => vec![LoopKind::DoWhile],
             "for" => vec![LoopKind::For],
-            "foreach" | "foreach_by_ref" => vec![LoopKind::Foreach],
-            "nested_loops_break" => vec![LoopKind::Foreach, LoopKind::While],
+            "nested_loops_break" | "break_continue_n" => {
+                vec![LoopKind::Foreach, LoopKind::While]
+            }
+            "foreach" | "foreach_by_ref" | "generator" | "foreach_iterator"
+            | "foreach_generator" => vec![LoopKind::Foreach],
             "while" => vec![LoopKind::While],
             _ => Vec::new(),
         };
@@ -641,7 +775,8 @@ mod syntax {
         for path in paths {
             let golden: serde_json::Value =
                 serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-            let name = path.file_stem().unwrap().to_str().unwrap().to_owned();
+            let file_name = path.file_name().unwrap().to_str().unwrap();
+            let name = file_name.split('.').next().unwrap().to_owned();
             let source = golden["source"].as_str().unwrap();
             let file_path = golden["input"]["file"].as_str().unwrap();
             let analysis: Analysis = serde_json::from_value(golden["expected"].clone()).unwrap();

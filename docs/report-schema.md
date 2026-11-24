@@ -140,13 +140,45 @@ declares only classes, functions and constants has no executable line (see
   produce the same opcodes and flags), so nothing that reads compiled code can
   tell them apart.
 - When several closures (or several anonymous classes) of one file share the
-  same line span, all but the first carry `#<n>`, their rank in source order
-  among them, counted from 0 and written only from 1:
-  `{closure}@a.php:24-24` and `{closure}@a.php:24-24#1` for
-  `[fn () => 1, fn () => 2]`, `class@anonymous@a.php:3-9#1::run` for the run
-  method of the second anonymous class on lines 3-9. A nested declaration ranks
-  after the one that contains it. `#0` and numbers with leading zeros are
+  same line span, all but the first carry `#<n>`, their rank among them,
+  counted from 0 and written only from 1: `{closure}@a.php:24-24` and
+  `{closure}@a.php:24-24#1` for `[fn () => 1, fn () => 2]`,
+  `class@anonymous@a.php:3-9#1::run` for the run method of the second
+  anonymous class on lines 3-9. `#0` and numbers with leading zeros are
   rejected.
+- Anonymous classes rank in source order; a nested one ranks after the one
+  that contains it.
+- Closures rank by three keys, in order. PHP keeps no columns, so the rule is
+  built only from what the compiled code and the source both show:
+  1. Closures PHP compiles with their file come first. A closure in a constant
+     expression (a parameter default, an attribute argument, a constant;
+     PHP 8.5 and later) reaches opcov only when it first runs, so it ranks
+     after them, and so does every closure nested in it.
+  2. Then by the declaration PHP compiles the closure under, compared by its
+     key in the order of this table: the file's top-level code, a function
+     declared at the top level of the file (directly, in a namespace or in a
+     `{ }` block), a method or a property hook. A function declared anywhere
+     else (in another function, under `if`, in a `declare` block) is compiled
+     when its enclosing code runs, so its closures belong to that enclosing
+     declaration.
+  3. Then in compilation order within that declaration, which is source order
+     except that a destructuring assignment `[$a, $b] = ...` compiles its
+     right side first.
+
+  `function f() { return fn () => 1; } $g = fn () => 2;` on one line keys
+  `$g`'s closure `{closure}@a.php:1-1` (the top-level code sorts before `f`)
+  and `f`'s `{closure}@a.php:1-1#1`.
+- Closures that PHP creates at run time rank after every closure of their
+  line span known by then, in the order they first run. PHP 8.6's partial
+  function application (`f(?, 1)`) is one: the closure is generated when the
+  call site first runs, from the function called there (one call site can
+  yield several closures, one per callee), and nothing in it says which call
+  site of its line made it. Such keys are stable for one run of a program but
+  not across programs that run their call sites in a different order, and the
+  source has no declaration for them. The same holds for several closures in
+  constant expressions that share a line span: they rank among themselves in
+  the order they first run, while the source mapping assumes source order, so
+  the two agree only when they first run in source order.
 
 ### `files.<path>.functions.<key>`
 

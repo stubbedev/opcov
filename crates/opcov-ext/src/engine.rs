@@ -577,6 +577,8 @@ pub(crate) struct FunctionRecord {
     pub(crate) file: FileId,
     pub(crate) key: FunctionKey,
     pub(crate) analysis: Analysis,
+    #[cfg(feature = "engine-selftest")]
+    pub(crate) input: opcov_core::cfg::FunctionInput,
     pub(crate) plan: Plan,
     pub(crate) zero_possible: Box<[bool]>,
     pub(crate) text: OnceCell<Box<str>>,

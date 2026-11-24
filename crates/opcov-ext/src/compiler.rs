@@ -6,7 +6,7 @@ use core::{
 use std::{fs, ops::Range, sync::OnceLock};
 
 use opcov_core::{
-    cfg::{FilePath, FunctionFlag, FunctionKey, Plan},
+    cfg::{FilePath, FunctionFlag, FunctionKey, Line, LineSpan, Plan},
     report::Sha256,
 };
 use opcov_sys::{
@@ -25,7 +25,7 @@ use crate::{
     },
     guard::{self, COLLECTION, EntryPoint, guard},
     lines,
-    ordinals::Ordinals,
+    ordinals::{Group, Ordinals},
     probes::{self, Opcodes},
     select::decide,
     snapshot::{self, Named, Names, PHP, Snapshot, SnapshotFailure},
@@ -373,6 +373,8 @@ impl Engine {
         };
         let Snapshot {
             analysis,
+            #[cfg(feature = "engine-selftest")]
+            input,
             instrs,
             blocks,
         } = snapshot;
@@ -409,6 +411,8 @@ impl Engine {
                 file,
                 key,
                 analysis,
+                #[cfg(feature = "engine-selftest")]
+                input,
                 plan,
                 zero_possible,
                 text: OnceCell::new(),
@@ -466,17 +470,67 @@ impl Engine {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Origin {
+    Compiled,
+    Adopted,
+}
+
+impl Engine {
+    fn closures_taken(&self, origin: Origin, group: &Group) -> u32 {
+        if origin == Origin::Compiled {
+            return 0;
+        }
+        let (file, start, end) = group;
+        let Ok(file) = FilePath::from_bytes(file) else {
+            return 0;
+        };
+        let Some(record) = self
+            .files
+            .find(file.as_str())
+            .and_then(|id| return self.files.get(id))
+        else {
+            return 0;
+        };
+        let Some(lines) = Line::new(*start)
+            .zip(Line::new(*end))
+            .and_then(|(start, end)| return LineSpan::new(start, end))
+        else {
+            return 0;
+        };
+        let key = |ordinal| {
+            return FunctionKey::Closure {
+                file: file.clone(),
+                lines,
+                ordinal,
+            };
+        };
+        return record
+            .functions
+            .range(key(0)..=key(u32::MAX))
+            .next_back()
+            .map_or(0, |(last, _)| {
+                return match last {
+                    FunctionKey::Closure { ordinal, .. } => ordinal.saturating_add(1),
+                    _ => 0,
+                };
+            });
+    }
+}
+
 struct Window {
     range: Range<usize>,
+    origin: Origin,
     ordinals: Option<Ordinals>,
     names: Names,
     verdict: Option<(usize, Verdict)>,
 }
 
 impl Window {
-    fn new(range: Range<usize>) -> Self {
+    fn new(range: Range<usize>, origin: Origin) -> Self {
         return Self {
             range,
+            origin,
             ordinals: None,
             names: Names::default(),
             verdict: None,
@@ -485,11 +539,13 @@ impl Window {
 
     unsafe fn name(&mut self, op_array: *const zend_op_array) -> Result<Named, SnapshotFailure> {
         let range = self.range.clone();
+        let origin = self.origin;
         let ordinals = self.ordinals.get_or_insert_with(|| {
             return with_engine(|engine| {
                 let window = engine.scratch.op_arrays.get(range).unwrap_or_default();
+                let taken = |group: &Group| return engine.closures_taken(origin, group);
                 // SAFETY: the window's op arrays were gathered by this compilation and are live.
-                return unsafe { Ordinals::rank(window) };
+                return unsafe { Ordinals::rank(window, taken) };
             })
             .unwrap_or_default();
         });
@@ -571,7 +627,10 @@ unsafe fn process(op_array: *mut zend_op_array, window: &mut Window) {
     });
 }
 
-unsafe fn instrument(roots: impl FnOnce(&mut Vec<*mut zend_op_array>, usize)) -> bool {
+unsafe fn instrument(
+    origin: Origin,
+    roots: impl FnOnce(&mut Vec<*mut zend_op_array>, usize),
+) -> bool {
     let started = with_engine(|engine| {
         engine.label?;
         let start = engine.scratch.op_arrays.len();
@@ -579,7 +638,7 @@ unsafe fn instrument(roots: impl FnOnce(&mut Vec<*mut zend_op_array>, usize)) ->
         roots(&mut engine.scratch.op_arrays, slot);
         // SAFETY: the gathered op arrays are live.
         if unsafe { engine.reset_window(start) } {
-            return Some(Window::new(start..engine.scratch.op_arrays.len()));
+            return Some(Window::new(start..engine.scratch.op_arrays.len(), origin));
         }
         engine.scratch.op_arrays.truncate(start);
         return None;
@@ -666,7 +725,7 @@ unsafe fn after_compile(
     unsafe { record_source(main, compiled) };
     // SAFETY: the compiler's tables are live; the new entries start at the given positions.
     unsafe {
-        instrument(|list, slot| {
+        instrument(Origin::Compiled, |list, slot| {
             gather(list, main, slot);
             for function in zend::new_functions(first_function) {
                 gather_function(list, function, slot);
@@ -680,7 +739,7 @@ unsafe fn after_compile(
 
 pub(crate) unsafe fn adopt(op_array: *mut zend_op_array) -> bool {
     // SAFETY: the caller passes the running frame's live op array.
-    return unsafe { instrument(|list, slot| gather(list, op_array, slot)) };
+    return unsafe { instrument(Origin::Adopted, |list, slot| gather(list, op_array, slot)) };
 }
 
 pub(crate) unsafe extern "C" fn op_array_dtor(op_array: *mut zend_op_array) {

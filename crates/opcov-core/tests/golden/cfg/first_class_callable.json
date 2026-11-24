@@ -1,0 +1,270 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nfunction f($object, $pick) {\n    $length = strlen(...);\n    $method = $object->method(...);\n    return $pick ? $length : $method;\n}\n",
+  "input": {
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 2,
+            "opcode": "RECV"
+          },
+          {
+            "line": 2,
+            "opcode": "RECV"
+          },
+          {
+            "line": 3,
+            "opcode": "INIT_FCALL"
+          },
+          {
+            "line": 3,
+            "opcode": "CALLABLE_CONVERT"
+          },
+          {
+            "line": 3,
+            "opcode": "ASSIGN"
+          },
+          {
+            "line": 4,
+            "opcode": "INIT_METHOD_CALL"
+          },
+          {
+            "line": 4,
+            "opcode": "CALLABLE_CONVERT"
+          },
+          {
+            "line": 4,
+            "opcode": "ASSIGN"
+          },
+          {
+            "line": 5,
+            "opcode": "JMPZ"
+          }
+        ],
+        "successors": [
+          2,
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 5,
+            "opcode": "QM_ASSIGN"
+          },
+          {
+            "line": 5,
+            "opcode": "JMP"
+          }
+        ],
+        "successors": [
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 5,
+            "opcode": "QM_ASSIGN"
+          }
+        ],
+        "successors": [
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 5,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [],
+        "ops": [
+          {
+            "line": 6,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "file": "first_class_callable.php",
+    "flags": [],
+    "key": "f",
+    "line_end": 6,
+    "line_start": 2,
+    "loops": []
+  },
+  "expected": {
+    "diagnostics": [],
+    "function": {
+      "blocks": [
+        {
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "id": 0,
+          "line_end": 5,
+          "line_start": 2,
+          "op_end": 8,
+          "op_start": 0,
+          "ops": [
+            {
+              "line": 2,
+              "opcode": "RECV"
+            },
+            {
+              "line": 2,
+              "opcode": "RECV"
+            },
+            {
+              "line": 3,
+              "opcode": "INIT_FCALL"
+            },
+            {
+              "line": 3,
+              "opcode": "CALLABLE_CONVERT"
+            },
+            {
+              "line": 3,
+              "opcode": "ASSIGN"
+            },
+            {
+              "line": 4,
+              "opcode": "INIT_METHOD_CALL"
+            },
+            {
+              "line": 4,
+              "opcode": "CALLABLE_CONVERT"
+            },
+            {
+              "line": 4,
+              "opcode": "ASSIGN"
+            },
+            {
+              "line": 5,
+              "opcode": "JMPZ"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 1,
+          "line_end": 5,
+          "line_start": 5,
+          "op_end": 10,
+          "op_start": 9,
+          "ops": [
+            {
+              "line": 5,
+              "opcode": "QM_ASSIGN"
+            },
+            {
+              "line": 5,
+              "opcode": "JMP"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 2,
+          "line_end": 5,
+          "line_start": 5,
+          "op_end": 11,
+          "op_start": 11,
+          "ops": [
+            {
+              "line": 5,
+              "opcode": "QM_ASSIGN"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 3,
+          "line_end": 5,
+          "line_start": 5,
+          "op_end": 12,
+          "op_start": 12,
+          "ops": [
+            {
+              "line": 5,
+              "opcode": "RETURN"
+            }
+          ]
+        },
+        {
+          "flags": [],
+          "id": 4,
+          "line_end": 6,
+          "line_start": 6,
+          "op_end": 13,
+          "op_start": 13,
+          "ops": [
+            {
+              "line": 6,
+              "opcode": "RETURN"
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "kind": "IfTrue",
+          "to": 1
+        },
+        {
+          "from": 0,
+          "kind": "IfFalse",
+          "to": 2
+        },
+        {
+          "from": 1,
+          "kind": "Flow",
+          "to": 3
+        },
+        {
+          "from": 2,
+          "kind": "Flow",
+          "to": 3
+        }
+      ],
+      "file": "first_class_callable.php",
+      "flags": [],
+      "key": "f",
+      "line_end": 6,
+      "line_start": 2,
+      "loops": []
+    }
+  }
+}

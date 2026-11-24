@@ -76,6 +76,9 @@ pub(crate) const GET_STATUS: zend_function_entry =
     function_entry(c"opcov\\get_status", get_status, &ARRAY);
 pub(crate) const GET_DEBUG_INFO: zend_function_entry =
     function_entry(c"opcov\\get_debug_info", get_debug_info, &FILE);
+#[cfg(feature = "engine-selftest")]
+pub(crate) const SELFTEST_CFG_INPUTS: zend_function_entry =
+    function_entry(c"opcov\\selftest_cfg_inputs", selftest_cfg_inputs, &FILE);
 pub(crate) const WRITE_REPORT: zend_function_entry =
     function_entry(c"opcov\\write_report", write_report, &REPORT);
 
@@ -897,6 +900,54 @@ impl Engine {
             "units": units.len(),
         });
     }
+}
+
+#[cfg(feature = "engine-selftest")]
+impl Engine {
+    fn cfg_inputs(&self, requested: &[u8]) -> Value {
+        let Some(record) = self
+            .find_file(requested)
+            .and_then(|file| return self.files.get(file))
+        else {
+            return Value::Object(Map::new());
+        };
+        return record
+            .functions
+            .iter()
+            .filter_map(|(key, &id)| return Some((key, &self.files.function(id)?.input)))
+            .map(|(key, input)| {
+                return (
+                    key.to_string(),
+                    serde_json::to_value(input).unwrap_or_else(|error| {
+                        return Value::String(format!("cannot serialise the CFG input: {error}"));
+                    }),
+                );
+            })
+            .collect();
+    }
+}
+
+#[cfg(feature = "engine-selftest")]
+unsafe extern "C" fn selftest_cfg_inputs(
+    execute_data: *mut zend_execute_data,
+    return_value: *mut zval,
+) {
+    guard(EntryPoint::SelftestCfgInputs, (), || {
+        let mut text: *const c_char = core::ptr::null();
+        let mut length = 0_usize;
+        // SAFETY: the engine calls this handler with the frame of this call.
+        if !unsafe { opcov_parse_path(execute_data, &raw mut text, &raw mut length) } {
+            return;
+        }
+        // SAFETY: the argument string stays alive during this call.
+        let bytes = unsafe { core::slice::from_raw_parts(text.cast::<u8>(), length) };
+        let built = with_engine(|engine| return engine.cfg_inputs(bytes))
+            .unwrap_or_else(|| return Value::Object(Map::new()));
+        // SAFETY: the engine passes this call's return slot.
+        if unsafe { php::emit(return_value, &built) }.is_err() {
+            return;
+        }
+    });
 }
 
 unsafe extern "C" fn get_debug_info(execute_data: *mut zend_execute_data, return_value: *mut zval) {

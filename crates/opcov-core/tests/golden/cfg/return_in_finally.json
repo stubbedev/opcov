@@ -1,0 +1,423 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\nfunction f($a) {\n    try {\n        if ($a) {\n            return 1;\n        }\n    } finally {\n        if (!$a) {\n            return 2;\n        }\n    }\n    return 3;\n}\n",
+  "input": {
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 2,
+            "opcode": "RECV"
+          }
+        ],
+        "successors": [
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 4,
+            "opcode": "JMPZ"
+          }
+        ],
+        "successors": [
+          4,
+          2
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 5,
+            "opcode": "FAST_CALL"
+          }
+        ],
+        "successors": [
+          6,
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 5,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 7,
+            "opcode": "FAST_CALL"
+          }
+        ],
+        "successors": [
+          6,
+          5
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 7,
+            "opcode": "JMP"
+          }
+        ],
+        "successors": [
+          9
+        ]
+      },
+      {
+        "flags": [
+          "Finally",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 8,
+            "opcode": "BOOL_NOT"
+          },
+          {
+            "line": 8,
+            "opcode": "JMPZ"
+          }
+        ],
+        "successors": [
+          8,
+          7
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 9,
+            "opcode": "DISCARD_EXCEPTION"
+          },
+          {
+            "line": 9,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 9,
+            "opcode": "FAST_RET"
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 12,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [],
+        "ops": [
+          {
+            "line": 13,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "file": "return_in_finally.php",
+    "flags": [],
+    "key": "f",
+    "line_end": 13,
+    "line_start": 2,
+    "loops": []
+  },
+  "expected": {
+    "diagnostics": [],
+    "function": {
+      "blocks": [
+        {
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "id": 0,
+          "line_end": 2,
+          "line_start": 2,
+          "op_end": 0,
+          "op_start": 0,
+          "ops": [
+            {
+              "line": 2,
+              "opcode": "RECV"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 1,
+          "line_end": 4,
+          "line_start": 4,
+          "op_end": 1,
+          "op_start": 1,
+          "ops": [
+            {
+              "line": 4,
+              "opcode": "JMPZ"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 2,
+          "line_end": 5,
+          "line_start": 5,
+          "op_end": 2,
+          "op_start": 2,
+          "ops": [
+            {
+              "line": 5,
+              "opcode": "FAST_CALL"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 3,
+          "line_end": 5,
+          "line_start": 5,
+          "op_end": 3,
+          "op_start": 3,
+          "ops": [
+            {
+              "line": 5,
+              "opcode": "RETURN"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 4,
+          "line_end": 7,
+          "line_start": 7,
+          "op_end": 4,
+          "op_start": 4,
+          "ops": [
+            {
+              "line": 7,
+              "opcode": "FAST_CALL"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 5,
+          "line_end": 7,
+          "line_start": 7,
+          "op_end": 5,
+          "op_start": 5,
+          "ops": [
+            {
+              "line": 7,
+              "opcode": "JMP"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Finally",
+            "Reachable"
+          ],
+          "id": 6,
+          "line_end": 8,
+          "line_start": 8,
+          "op_end": 7,
+          "op_start": 6,
+          "ops": [
+            {
+              "line": 8,
+              "opcode": "BOOL_NOT"
+            },
+            {
+              "line": 8,
+              "opcode": "JMPZ"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 7,
+          "line_end": 9,
+          "line_start": 9,
+          "op_end": 9,
+          "op_start": 8,
+          "ops": [
+            {
+              "line": 9,
+              "opcode": "DISCARD_EXCEPTION"
+            },
+            {
+              "line": 9,
+              "opcode": "RETURN"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 8,
+          "line_end": 9,
+          "line_start": 9,
+          "op_end": 10,
+          "op_start": 10,
+          "ops": [
+            {
+              "line": 9,
+              "opcode": "FAST_RET"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 9,
+          "line_end": 12,
+          "line_start": 12,
+          "op_end": 11,
+          "op_start": 11,
+          "ops": [
+            {
+              "line": 12,
+              "opcode": "RETURN"
+            }
+          ]
+        },
+        {
+          "flags": [],
+          "id": 10,
+          "line_end": 13,
+          "line_start": 13,
+          "op_end": 12,
+          "op_start": 12,
+          "ops": [
+            {
+              "line": 13,
+              "opcode": "RETURN"
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "kind": "Flow",
+          "to": 1
+        },
+        {
+          "from": 1,
+          "kind": "IfTrue",
+          "to": 2
+        },
+        {
+          "from": 1,
+          "kind": "IfFalse",
+          "to": 4
+        },
+        {
+          "from": 2,
+          "kind": "Flow",
+          "to": 3
+        },
+        {
+          "from": 2,
+          "kind": "Finally",
+          "to": 6
+        },
+        {
+          "from": 4,
+          "kind": "Flow",
+          "to": 5
+        },
+        {
+          "from": 4,
+          "kind": "Finally",
+          "to": 6
+        },
+        {
+          "from": 5,
+          "kind": "Flow",
+          "to": 9
+        },
+        {
+          "from": 6,
+          "kind": "IfTrue",
+          "to": 7
+        },
+        {
+          "from": 6,
+          "kind": "IfFalse",
+          "to": 8
+        }
+      ],
+      "file": "return_in_finally.php",
+      "flags": [],
+      "key": "f",
+      "line_end": 13,
+      "line_start": 2,
+      "loops": []
+    }
+  }
+}

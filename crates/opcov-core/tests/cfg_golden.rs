@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod golden {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -9,7 +9,7 @@ mod golden {
     use serde::Deserialize;
 
     const SUPPORTED_VERSIONS: [&str; 3] = ["8.4", "8.5", "8.6"];
-    const MINIMUM_FIXTURES: usize = 18;
+    const MINIMUM_FIXTURES: usize = 30;
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -44,6 +44,42 @@ mod golden {
         return (golden, raw["expected"].clone());
     }
 
+    fn fixture_name(path: &Path) -> String {
+        let file = path
+            .file_name()
+            .and_then(|name| return name.to_str())
+            .expect("UTF-8 name");
+        return file.split('.').next().expect("a file name").to_owned();
+    }
+
+    fn minor(version: &str) -> String {
+        return version.splitn(3, '.').take(2).collect::<Vec<_>>().join(".");
+    }
+
+    #[test]
+    fn every_fixture_has_exactly_one_golden_per_supported_php_version() {
+        let mut versions: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for path in fixture_paths() {
+            let (golden, _) = load(&path);
+            versions
+                .entry(fixture_name(&path))
+                .or_default()
+                .extend(golden.php.iter().map(|version| return minor(version)));
+        }
+        assert!(
+            versions.len() >= MINIMUM_FIXTURES,
+            "expected at least {MINIMUM_FIXTURES} fixtures, found {}",
+            versions.len()
+        );
+        for (name, mut found) in versions {
+            found.sort();
+            assert_eq!(
+                found, SUPPORTED_VERSIONS,
+                "{name}: the goldens of a fixture cover each supported PHP version exactly once"
+            );
+        }
+    }
+
     fn terminator_name(function: &Function, edge: &Edge) -> String {
         return function
             .block(edge.from)
@@ -74,25 +110,12 @@ mod golden {
 
     #[test]
     fn golden_snapshots_classify_and_round_trip() {
-        let paths = fixture_paths();
-        assert!(
-            paths.len() >= MINIMUM_FIXTURES,
-            "expected at least {MINIMUM_FIXTURES} goldens, found {}",
-            paths.len()
-        );
-        for path in paths {
+        for path in fixture_paths() {
             let name = path.display();
             let (golden, expected_json) = load(&path);
-
-            let versions: BTreeSet<&str> = golden
-                .php
-                .iter()
-                .filter_map(|version| return version.get(..3))
-                .collect();
-            let supported: BTreeSet<&str> = SUPPORTED_VERSIONS.into_iter().collect();
-            assert_eq!(
-                versions, supported,
-                "{name}: PHP versions it was dumped from"
+            assert!(
+                !golden.php.is_empty(),
+                "{name}: names the PHP versions it was dumped from"
             );
             assert!(
                 golden.source.starts_with("<?php"),

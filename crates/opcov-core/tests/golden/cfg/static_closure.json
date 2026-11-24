@@ -1,0 +1,218 @@
+{
+  "php": [
+    "8.4.28",
+    "8.5.13",
+    "8.6.0"
+  ],
+  "source": "<?php\n$f = static function ($a) {\n    return $a ? 1 : 2;\n};\n",
+  "input": {
+    "blocks": [
+      {
+        "flags": [
+          "Start",
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 2,
+            "opcode": "RECV"
+          },
+          {
+            "line": 3,
+            "opcode": "JMPZ"
+          }
+        ],
+        "successors": [
+          2,
+          1
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 3,
+            "opcode": "QM_ASSIGN"
+          },
+          {
+            "line": 3,
+            "opcode": "JMP"
+          }
+        ],
+        "successors": [
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 3,
+            "opcode": "QM_ASSIGN"
+          }
+        ],
+        "successors": [
+          3
+        ]
+      },
+      {
+        "flags": [
+          "Reachable"
+        ],
+        "ops": [
+          {
+            "line": 3,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      },
+      {
+        "flags": [],
+        "ops": [
+          {
+            "line": 4,
+            "opcode": "RETURN"
+          }
+        ],
+        "successors": []
+      }
+    ],
+    "file": "static_closure.php",
+    "flags": [
+      "StaticClosure"
+    ],
+    "key": "{closure}@static_closure.php:2-4",
+    "line_end": 4,
+    "line_start": 2,
+    "loops": []
+  },
+  "expected": {
+    "diagnostics": [],
+    "function": {
+      "blocks": [
+        {
+          "flags": [
+            "Start",
+            "Reachable"
+          ],
+          "id": 0,
+          "line_end": 3,
+          "line_start": 2,
+          "op_end": 1,
+          "op_start": 0,
+          "ops": [
+            {
+              "line": 2,
+              "opcode": "RECV"
+            },
+            {
+              "line": 3,
+              "opcode": "JMPZ"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 1,
+          "line_end": 3,
+          "line_start": 3,
+          "op_end": 3,
+          "op_start": 2,
+          "ops": [
+            {
+              "line": 3,
+              "opcode": "QM_ASSIGN"
+            },
+            {
+              "line": 3,
+              "opcode": "JMP"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 2,
+          "line_end": 3,
+          "line_start": 3,
+          "op_end": 4,
+          "op_start": 4,
+          "ops": [
+            {
+              "line": 3,
+              "opcode": "QM_ASSIGN"
+            }
+          ]
+        },
+        {
+          "flags": [
+            "Reachable"
+          ],
+          "id": 3,
+          "line_end": 3,
+          "line_start": 3,
+          "op_end": 5,
+          "op_start": 5,
+          "ops": [
+            {
+              "line": 3,
+              "opcode": "RETURN"
+            }
+          ]
+        },
+        {
+          "flags": [],
+          "id": 4,
+          "line_end": 4,
+          "line_start": 4,
+          "op_end": 6,
+          "op_start": 6,
+          "ops": [
+            {
+              "line": 4,
+              "opcode": "RETURN"
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": 0,
+          "kind": "IfTrue",
+          "to": 1
+        },
+        {
+          "from": 0,
+          "kind": "IfFalse",
+          "to": 2
+        },
+        {
+          "from": 1,
+          "kind": "Flow",
+          "to": 3
+        },
+        {
+          "from": 2,
+          "kind": "Flow",
+          "to": 3
+        }
+      ],
+      "file": "static_closure.php",
+      "flags": [
+        "StaticClosure"
+      ],
+      "key": "{closure}@static_closure.php:2-4",
+      "line_end": 4,
+      "line_start": 2,
+      "loops": []
+    }
+  }
+}

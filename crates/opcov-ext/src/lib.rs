@@ -73,7 +73,7 @@ static FUNCTIONS: FunctionTable<9> = FunctionTable::new([
 ]);
 
 #[cfg(feature = "engine-selftest")]
-static FUNCTIONS: FunctionTable<14> = FunctionTable::new([
+static FUNCTIONS: FunctionTable<15> = FunctionTable::new([
     VERSION_FUNCTION,
     api::ENSURE_CAN_COLLECT,
     api::START,
@@ -88,6 +88,7 @@ static FUNCTIONS: FunctionTable<14> = FunctionTable::new([
     selftest::SELFTEST_PANIC_IN_PROBE_FUNCTION,
     selftest::SELFTEST_FORCE_WATCH_FUNCTION,
     selftest::SELFTEST_FAIL_SNAPSHOT_FUNCTION,
+    api::SELFTEST_CFG_INPUTS,
 ]);
 
 static MODULE: Module = Module::new(ModuleDefinition {
