@@ -57,7 +57,7 @@ final class Run
         $result = ['driver' => $this->config->driver->value, 'php' => PHP_VERSION, 'tests' => $this->tests];
         match ($this->config->mode) {
             Mode::Coverage => $result += $this->completedCoverage(),
-            Mode::Payload => $result += ['payload_bytes' => $this->payload, 'report_bytes' => $this->session->writeReport("{$this->config->output}.report.json", $this->config->root)],
+            Mode::Payload => $result += ['payload_bytes' => $this->payload, 'report' => $this->session->writeReport("{$this->config->output}.report.json", $this->config->root)->toArray()],
             Mode::Discard => null,
         };
         Json::write($this->config->output, $result);

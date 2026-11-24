@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Opcov\Measure\Bench;
 
 use Opcov\Measure\Driver;
+use Opcov\Measure\ReportSize;
 
 final class WorkloadResult
 {
@@ -13,8 +14,8 @@ final class WorkloadResult
     /** @var array<string, int> */
     private array $payloadBytes = [];
 
-    /** @var array<string, ?int> */
-    private array $reportBytes = [];
+    /** @var array<string, ReportSize> */
+    private array $reports = [];
 
     /** @var array<string, list<float>> */
     private array $seconds = [];
@@ -34,7 +35,7 @@ final class WorkloadResult
     public function timedOut(Driver $driver): void
     {
         $this->timedOut[$driver->value] = true;
-        unset($this->seconds[$driver->value], $this->rss[$driver->value], $this->payloadBytes[$driver->value]);
+        unset($this->seconds[$driver->value], $this->rss[$driver->value], $this->payloadBytes[$driver->value], $this->reports[$driver->value]);
     }
 
     public function hasTimedOut(Driver $driver): bool
@@ -42,16 +43,16 @@ final class WorkloadResult
         return isset($this->timedOut[$driver->value]);
     }
 
-    public function payload(Driver $driver, int $tests, int $bytes, ?int $reportBytes): void
+    public function payload(Driver $driver, int $tests, int $bytes, ReportSize $report): void
     {
         $this->expectTests($driver, $tests);
         $this->payloadBytes[$driver->value] = $bytes;
-        $this->reportBytes[$driver->value] = $reportBytes;
+        $this->reports[$driver->value] = $report;
     }
 
-    public function reportBytes(Driver $driver): ?int
+    public function report(Driver $driver): ReportSize
     {
-        return $this->reportBytes[$driver->value] ?? null;
+        return $this->reports[$driver->value] ?? throw new \LogicException("{$this->workload->value} has no report size for {$driver->value}");
     }
 
     public function timed(Driver $driver, int $tests, float $seconds, int $rssBytes): void
@@ -111,7 +112,7 @@ final class WorkloadResult
                 'seconds' => $this->seconds[$driver->value],
                 'peak_rss_bytes' => $this->rss[$driver->value],
                 'payload_bytes' => $this->payloadBytes($driver),
-                'report_bytes' => $this->reportBytes($driver),
+                'report' => $this->report($driver)->toArray(),
             ];
         }
         return ['tests' => $this->tests(), 'drivers' => $drivers];

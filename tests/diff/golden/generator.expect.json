@@ -1,0 +1,17 @@
+{
+    "outcomes": [],
+    "loops": [
+        {
+            "function": "gen",
+            "line": 3,
+            "flag": "zero",
+            "hit": false
+        },
+        {
+            "function": "gen",
+            "line": 3,
+            "flag": "second",
+            "hit": true
+        }
+    ]
+}

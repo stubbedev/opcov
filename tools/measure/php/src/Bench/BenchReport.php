@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Opcov\Measure\Bench;
 
 use Opcov\Measure\DocSection;
+use Opcov\Measure\ReportSize;
 use Opcov\Measure\Toolchain;
 
 final readonly class BenchReport
@@ -60,8 +61,21 @@ final readonly class BenchReport
             $markdown .= sprintf("\n#### %s\n\n%s; %d tests.\n\n", $name, ucfirst($result->workload->description()), $result->tests());
             $rows = $this->rows($result);
             $markdown .= DocSection::table(array_shift($rows), $rows);
+            foreach ($result->drivers() as $driver) {
+                if (!$result->hasTimedOut($driver) && $result->report($driver)->refusal !== null) {
+                    $markdown .= sprintf("\n%s refused to write the report: %s\n", $driver->label(), $result->report($driver)->refusal);
+                }
+            }
         }
         return $markdown;
+    }
+
+    private static function reportCell(ReportSize $report): string
+    {
+        if ($report->bytes !== null) {
+            return sprintf('%.2f', $report->bytes / 1048576);
+        }
+        return $report->refusal === null ? 'n/a' : 'refused';
     }
 
     /** @return list<list<string>> */
@@ -83,7 +97,7 @@ final readonly class BenchReport
                 $overhead === null ? 'n/a' : sprintf('%.2f', $overhead),
                 sprintf('%.1f', $result->rss($driver)->median / 1048576),
                 sprintf('%.2f', $result->payloadBytes($driver) / 1048576),
-                $result->reportBytes($driver) === null ? 'n/a' : sprintf('%.2f', $result->reportBytes($driver) / 1048576),
+                self::reportCell($result->report($driver)),
             ];
         }
         return $rows;

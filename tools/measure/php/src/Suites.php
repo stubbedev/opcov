@@ -36,23 +36,39 @@ final readonly class Suites
     {
         $root = $this->toolchain->root;
         $goldens = glob("$root/crates/opcov-core/tests/golden/cfg/*.json") ?: throw new \RuntimeException("no golden CFG fixtures under $root/crates/opcov-core/tests/golden/cfg");
+        $variants = [];
+        foreach ($goldens as $golden) {
+            if (preg_match('~^([a-z0-9_]+)(?:\.(\d)(\d+))?\.json$~', basename($golden), $match, PREG_UNMATCHED_AS_NULL) !== 1) {
+                throw new \RuntimeException("$golden is not named <fixture>.json or <fixture>.<major><minor>.json");
+            }
+            $variants[$match[1]][$match[2] === null ? '' : "$match[2].$match[3]"] = $golden;
+        }
+        ksort($variants, SORT_STRING);
         $runners = glob("$root/tests/diff/golden/*.php") ?: [];
         $runners = [...$runners, ...(glob("$root/tests/diff/golden/*.expect.json") ?: [])];
-        $names = array_map(static fn (string $path): string => basename($path, '.json'), $goldens);
-        $stale = array_diff(array_map(static fn (string $path): string => preg_replace('~\.(expect\.json|php)$~', '', basename($path)), $runners), $names);
+        $stale = array_diff(array_map(static fn (string $path): string => preg_replace('~\.(expect\.json|php)$~', '', basename($path)), $runners), array_keys($variants));
         if ($stale !== []) {
             throw new \RuntimeException('tests/diff/golden has runners for golden fixtures that no longer exist: ' . implode(', ', $stale));
         }
+        $php = $this->toolchain->phpVersion();
         $targets = [];
-        foreach ($goldens as $golden) {
-            $name = basename($golden, '.json');
+        foreach ($variants as $name => $byVersion) {
+            $golden = $byVersion[$php] ?? $byVersion[''] ?? null;
+            if ($golden === null) {
+                continue;
+            }
             $runner = "$root/tests/diff/golden/$name.php";
             if (!is_file($runner)) {
                 throw new \RuntimeException("golden fixture $golden has no runner $runner that calls its function");
             }
-            $source = Json::read($golden)['source'] ?? null;
+            $fixture = Json::read($golden);
+            $source = $fixture['source'] ?? null;
             if (!is_string($source)) {
                 throw new \RuntimeException("$golden has no 'source'");
+            }
+            $releases = $fixture['php'] ?? null;
+            if (!is_array($releases) || array_filter($releases, static fn (mixed $release): bool => is_string($release) && str_starts_with($release, "$php.")) === []) {
+                throw new \RuntimeException("$golden is the golden fixture $name for PHP $php, but its 'php' list names no PHP $php release");
             }
             $sources = "{$this->toolchain->cache}/golden/$name";
             Filesystem::writeIfChanged("$sources/$name.php", $source);

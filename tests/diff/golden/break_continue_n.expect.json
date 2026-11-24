@@ -1,0 +1,29 @@
+{
+    "outcomes": [],
+    "loops": [
+        {
+            "function": "scan",
+            "line": 3,
+            "flag": "zero",
+            "hit": false
+        },
+        {
+            "function": "scan",
+            "line": 3,
+            "flag": "second",
+            "hit": true
+        },
+        {
+            "function": "scan",
+            "line": 5,
+            "flag": "zero",
+            "hit": false
+        },
+        {
+            "function": "scan",
+            "line": 5,
+            "flag": "second",
+            "hit": true
+        }
+    ]
+}

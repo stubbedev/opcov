@@ -1,0 +1,17 @@
+{
+    "outcomes": [],
+    "loops": [
+        {
+            "function": "consume",
+            "line": 8,
+            "flag": "zero",
+            "hit": false
+        },
+        {
+            "function": "consume",
+            "line": 8,
+            "flag": "second",
+            "hit": true
+        }
+    ]
+}

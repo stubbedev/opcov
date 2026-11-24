@@ -8,6 +8,39 @@
     ],
     "entries": [
         {
+            "file": "golden/enum_method/enum_method.php",
+            "line": 9,
+            "drivers": [
+                "opcov",
+                "pcov"
+            ],
+            "aspect": "lines",
+            "reason": "Precision case: the unexecuted last arm of a multi-line match over an enum shares line 9 with the `FREE`, `VERIFY_RETURN_TYPE` and `RETURN` that consume the match result; PCOV and Xdebug mark the line covered whenever the match ran, opcov does not probe consumer opcodes (docs/configuration.md, Executable lines).",
+            "issue": "https://github.com/stubbedev/opcov/issues/5"
+        },
+        {
+            "file": "golden/generator/generator.php",
+            "line": 3,
+            "drivers": [
+                "opcov",
+                "xdebug-branch"
+            ],
+            "aspect": "outcomes",
+            "reason": "Xdebug 3.5.3 artifact: in a generator, Xdebug records neither the hit nor the outgoing edges of the block the body runs in right after the generator starts or resumes (the code after GENERATOR_CREATE or a yield runs in a new execution segment). Reproduced outside the suite: in `function g($a) { $x = yield 1; if ($a) { echo ''; } return 2; }` resumed with `send()`, Xdebug reports branch 0 with hit 0 and both edges not taken while the `if` body's branch has hit 1; the same code without `yield` reports the edge taken. Here the generator's first block holds `foreach`'s `FE_RESET`, so its `LoopEnter` edge is missing from Xdebug's data although the loop body ran.",
+            "issue": "https://github.com/stubbedev/opcov/issues/13"
+        },
+        {
+            "file": "golden/yield_from/yield_from.php",
+            "line": 4,
+            "drivers": [
+                "opcov",
+                "xdebug-branch"
+            ],
+            "aspect": "outcomes",
+            "reason": "Xdebug 3.5.3 artifact: in a generator, Xdebug records neither the hit nor the outgoing edges of the block the body runs in right after the generator starts or resumes (the code after GENERATOR_CREATE or a yield runs in a new execution segment). Reproduced outside the suite: in `function g($a) { $x = yield 1; if ($a) { echo ''; } return 2; }` resumed with `send()`, Xdebug reports branch 0 with hit 0 and both edges not taken while the `if` body's branch has hit 1; the same code without `yield` reports the edge taken. Here the block that resumes after `yield from` ends in the `if ($more)` jump, so its `IfFalse` edge is missing from Xdebug's data although the generator returned through it.",
+            "issue": "https://github.com/stubbedev/opcov/issues/13"
+        },
+        {
             "file": "fixtures/hooks/hooks.php",
             "line": 17,
             "drivers": [

@@ -63,11 +63,12 @@ final readonly class BenchRun
 
     public function execute(): int
     {
+        $machine = Machine::describe();
         $results = [];
         foreach ($this->workloads as $workload) {
             $results[$workload->value] = $this->measure($workload);
         }
-        $report = new BenchReport($this->toolchain, $this->versions(), Machine::describe(), $this->runs, $results);
+        $report = new BenchReport($this->toolchain, $this->versions(), $machine, $this->runs, $results);
         Json::write(sprintf('%s/bench/%s/results.json', $this->toolchain->cache, $this->toolchain->phpVersion()), $report->toArray());
         echo $report->text();
         if ($this->writeDocs) {
@@ -101,7 +102,7 @@ final readonly class BenchRun
                 $result->timedOut($driver);
                 continue;
             }
-            $result->payload($driver, $payload->tests(), $payload->payloadBytes(), $payload->reportBytes());
+            $result->payload($driver, $payload->tests(), $payload->payloadBytes(), $payload->report());
         }
         for ($round = 1; $round <= $this->runs; $round++) {
             foreach ($this->drivers as $driver) {

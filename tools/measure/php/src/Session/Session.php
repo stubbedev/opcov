@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Opcov\Measure\Session;
 
 use Opcov\Measure\Coverage;
+use Opcov\Measure\ReportSize;
 
 interface Session
 {
@@ -16,7 +17,7 @@ interface Session
 
     public function collect(string $test, Coverage $coverage): void;
 
-    public function writeReport(string $path, string $root): ?int;
+    public function writeReport(string $path, string $root): ReportSize;
 
     public function complete(Coverage $coverage): void;
 }

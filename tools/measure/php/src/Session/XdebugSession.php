@@ -7,6 +7,7 @@ namespace Opcov\Measure\Session;
 use Opcov\Measure\Coverage;
 use Opcov\Measure\Decision;
 use Opcov\Measure\Outcome;
+use Opcov\Measure\ReportSize;
 use Opcov\Measure\Selection;
 
 final class XdebugSession implements Session
@@ -95,9 +96,9 @@ final class XdebugSession implements Session
         }
     }
 
-    public function writeReport(string $path, string $root): ?int
+    public function writeReport(string $path, string $root): ReportSize
     {
-        return null;
+        return ReportSize::none();
     }
 
     public function complete(Coverage $coverage): void

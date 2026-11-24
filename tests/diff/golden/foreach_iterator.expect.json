@@ -1,0 +1,17 @@
+{
+    "outcomes": [],
+    "loops": [
+        {
+            "function": "sum",
+            "line": 4,
+            "flag": "zero",
+            "hit": true
+        },
+        {
+            "function": "sum",
+            "line": 4,
+            "flag": "second",
+            "hit": false
+        }
+    ]
+}

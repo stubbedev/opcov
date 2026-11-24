@@ -1,0 +1,17 @@
+{
+    "outcomes": [
+        {
+            "function": "{closure}@arrow_function.php:2-2",
+            "line": 2,
+            "kind": "CoalesceFallback",
+            "hit": true
+        },
+        {
+            "function": "{closure}@arrow_function.php:2-2",
+            "line": 2,
+            "kind": "CoalesceValue",
+            "hit": false
+        }
+    ],
+    "loops": []
+}

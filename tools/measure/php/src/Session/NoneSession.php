@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Opcov\Measure\Session;
 
 use Opcov\Measure\Coverage;
+use Opcov\Measure\ReportSize;
 
 final class NoneSession implements Session
 {
@@ -25,9 +26,9 @@ final class NoneSession implements Session
     {
     }
 
-    public function writeReport(string $path, string $root): ?int
+    public function writeReport(string $path, string $root): ReportSize
     {
-        return null;
+        return ReportSize::none();
     }
 
     public function complete(Coverage $coverage): void

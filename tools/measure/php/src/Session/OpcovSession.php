@@ -8,6 +8,7 @@ use Opcov\Measure\Coverage;
 use Opcov\Measure\Decision;
 use Opcov\Measure\Loop;
 use Opcov\Measure\Outcome;
+use Opcov\Measure\ReportSize;
 
 final class OpcovSession implements Session
 {
@@ -72,15 +73,20 @@ final class OpcovSession implements Session
         }
     }
 
-    public function writeReport(string $path, string $root): int
+    public function writeReport(string $path, string $root): ReportSize
     {
-        \opcov\write_report($path, ['root' => $root]);
+        try {
+            \opcov\write_report($path, ['root' => $root]);
+        } catch (\RuntimeException $e) {
+            fwrite(STDERR, "opcov\\write_report() refused the report: {$e->getMessage()}\n");
+            return ReportSize::refused(str_replace([$path, "$root/"], [basename($path), ''], $e->getMessage()));
+        }
         clearstatcache(true, $path);
         $size = filesize($path);
         if ($size === false) {
             throw new \RuntimeException("opcov\\write_report() wrote no $path");
         }
-        return $size;
+        return ReportSize::written($size);
     }
 
     public function complete(Coverage $coverage): void

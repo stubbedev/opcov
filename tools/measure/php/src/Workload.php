@@ -43,10 +43,21 @@ final readonly class Workload
         return $tests;
     }
 
-    public function load(): void
+    /** @return array<string, mixed> */
+    public function load(): array
     {
+        $variables = [];
         foreach (Files::php($this->sources) as $file) {
-            require_once $file;
+            $defined = (static function (): array {
+                require_once func_get_arg(0);
+                return get_defined_vars();
+            })($file);
+            $clashes = array_intersect_key($defined, $variables);
+            if ($clashes !== []) {
+                throw new \UnexpectedValueException(sprintf('%s defines $%s, which another measured file of %s defines too', $file, implode(', $', array_keys($clashes)), $this->sources));
+            }
+            $variables += $defined;
         }
+        return $variables;
     }
 }

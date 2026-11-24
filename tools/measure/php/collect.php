@@ -17,11 +17,11 @@ $workload = Workload::open($argv[1], $argv[2]);
 $tests = $workload->tests();
 $run = new Run(Config::fromEnvironment());
 $run->beginTest('load');
-$workload->load();
+$variables = $workload->load();
 $run->endTest();
 foreach ($tests as $index => $test) {
     $run->beginTest("test#$index");
-    $test();
+    $test($variables);
     $run->endTest();
 }
 $run->finish();

@@ -23,10 +23,12 @@ final readonly class ChildResult
         return Coverage::fromArray($this->data, $source);
     }
 
-    public function reportBytes(): ?int
+    public function report(): ReportSize
     {
-        $bytes = $this->data['report_bytes'] ?? null;
-        return is_int($bytes) || $bytes === null ? $bytes : throw new \RuntimeException("{$this->process->log}: malformed report size");
+        if (!array_key_exists('report', $this->data)) {
+            throw new \RuntimeException("{$this->process->log}: the run reported no report size");
+        }
+        return ReportSize::fromArray($this->data['report'], $this->process->log);
     }
 
     public function payloadBytes(): int
