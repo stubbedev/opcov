@@ -56,6 +56,51 @@ jobs:
         with:
           sarif_file: ${{ steps.scan.outputs.sarif }}
 
+  mago:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+      - name: Analyze and lint opcov/phpunit with mago
+        working-directory: php/phpunit
+        run: |
+          nix develop --command composer install --no-interaction --no-progress --quiet
+          nix develop --command mago analyze --reporting-format sarif > "$RUNNER_TEMP/mago-analyze.sarif"
+          nix develop --command mago lint --reporting-format sarif > "$RUNNER_TEMP/mago-lint.sarif"
+      - uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        if: always()
+        with:
+          sarif_file: ${{ runner.temp }}/mago-analyze.sarif
+          category: mago-analyze
+      - uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        if: always()
+        with:
+          sarif_file: ${{ runner.temp }}/mago-lint.sarif
+          category: mago-lint
+
+  composer-audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+      - name: Audit the locked Composer dependencies
+        run: |
+          for dir in php/phpunit php/phpunit/tests/fixture/phpunit12 php/phpunit/tests/fixture/phpunit13 php/phpunit/tests/fixture/pest4; do
+            echo "::group::$dir"
+            nix develop --command composer audit --locked --no-interaction --working-dir="$dir"
+            echo "::endgroup::"
+          done
+
   cargo-deny-advisories:
     runs-on: ubuntu-latest
     permissions:

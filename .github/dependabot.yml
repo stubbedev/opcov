@@ -44,3 +44,21 @@ updates:
       all:
         patterns:
           - "*"
+
+  - package-ecosystem: "composer"
+    directories:
+      - "/php/phpunit"
+      - "/php/phpunit/tests/fixture/phpunit12"
+      - "/php/phpunit/tests/fixture/phpunit13"
+      - "/php/phpunit/tests/fixture/pest4"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "area: dependencies"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      all:
+        patterns:
+          - "*"
