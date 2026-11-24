@@ -43,7 +43,7 @@ use conflicts::Conflicts;
 use engine::{Engine, OffReason, with_engine};
 use guard::{EntryPoint, guard};
 use opcov_sys::{
-    ArgInfo, FunctionTable, MAY_BE_STRING, Module, ModuleDefinition, SUCCESS,
+    ArgInfo, FunctionTable, MAY_BE_STRING, Module, ModuleDefinition, ModuleType, SUCCESS,
     ZEND_COMPILE_NO_JUMPTABLES, function_entry, opcov_parse_parameters_none, opcov_zval_stringl,
     zend_execute_data, zend_extension, zend_function_entry, zend_get_resource_handle,
     zend_module_entry, zend_register_extension, zend_result, zval,
@@ -134,7 +134,7 @@ unsafe extern "C" fn version(execute_data: *mut zend_execute_data, return_value:
 
 const TRACKER: &CStr = c"opcov op_array tracker";
 
-fn startup(module_type: c_int, module_number: c_int) {
+fn startup(module_type: ModuleType, module_number: c_int) {
     if !ini::register(module_type, module_number) {
         api::STARTUP.get_or_init(|| return OffReason::IniRegistrationFailed);
         return;
@@ -165,14 +165,14 @@ fn startup(module_type: c_int, module_number: c_int) {
     engine::install(Engine::new(slot));
 }
 
-unsafe extern "C" fn module_startup(module_type: c_int, module_number: c_int) -> zend_result {
+unsafe extern "C" fn module_startup(module_type: ModuleType, module_number: c_int) -> zend_result {
     guard(EntryPoint::ModuleStartup, (), || {
         startup(module_type, module_number);
     });
     return SUCCESS;
 }
 
-unsafe extern "C" fn module_shutdown(module_type: c_int, module_number: c_int) -> zend_result {
+unsafe extern "C" fn module_shutdown(module_type: ModuleType, module_number: c_int) -> zend_result {
     guard(EntryPoint::ModuleShutdown, (), || {
         let installed = with_engine(|engine| return engine.label.is_some()).unwrap_or(false);
         if installed {
@@ -227,12 +227,18 @@ fn activate() {
     }
 }
 
-unsafe extern "C" fn request_startup(_module_type: c_int, _module_number: c_int) -> zend_result {
+unsafe extern "C" fn request_startup(
+    _module_type: ModuleType,
+    _module_number: c_int,
+) -> zend_result {
     guard(EntryPoint::RequestStartup, (), activate);
     return SUCCESS;
 }
 
-unsafe extern "C" fn request_shutdown(_module_type: c_int, _module_number: c_int) -> zend_result {
+unsafe extern "C" fn request_shutdown(
+    _module_type: ModuleType,
+    _module_number: c_int,
+) -> zend_result {
     guard(EntryPoint::RequestShutdown, (), || {
         if threads::foreign() {
             return;

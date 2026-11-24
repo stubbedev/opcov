@@ -151,6 +151,7 @@ impl Target {
 struct Php {
     target: Target,
     zts: bool,
+    typed_module_api: bool,
     include_dirs: Vec<PathBuf>,
     config_header: PathBuf,
 }
@@ -302,6 +303,27 @@ fn query(command: &OsString, argument: &'static str) -> Result<String, Error> {
     return Ok(stdout.trim().to_owned());
 }
 
+fn detect_typed_module_api(config_header: &Path) -> Result<bool, Error> {
+    let modules_header = config_header
+        .parent()
+        .and_then(Path::parent)
+        .map(|include| return include.join("Zend").join("zend_modules.h"))
+        .ok_or_else(|| {
+            return Error::ReadHeader {
+                path: config_header.to_owned(),
+                source: io::Error::from(io::ErrorKind::NotFound),
+            };
+        })?;
+    println!("cargo::rerun-if-changed={}", modules_header.display());
+    let header = fs::read_to_string(&modules_header).map_err(|source| {
+        return Error::ReadHeader {
+            path: modules_header.clone(),
+            source,
+        };
+    })?;
+    return Ok(header.contains("C23_ENUM(zend_module_type"));
+}
+
 fn detect_zts(config_header: &Path) -> Result<bool, Error> {
     let header = fs::read_to_string(config_header).map_err(|source| {
         return Error::ReadHeader {
@@ -344,9 +366,11 @@ fn discover() -> Result<Php, Error> {
         .join("main")
         .join("php_config.h");
     let zts = detect_zts(&config_header)?;
+    let typed_module_api = detect_typed_module_api(&config_header)?;
     return Ok(Php {
         target,
         zts,
+        typed_module_api,
         include_dirs,
         config_header,
     });
@@ -366,9 +390,12 @@ fn emit_cfgs(php: &Php) {
         .map(|version| return format!("\"{version}\""))
         .join(", ");
     println!("cargo::rustc-check-cfg=cfg(php_zts)");
+    println!("cargo::rustc-check-cfg=cfg(php_typed_module_api)");
+    println!("cargo::rustc-check-cfg=cfg(php_unreleased)");
     println!("cargo::rustc-check-cfg=cfg(php_version, values({versions}))");
     println!("cargo::rustc-cfg=php_version=\"{}\"", php.target.engine());
     if let Target::Unreleased { version_id } = php.target {
+        println!("cargo::rustc-cfg=php_unreleased");
         println!(
             "cargo::warning=building against unreleased PHP {version_id} with the engine model of PHP {} ({ALLOW_UNRELEASED_ENV}=1)",
             PhpVersion::NEWEST
@@ -376,6 +403,9 @@ fn emit_cfgs(php: &Php) {
     }
     if php.zts {
         println!("cargo::rustc-cfg=php_zts");
+    }
+    if php.typed_module_api {
+        println!("cargo::rustc-cfg=php_typed_module_api");
     }
 }
 

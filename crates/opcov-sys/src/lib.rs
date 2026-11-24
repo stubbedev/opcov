@@ -76,7 +76,13 @@ impl TryFrom<c_int> for VmKind {
     }
 }
 
-pub type ModuleHook = unsafe extern "C" fn(c_int, c_int) -> zend_result;
+pub const ENGINE_UNRELEASED: bool = cfg!(php_unreleased);
+
+#[cfg(php_typed_module_api)]
+pub type ModuleType = zend_module_type;
+#[cfg(not(php_typed_module_api))]
+pub type ModuleType = c_int;
+pub type ModuleHook = unsafe extern "C" fn(ModuleType, c_int) -> zend_result;
 pub type InfoHook = unsafe extern "C" fn(*mut zend_module_entry);
 pub type FunctionHandler = unsafe extern "C" fn(*mut zend_execute_data, *mut zval);
 
@@ -308,6 +314,12 @@ const MODULE_ENTRY_SIZE: u16 = {
     size_of::<zend_module_entry>() as u16
 };
 
+#[cfg(php_typed_module_api)]
+const fn flag(set: bool) -> bool {
+    return set;
+}
+
+#[cfg(not(php_typed_module_api))]
 const fn flag(set: bool) -> u8 {
     return if set { 1 } else { 0 };
 }
@@ -323,35 +335,25 @@ unsafe impl Sync for Module {}
 impl Module {
     #[must_use]
     pub const fn new<const N: usize>(definition: ModuleDefinition<N>) -> Self {
-        return Self(UnsafeCell::new(zend_module_entry {
-            size: MODULE_ENTRY_SIZE,
-            zend_api: ZEND_MODULE_API_NO,
-            zend_debug: flag(ZEND_DEBUG != 0),
-            zts: flag(ZTS),
-            ini_entry: ptr::null(),
-            deps: ptr::null(),
-            name: definition.name.as_ptr(),
-            functions: definition.functions.as_ptr(),
-            module_startup_func: definition.module_startup,
-            module_shutdown_func: definition.module_shutdown,
-            request_startup_func: definition.request_startup,
-            request_shutdown_func: definition.request_shutdown,
-            info_func: definition.info,
-            version: definition.version.as_ptr(),
-            globals_size: 0,
-            #[cfg(php_zts)]
-            globals_id_ptr: ptr::null_mut(),
-            #[cfg(not(php_zts))]
-            globals_ptr: ptr::null_mut(),
-            globals_ctor: None,
-            globals_dtor: None,
-            post_deactivate_func: None,
-            module_started: 0,
-            type_: 0,
-            handle: ptr::null_mut(),
-            module_number: 0,
-            build_id: (&raw const opcov_module_build_id).cast(),
-        }));
+        // SAFETY: zend_module_entry is a plain C struct whose all-zero value is valid for every
+        // field (null pointers, None callbacks, zero numbers, false), the value C's
+        // STANDARD_MODULE_PROPERTIES gives the fields opcov does not set, including fields newer
+        // PHP versions add.
+        let mut entry: zend_module_entry = unsafe { core::mem::zeroed() };
+        entry.size = MODULE_ENTRY_SIZE;
+        entry.zend_api = ZEND_MODULE_API_NO;
+        entry.zend_debug = flag(ZEND_DEBUG != 0);
+        entry.zts = flag(ZTS);
+        entry.name = definition.name.as_ptr();
+        entry.functions = definition.functions.as_ptr();
+        entry.module_startup_func = definition.module_startup;
+        entry.module_shutdown_func = definition.module_shutdown;
+        entry.request_startup_func = definition.request_startup;
+        entry.request_shutdown_func = definition.request_shutdown;
+        entry.info_func = definition.info;
+        entry.version = definition.version.as_ptr();
+        entry.build_id = (&raw const opcov_module_build_id).cast();
+        return Self(UnsafeCell::new(entry));
     }
 
     #[must_use]

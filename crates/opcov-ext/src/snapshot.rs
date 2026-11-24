@@ -6,10 +6,11 @@ use opcov_core::cfg::{
     SnapshotError,
 };
 use opcov_sys::{
-    OPCOV_ENGINE_VERSION_ID, ZEND_ACC_ANON_CLASS, ZEND_ACC_CLOSURE, ZEND_BB_CATCH, ZEND_BB_FINALLY,
-    ZEND_BB_FINALLY_END, ZEND_BB_REACHABLE, ZEND_BB_RECV_ENTRY, ZEND_BB_START, ZEND_MODULE_API_NO,
-    opcov_arena_create_caught, opcov_arena_destroy, opcov_build_cfg, zend_arena, zend_basic_block,
-    zend_cfg, zend_class_entry, zend_op, zend_op_array, zend_string, zend_try_catch_element,
+    ENGINE_UNRELEASED, OPCOV_ENGINE_VERSION_ID, ZEND_ACC_ANON_CLASS, ZEND_ACC_CLOSURE,
+    ZEND_BB_CATCH, ZEND_BB_FINALLY, ZEND_BB_FINALLY_END, ZEND_BB_REACHABLE, ZEND_BB_RECV_ENTRY,
+    ZEND_BB_START, ZEND_MODULE_API_NO, opcov_arena_create_caught, opcov_arena_destroy,
+    opcov_build_cfg, zend_arena, zend_basic_block, zend_cfg, zend_class_entry, zend_op,
+    zend_op_array, zend_string, zend_try_catch_element,
 };
 
 use crate::{
@@ -26,7 +27,7 @@ pub(crate) const PHP: PhpVersion = match PhpVersion::from_version_id(OPCOV_ENGIN
 };
 
 const _: () = assert!(
-    PHP.module_api() == ZEND_MODULE_API_NO,
+    ENGINE_UNRELEASED || PHP.module_api() == ZEND_MODULE_API_NO,
     "opcov-core's module API number for this PHP differs from the engine's headers"
 );
 

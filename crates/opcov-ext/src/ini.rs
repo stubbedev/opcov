@@ -1,8 +1,8 @@
 use core::ffi::{CStr, c_int};
 
 use opcov_sys::{
-    IniTable, ZEND_INI_PERDIR, ZEND_INI_SYSTEM, ini_entry, opcov_ini_long, opcov_ini_string,
-    zend_register_ini_entries_ex, zend_unregister_ini_entries_ex,
+    IniTable, ModuleType, ZEND_INI_PERDIR, ZEND_INI_SYSTEM, ini_entry, opcov_ini_long,
+    opcov_ini_string, zend_register_ini_entries_ex, zend_unregister_ini_entries_ex,
 };
 
 pub(crate) const ENABLED: &CStr = c"opcov.enabled";
@@ -19,7 +19,7 @@ static ENTRIES: IniTable<4> = IniTable::new([
     ini_entry(EXCLUDE_PATTERN, c"", STARTUP_OR_DIRECTORY),
 ]);
 
-pub(crate) fn register(module_type: c_int, module_number: c_int) -> bool {
+pub(crate) fn register(module_type: ModuleType, module_number: c_int) -> bool {
     // SAFETY: called from module startup with the engine's module number and type; the table is
     // 'static and terminated by a null entry.
     let result =
@@ -27,7 +27,7 @@ pub(crate) fn register(module_type: c_int, module_number: c_int) -> bool {
     return result == opcov_sys::SUCCESS;
 }
 
-pub(crate) fn unregister(module_type: c_int, module_number: c_int) {
+pub(crate) fn unregister(module_type: ModuleType, module_number: c_int) {
     // SAFETY: called from module shutdown with the module number the entries were registered under.
     unsafe { zend_unregister_ini_entries_ex(module_number, module_type) };
 }

@@ -510,7 +510,7 @@ bool opcov_fast_call_threw(const zend_execute_data *execute_data, uint32_t var)
 
 uint32_t opcov_fast_call_var(const zend_op_array *op_array, uint32_t finally_op)
 {
-	for (int index = 0; index < op_array->last_try_catch; index++) {
+	for (uint32_t index = 0; index < (uint32_t) op_array->last_try_catch; index++) {
 		const zend_try_catch_element *element = &op_array->try_catch_array[index];
 		if (element->finally_op == finally_op && element->finally_end > 0) {
 			return op_array->opcodes[element->finally_end].op1.var;
