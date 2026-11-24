@@ -11,7 +11,6 @@ final readonly class Arguments
      * @param array<string, true> $flags
      */
     private function __construct(
-        public string $command,
         private array $options,
         private array $flags,
     ) {
@@ -39,7 +38,7 @@ final readonly class Arguments
             $value = $argv[++$i] ?? throw new \InvalidArgumentException("option $name needs a value");
             $options[$name][] = $value;
         }
-        return new self($command, $options, $flags);
+        return new self($options, $flags);
     }
 
     public function required(string $name): string

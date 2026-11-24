@@ -18,6 +18,17 @@ final class Cli
 
     public const int ERROR = 2;
 
+    private const array BENCH_SELECTION = ['--env', '--opcov', '--runs', '--workload', '--driver'];
+
+    private const array BENCH_OUTPUTS = ['--write-docs', '--check', '--update-baseline'];
+
+    private const array OPTIONS = [
+        'parity' => [['--env', '--opcov', '--suite', '--budget'], ['--write-docs']],
+        'bench' => [[...self::BENCH_SELECTION, '--timeout-minutes'], [...self::BENCH_OUTPUTS, '--fresh']],
+        'bench-report' => [self::BENCH_SELECTION, self::BENCH_OUTPUTS],
+        'lock' => [['--env', '--opcov', '--suite'], []],
+    ];
+
     /** @param list<string> $argv */
     public static function main(array $argv): int
     {
@@ -25,13 +36,15 @@ final class Cli
             if (getenv(Config::VARIABLE) !== false) {
                 throw new \LogicException(Config::VARIABLE . ' is set: tools/measure is running inside one of its own measured children and refuses to recurse');
             }
-            $arguments = Arguments::parse($argv, ['--env', '--opcov', '--suite', '--budget', '--runs', '--workload', '--driver'], ['--write-docs', '--check', '--update-baseline']);
+            $command = $argv[0] ?? throw new \InvalidArgumentException('missing command; expected ' . implode(', ', array_keys(self::OPTIONS)));
+            [$valued, $switches] = self::OPTIONS[$command] ?? throw new \InvalidArgumentException("unknown command $command; expected " . implode(', ', array_keys(self::OPTIONS)));
+            $arguments = Arguments::parse($argv, $valued, $switches);
             $root = dirname(__DIR__, 4);
-            return match ($arguments->command) {
+            return match ($command) {
                 'parity' => self::parity($arguments, $root),
-                'bench' => BenchRun::fromArguments($arguments, self::toolchain($arguments, $root))->execute(),
+                'bench' => self::bench($arguments, $root),
+                'bench-report' => BenchRun::fromArguments($arguments, self::toolchain($arguments, $root))->report(),
                 'lock' => self::lock($arguments, $root),
-                default => throw new \InvalidArgumentException("unknown command {$arguments->command}; expected parity, bench or lock"),
             };
         } catch (\Throwable $e) {
             fwrite(STDERR, sprintf("tools/measure: %s\n", self::describe($e)));
@@ -51,6 +64,13 @@ final class Cli
     private static function toolchain(Arguments $arguments, string $root): Toolchain
     {
         return Toolchain::open($arguments->required('--env'), $arguments->required('--opcov'), $root);
+    }
+
+    private static function bench(Arguments $arguments, string $root): int
+    {
+        $run = BenchRun::fromArguments($arguments, self::toolchain($arguments, $root));
+        $run->measure($arguments->positiveInt('--timeout-minutes', 15), $arguments->flag('--fresh'));
+        return $run->report();
     }
 
     private static function parity(Arguments $arguments, string $root): int

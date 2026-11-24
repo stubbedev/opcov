@@ -50,6 +50,16 @@ final readonly class Allocations
         return new self($calls, $frees, $bytes, count($files));
     }
 
+    /** @param array<mixed> $data */
+    public static function fromArray(array $data): self
+    {
+        $counts = [];
+        foreach (['calls', 'frees', 'bytes', 'processes'] as $key) {
+            $counts[] = is_int($data[$key] ?? null) ? $data[$key] : throw new \RuntimeException("the allocations have no integer $key");
+        }
+        return new self(...$counts);
+    }
+
     /** @return array{calls: int, frees: int, bytes: int, processes: int} */
     public function toArray(): array
     {

@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-exec "$(dirname "${BASH_SOURCE[0]}")/measure" bench "$@"
+measure="$(dirname "${BASH_SOURCE[0]}")/measure"
+if [[ "${1:-}" == report ]]; then
+    shift
+    exec "$measure" bench-report "$@"
+fi
+exec "$measure" bench "$@"

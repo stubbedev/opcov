@@ -23,19 +23,32 @@ final class WorkloadResult
     /** @var array<string, Sample> */
     private array $systemAllocator = [];
 
-    /** @var array<string, true> */
+    /** @var array<string, TimedOut> */
     private array $timedOut = [];
 
-    public function __construct(
-        public readonly BenchWorkload $workload,
-        public readonly int $budgetSeconds,
-    ) {
+    /** @var array<string, TimedOut> */
+    private array $systemTimedOut = [];
+
+    private function __construct(public readonly BenchWorkload $workload)
+    {
     }
 
-    public function timedOut(Driver $driver): void
+    /**
+     * @param list<Driver> $drivers
+     * @param \Closure(Key): Record $lookup
+     */
+    public static function collect(BenchWorkload $workload, array $drivers, int $runs, \Closure $lookup): self
     {
-        $this->timedOut[$driver->value] = true;
-        unset($this->samples[$driver->value], $this->systemAllocator[$driver->value], $this->payloadBytes[$driver->value], $this->reports[$driver->value]);
+        $result = new self($workload);
+        foreach ($drivers as $driver) {
+            $result->collectDriver($driver, $runs, $lookup);
+        }
+        return $result;
+    }
+
+    public function timeout(Driver $driver): ?TimedOut
+    {
+        return $this->timedOut[$driver->value] ?? null;
     }
 
     public function hasTimedOut(Driver $driver): bool
@@ -43,28 +56,9 @@ final class WorkloadResult
         return isset($this->timedOut[$driver->value]);
     }
 
-    public function payload(Driver $driver, int $tests, int $bytes, ReportSize $report): void
-    {
-        $this->expectTests($driver, $tests);
-        $this->payloadBytes[$driver->value] = $bytes;
-        $this->reports[$driver->value] = $report;
-    }
-
     public function report(Driver $driver): ReportSize
     {
         return $this->reports[$driver->value] ?? throw new \LogicException("{$this->workload->value} has no report size for {$driver->value}");
-    }
-
-    public function timed(Driver $driver, int $tests, Sample $sample): void
-    {
-        $this->expectTests($driver, $tests);
-        $this->samples[$driver->value][] = $sample;
-    }
-
-    public function systemAllocator(Driver $driver, int $tests, Sample $sample): void
-    {
-        $this->expectTests($driver, $tests);
-        $this->systemAllocator[$driver->value] = $sample;
     }
 
     public function tests(): int
@@ -125,28 +119,56 @@ final class WorkloadResult
         return $this->systemAllocator[$driver->value] ?? null;
     }
 
+    public function systemTimeout(Driver $driver): ?TimedOut
+    {
+        return $this->systemTimedOut[$driver->value] ?? null;
+    }
+
     public function payloadBytes(Driver $driver): int
     {
         return $this->payloadBytes[$driver->value] ?? throw new \LogicException("{$this->workload->value} has no payload size for {$driver->value}");
     }
 
-    /** @return array<string, mixed> */
-    public function toArray(): array
+    /** @param \Closure(Key): Record $lookup */
+    private function collectDriver(Driver $driver, int $runs, \Closure $lookup): void
     {
-        $drivers = [];
-        foreach ($this->drivers() as $driver) {
-            if ($this->hasTimedOut($driver)) {
-                $drivers[$driver->value] = ['timed_out_after_seconds' => $this->budgetSeconds];
-                continue;
-            }
-            $drivers[$driver->value] = [
-                'runs' => array_map(static fn (Sample $sample): array => $sample->toArray(), $this->samples[$driver->value]),
-                'system_allocator_run' => $this->systemSample($driver)?->toArray() ?? ['timed_out_after_seconds' => $this->budgetSeconds],
-                'payload_bytes' => $this->payloadBytes($driver),
-                'report' => $this->report($driver)->toArray(),
-            ];
+        $payload = $lookup(Key::payload($this->workload, $driver))->result;
+        if ($payload instanceof TimedOut) {
+            $this->timedOut[$driver->value] = $payload;
+            return;
         }
-        return ['tests' => $this->tests(), 'drivers' => $drivers];
+        if (!$payload instanceof PayloadSize) {
+            throw new \LogicException("{$this->workload->value} {$driver->value}: a payload record holds " . $payload::class);
+        }
+        $this->expectTests($driver, $payload->tests);
+        $this->payloadBytes[$driver->value] = $payload->bytes;
+        $this->reports[$driver->value] = $payload->report;
+        $samples = [];
+        for ($round = 1; $round <= $runs; $round++) {
+            $run = $lookup(Key::run($this->workload, $driver, $round))->result;
+            if ($run instanceof TimedOut) {
+                $this->timedOut[$driver->value] = $run;
+                unset($this->payloadBytes[$driver->value], $this->reports[$driver->value]);
+                return;
+            }
+            $samples[] = $this->measured($driver, $run);
+        }
+        $this->samples[$driver->value] = $samples;
+        $system = $lookup(Key::systemAllocator($this->workload, $driver))->result;
+        if ($system instanceof TimedOut) {
+            $this->systemTimedOut[$driver->value] = $system;
+            return;
+        }
+        $this->systemAllocator[$driver->value] = $this->measured($driver, $system);
+    }
+
+    private function measured(Driver $driver, Result $result): Sample
+    {
+        if (!$result instanceof Measured) {
+            throw new \LogicException("{$this->workload->value} {$driver->value}: a timed record holds " . $result::class);
+        }
+        $this->expectTests($driver, $result->tests);
+        return $result->sample;
     }
 
     private function expectTests(Driver $driver, int $tests): void

@@ -28,7 +28,7 @@ final readonly class Baseline
             }
             ksort($ratios[$metric]);
         }
-        $data[$php] = ['machine' => $report->toArray()['machine'], 'opcov_over_none' => $ratios];
+        $data[$php] = ['machine' => $report->machine, 'opcov_over_none' => $ratios];
         ksort($data);
         Json::write($this->path, $data);
     }

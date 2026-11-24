@@ -17,14 +17,35 @@ tools/measure/bench --workload branchy --runs 3            # one workload
 tools/measure/bench --driver none --driver opcov --check   # regression check against bench/baseline.json
 tools/measure/bench --write-docs                           # rewrite this page's tables for this PHP
 tools/measure/bench --update-baseline                      # store opcov's overhead as the new baseline
+tools/measure/bench report --write-docs --update-baseline  # the same outputs from the recorded samples, without measuring
 OPCOV_MEASURE_PHP=php84 tools/measure/bench
 ```
 
 Options: `--workload` and `--driver` (repeatable), `--runs <n>` (default 3),
-`--budget <seconds>` per run (default 900; a driver that exceeds it is shown as
-timed out and skipped for the rest of that workload), `--check`,
-`--update-baseline`, `--write-docs`. Raw results go to
-`target/measure-cache/bench/<php>/results.json`.
+`--timeout-minutes <n>` per driver run (default 15; a driver that exceeds it
+is shown as "> n min" and skipped for the rest of that workload), `--fresh`,
+`--check`, `--update-baseline`, `--write-docs`.
+
+Every measurement (a driver's payload run, each timed round, the
+`USE_ZEND_ALLOC=0` run, or a timeout) is appended to
+`target/measure-cache/bench/<php>/samples.jsonl` as soon as it finishes, one
+JSON object per line, keyed by workload, driver, step and round and tagged
+with the build it measured: the PHP release, the measurement environment's
+Nix store path and, for opcov, the SHA-256 of the extension. A run skips every
+sample already recorded for the same build, so an interrupted or restarted
+run resumes where it stopped and loses at most the run in progress. A recorded
+timeout is kept only while `--timeout-minutes` is not larger than the limit it
+hit; raising the limit measures that driver again. `--fresh` discards the
+recorded samples of the selected workloads and drivers for this build and
+measures them again. Rebuilding opcov changes its hash, so only opcov is
+measured again.
+
+`tools/measure/bench report` takes the same `--workload`, `--driver` and
+`--runs` selection and the `--write-docs`, `--update-baseline` and `--check`
+outputs, and works from the recorded samples alone. It fails, naming the
+missing sample and the command that measures it, when a selected workload,
+driver or round has not been recorded for this build. The machine description
+in the tables is the one recorded with the earliest sample the report uses.
 
 ## Method
 

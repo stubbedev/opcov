@@ -54,6 +54,28 @@ final readonly class Counters
         return new self($values, $reported);
     }
 
+    /** @param array<mixed> $data */
+    public static function fromArray(array $data): self
+    {
+        $counted = is_array($data['values'] ?? null) ? $data['values'] : throw new \RuntimeException('the counters have no values');
+        $names = is_array($data['reported'] ?? null) ? $data['reported'] : throw new \RuntimeException('the counters have no reported names');
+        $values = [];
+        $reported = [];
+        foreach (self::EVENTS as $event) {
+            if (!array_key_exists($event, $counted) || !is_string($names[$event] ?? null)) {
+                throw new \RuntimeException("the counters have no $event");
+            }
+            $value = $counted[$event];
+            $values[$event] = match (true) {
+                $value === null => null,
+                is_int($value), is_float($value) => (float) $value,
+                default => throw new \RuntimeException("the $event counter is not a number"),
+            };
+            $reported[$event] = $names[$event];
+        }
+        return new self($values, $reported);
+    }
+
     /** @return array{values: array<string, ?float>, reported: array<string, string>} */
     public function toArray(): array
     {

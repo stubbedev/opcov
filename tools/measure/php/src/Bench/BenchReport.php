@@ -19,22 +19,10 @@ final readonly class BenchReport
     public function __construct(
         private Toolchain $toolchain,
         private array $versions,
-        private array $machine,
+        public array $machine,
         private int $runs,
         public array $workloads,
     ) {
-    }
-
-    /** @return array<string, mixed> */
-    public function toArray(): array
-    {
-        return [
-            'php' => $this->toolchain->phpRelease,
-            'versions' => $this->versions,
-            'machine' => $this->machine,
-            'runs' => $this->runs,
-            'workloads' => array_map(static fn (WorkloadResult $result): array => $result->toArray(), $this->workloads),
-        ];
     }
 
     public function text(): string
@@ -94,8 +82,9 @@ final readonly class BenchReport
     {
         $rows = [['driver', 'instructions', 'x none', 'cycles', 'x none', 'branch misses', 'cache misses', 'page faults', 'task-clock s', 'wall s (min-max)', 'x none', 'peak RSS MiB']];
         foreach ($result->drivers() as $driver) {
-            if ($result->hasTimedOut($driver)) {
-                $rows[] = [$driver->label(), "timed out after {$result->budgetSeconds} s", '', '', '', '', '', '', '', '', '', ''];
+            $timeout = $result->timeout($driver);
+            if ($timeout !== null) {
+                $rows[] = [$driver->label(), $timeout->cell(), '', '', '', '', '', '', '', '', '', ''];
                 continue;
             }
             $wall = $result->stats($driver, static fn (Sample $sample): float => $sample->seconds);
@@ -125,8 +114,9 @@ final readonly class BenchReport
         $rows = [['driver', 'allocation calls (Zend MM)', 'x none', 'bytes allocated (Zend MM)', 'allocation calls (USE_ZEND_ALLOC=0)', 'x none', 'bytes allocated (USE_ZEND_ALLOC=0)', 'PHP peak MiB', 'payload MiB', 'report MiB']];
         $noneSystem = in_array(Driver::None, $result->drivers(), true) && !$result->hasTimedOut(Driver::None) ? $result->systemSample(Driver::None) : null;
         foreach ($result->drivers() as $driver) {
-            if ($result->hasTimedOut($driver)) {
-                $rows[] = [$driver->label(), "timed out after {$result->budgetSeconds} s", '', '', '', '', '', '', '', ''];
+            $timeout = $result->timeout($driver);
+            if ($timeout !== null) {
+                $rows[] = [$driver->label(), $timeout->cell(), '', '', '', '', '', '', '', ''];
                 continue;
             }
             $calls = $result->stats($driver, static fn (Sample $sample): int => $sample->allocations->calls);
@@ -138,7 +128,7 @@ final readonly class BenchReport
                 self::count($calls?->median),
                 self::ratioCell($result->ratio($driver, static fn (Sample $sample): int => $sample->allocations->calls)),
                 self::bytes($bytes?->median),
-                $system === null ? "timed out after {$result->budgetSeconds} s" : self::count((float) $system->allocations->calls),
+                $system === null ? ($result->systemTimeout($driver) ?? throw new \LogicException("{$driver->value} has neither a system allocator run nor its timeout"))->cell() : self::count((float) $system->allocations->calls),
                 $system === null || $noneSystem === null || $noneSystem->allocations->calls === 0 ? 'n/a' : sprintf('%.2f', $system->allocations->calls / $noneSystem->allocations->calls),
                 $system === null ? '' : self::bytes((float) $system->allocations->bytes),
                 $peak === null ? 'unavailable' : sprintf('%.1f', $peak->median / 1048576),

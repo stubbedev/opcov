@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
-    echo "usage: tools/measure/measure parity|bench|lock [options]" >&2
+    echo "usage: tools/measure/measure parity|bench|bench-report|lock [options]" >&2
     exit 2
 fi
 command="$1"
