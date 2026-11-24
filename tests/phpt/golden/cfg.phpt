@@ -2,8 +2,19 @@
 The CFG snapshots the extension builds match the goldens of opcov-core recorded for this PHP version
 --SKIPIF--
 <?php
-if (!is_dir(__DIR__ . '/../../../crates/opcov-core/tests/golden/cfg')) {
+$goldens = __DIR__ . '/../../../crates/opcov-core/tests/golden/cfg';
+if (!is_dir($goldens)) {
     die('skip the opcov-core goldens are not part of this test tree');
+}
+$running = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
+$recorded = false;
+foreach (glob($goldens . '/*.json') as $golden) {
+    foreach (json_decode(file_get_contents($golden), true, flags: JSON_THROW_ON_ERROR)['php'] as $version) {
+        $recorded = $recorded || str_starts_with($version, $running . '.');
+    }
+}
+if (!$recorded) {
+    die("skip no CFG goldens are recorded for PHP $running yet; record them with tests/phpt/golden/dump.inc when it is supported");
 }
 ?>
 --INI--

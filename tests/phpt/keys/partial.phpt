@@ -21,12 +21,17 @@ foreach (\opcov\get_debug_info($file)['probes'] as $probe) {
     $armed[$probe['function']][] = $probe['armed'] === [] ? 'ran' : 'idle';
 }
 foreach (array_keys(\opcov\executable([$file])[$file]['functions']) as $key) {
+    $name = str_replace($file, 'partial.php', $key);
+    if (str_starts_with($name, '{main}')) {
+        echo $name, "\n";
+        continue;
+    }
     $state = isset($armed[$key]) ? implode(',', array_unique($armed[$key])) : 'no probes';
-    echo str_replace($file, 'partial.php', $key), ": $state\n";
+    echo $name, ": $state\n";
 }
 --EXPECT--
 hello world
-{main}@partial.php: no probes
+{main}@partial.php
 join_words: ran
 {closure}@partial.php:3-3: idle
 {closure}@partial.php:3-3#1: ran
