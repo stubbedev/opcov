@@ -121,7 +121,25 @@ both PHP 8.5 NTS built with `--enable-debug` and unstripped, with their
 extensions' own php-src test suites switched off:
 
 - `php85-debug` (`phpDebug`): GCC, with Valgrind support, and `valgrind` in
-  the shell.
+  the shell. It uses PHP's bundled PCRE2 instead of the system one, because
+  only the bundled copy is compiled with Valgrind support in a debug build:
+  without it the PCRE JIT's SIMD scans read the padding after a string's
+  terminating NUL, which memcheck reports as uninitialised reads from JIT code
+  it cannot symbolize (every frame `???`). The shell sets `VALGRIND_OPTS`:
+  `--leak-check=full`, without which memcheck's `-q` mode prints no leak at
+  all; `--track-origins=yes` and `--keep-debuginfo=yes`, so a report names
+  where the uninitialised value or the leaked block came from even after a
+  module is unloaded; `--trace-children-skip=/bin/*,/sbin/*,/usr/*`, because
+  `run-tests.php` traces child processes and a host executable such as
+  `/bin/sh` (which `shell_exec()` and `passthru()` run) uses the host's
+  dynamic linker, which on Ubuntu is stripped of the symbols memcheck needs to
+  start, so such a child runs untraced, along with everything it spawns; and
+  `--suppressions` with the suppression file in `nix/shell.nix`, one entry per
+  known false positive, each with its justification. It also sets
+  `USE_TRACKED_ALLOC=1`, which `run-tests.php -m` does not: with
+  `USE_ZEND_ALLOC=0` PHP then frees every allocation a fatal error abandons,
+  as the Zend allocator does, while a leak in a request that ends normally
+  still reaches memcheck.
 - `php85-asan` (`phpAsan`): clang, with `--enable-address-sanitizer
   --enable-undefined-sanitizer` and without Valgrind support (php-src refuses
   both together). The shell builds the extension and the CLI with

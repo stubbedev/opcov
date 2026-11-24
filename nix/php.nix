@@ -16,6 +16,10 @@
         dontStrip = true;
         separateDebugInfo = false;
       });
+    bundledPcre = php:
+      php.overrideAttrs (prev: {
+        configureFlags = lib.filter (flag: !lib.hasPrefix "--with-external-pcre" flag) prev.configureFlags;
+      });
   in {
     _module.args = {
       phpZts = zts;
@@ -39,7 +43,7 @@
         php84-call-vm = clang pkgs.php84;
         php85-tailcall-vm = clang pkgs.php85;
       };
-      phpDebug = debug [] pkgs.php85;
+      phpDebug = bundledPcre (debug [] pkgs.php85);
       phpAsan = debug ["--enable-address-sanitizer" "--enable-undefined-sanitizer"] (clang (pkgs.php85.override {valgrindSupport = false;}));
     };
   };

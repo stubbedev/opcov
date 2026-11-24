@@ -62,6 +62,36 @@
         php85-debug = shell {
           php = phpDebug;
           packages = [phpDebug.unwrapped pkgs.valgrind];
+          env = {
+            USE_TRACKED_ALLOC = "1";
+            VALGRIND_OPTS = lib.concatStringsSep " " [
+              "--leak-check=full"
+              "--track-origins=yes"
+              "--keep-debuginfo=yes"
+              "--trace-children-skip=/bin/*,/sbin/*,/usr/*"
+              "--suppressions=${pkgs.writeText "opcov-valgrind.supp" ''
+                # std keeps a thread's handle in a TLS slot (pointing past the Arc header) until a pthread key destructor runs, which never happens for the main thread; report::digests creates the handle through std::thread::scope.
+                {
+                   rust-std-main-thread-handle
+                   Memcheck:Leak
+                   match-leak-kinds: possible
+                   fun:malloc
+                   ...
+                   fun:_RNvNtNtCs*_3std6thread7current12init_current
+                }
+                # glibc caches the stacks of joined threads for reuse, and a cached thread's TLS vector is referenced only from its thread control block in that stack; the opcov CLI joins every thread it spawns.
+                {
+                   glibc-cached-thread-tls-vector
+                   Memcheck:Leak
+                   match-leak-kinds: possible
+                   fun:calloc
+                   fun:allocate_dtv
+                   fun:_dl_allocate_tls
+                   fun:pthread_create@@GLIBC_*
+                }
+              ''}"
+            ];
+          };
         };
         php85-asan = shell {
           php = phpAsan;
