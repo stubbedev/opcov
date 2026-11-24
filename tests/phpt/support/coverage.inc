@@ -31,6 +31,21 @@ function opcov_child(string $script, array $ini = [], ?string $binary = null, ar
     return (string) $output;
 }
 
+function opcov_filesystem_takes_non_utf8_names(): bool
+{
+    $directory = sys_get_temp_dir() . '/opcov-bytes-' . getmypid() . '-' . bin2hex(random_bytes(4));
+    if (!@mkdir($directory)) {
+        return false;
+    }
+    $file = $directory . "/caf\xE9.php";
+    $taken = @file_put_contents($file, '') !== false;
+    if ($taken) {
+        unlink($file);
+    }
+    rmdir($directory);
+    return $taken;
+}
+
 function opcov_sibling_binary(string $name): ?string
 {
     $binary = dirname(PHP_BINARY) . '/' . $name;

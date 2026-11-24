@@ -2,6 +2,10 @@
 Names and file names that are not UTF-8 keep their bytes: the live API returns the raw file name and canonically encoded keys, reports carry the encoding, merge back to the bytes one process writes and convert (lcov with the raw path, Clover with the encoding)
 --SKIPIF--
 <?php
+require __DIR__ . '/../support/coverage.inc';
+if (!opcov_filesystem_takes_non_utf8_names()) {
+    die('skip the file system refuses file names that are not UTF-8');
+}
 if (!is_executable((string) getenv('OPCOV_CLI'))) {
     die('skip OPCOV_CLI does not name the opcov binary');
 }

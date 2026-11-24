@@ -1,5 +1,12 @@
 --TEST--
 An exclude pattern that fails on one file's path (a /u pattern meets a file name that is not UTF-8) skips only that file, with the reason and its code; collection stays on for every other file
+--SKIPIF--
+<?php
+require __DIR__ . '/../support/coverage.inc';
+if (!opcov_filesystem_takes_non_utf8_names()) {
+    die('skip the file system refuses file names that are not UTF-8');
+}
+?>
 --FILE--
 <?php
 require __DIR__ . '/../support/coverage.inc';
