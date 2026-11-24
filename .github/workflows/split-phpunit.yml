@@ -1,0 +1,56 @@
+name: "split-phpunit"
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: split-phpunit-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  split:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Split php/phpunit and push it to stubbedev/opcov-phpunit
+        env:
+          DEPLOY_KEY: ${{ secrets.OPCOV_PHPUNIT_DEPLOY_KEY }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          key="$RUNNER_TEMP/deploy-key"
+          install -m 600 /dev/null "$key"
+          printf '%s\n' "$DEPLOY_KEY" > "$key"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
+          echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > "$RUNNER_TEMP/known_hosts"
+          split="$(git subtree split --prefix=php/phpunit HEAD)"
+          remote="git@github.com:stubbedev/opcov-phpunit.git"
+          if [ "$REF_TYPE" = "tag" ]; then
+            git push "$remote" "${split}:refs/tags/${REF_NAME}"
+          else
+            git push "$remote" "${split}:refs/heads/main"
+          fi
+      - name: Tell Packagist about the new version
+        env:
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}
+        run: |
+          status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 60 https://packagist.org/packages/opcov/phpunit.json)"
+          if [ "$status" = "404" ]; then
+            echo "::notice::opcov/phpunit is not on Packagist yet; submit https://github.com/stubbedev/opcov-phpunit there"
+            exit 0
+          fi
+          curl --fail-with-body --silent --show-error --max-time 60 \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --data '{"repository":{"url":"https://github.com/stubbedev/opcov-phpunit"}}' \
+            "https://packagist.org/api/update-package?username=${PACKAGIST_USERNAME}&apiToken=${PACKAGIST_TOKEN}"

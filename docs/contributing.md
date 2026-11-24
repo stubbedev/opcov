@@ -266,6 +266,7 @@ stable, so any of them can be made a required check.
 | `fuzz.yml` | nightly, manual | `targets`, `fuzz` | every target listed in `crates/opcov-core/fuzz/Cargo.toml`, 300 s each with `just fuzz`; on failure the crashing inputs are uploaded as `fuzz-artifacts-<target>` |
 | `php-src-nightly.yml` | nightly, manual | `phpt`, `report` | the `.phpt` suite against php-src `master`, NTS and ZTS; a failure opens or comments on an issue |
 | `security.yml` | every pull request, push to `main`, nightly | | CodeQL, Grype, `just deny advisories` and, on pull requests, dependency review |
+| `split-phpunit.yml` | push to `main`, `v*` tags, manual | `split` | `git subtree split --prefix=php/phpunit` pushed to the read-only [stubbedev/opcov-phpunit](https://github.com/stubbedev/opcov-phpunit) (its `main`, or the tag) with the `OPCOV_PHPUNIT_DEPLOY_KEY` deploy key, then Packagist's update API for `opcov/phpunit` (`PACKAGIST_USERNAME`, `PACKAGIST_TOKEN`) |
 | `release.yml` | `v*` tags | | checks the tag against `Cargo.toml` and `CHANGELOG.md`, builds and tests every release archive with Nix (`nix build .#release`) and on musl (`musl.yml`), pushes the Docker images and creates the GitHub release, with provenance attestations |
 
 Dependabot keeps crates, workflows and flake inputs current.

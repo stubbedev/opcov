@@ -16,6 +16,12 @@ PHPUnit 13 and Pest 4. It provides:
 composer require --dev opcov/phpunit
 ```
 
+The package lives in `php/phpunit` of this repository and is published to
+Packagist from its read-only split,
+[stubbedev/opcov-phpunit](https://github.com/stubbedev/opcov-phpunit), which a
+workflow updates on every push to `main` and every release tag; send issues and
+pull requests here.
+
 The extension itself is installed separately ([install.md](install.md)) and
 loaded in `php.ini` (`extension=opcov`); loading it with `opcov.enabled=0`, the
 default, changes nothing. The package's major version follows the extension's:
