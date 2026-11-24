@@ -11,18 +11,15 @@ opcov.enabled=1
 opcov.collect_paths={PWD}/fixtures
 --FILE--
 <?php
+require __DIR__ . '/../support/coverage.inc';
 $fixtures = __DIR__ . '/fixtures';
 require "$fixtures/try_catch.php";
 $report = tempnam(sys_get_temp_dir(), 'opcov-try-catch-');
 \opcov\write_report($report, ['root' => $fixtures]);
-$process = proc_open([getenv('OPCOV_CLI'), 'doctor', '--report', $report, '--format', 'json'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
-$output = stream_get_contents($pipes[1]);
-$errors = stream_get_contents($pipes[2]);
-fclose($pipes[1]);
-fclose($pipes[2]);
-echo 'exit ', proc_close($process), $errors, "\n";
+$doctor = opcov_cli(['doctor', '--report', $report, '--format', 'json']);
+echo 'exit ', $doctor->status, "\n";
 unlink($report);
-$diagnosis = json_decode($output, true, flags: JSON_THROW_ON_ERROR);
+$diagnosis = json_decode($doctor->output, true, flags: JSON_THROW_ON_ERROR);
 $loops = 0;
 foreach (\opcov\executable(["$fixtures/try_catch.php"])["$fixtures/try_catch.php"]['functions'] as $function) {
     foreach ($function['outcomes'] as $outcome) {

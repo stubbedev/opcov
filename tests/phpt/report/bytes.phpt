@@ -79,12 +79,12 @@ echo "report files: ", implode(', ', array_keys($report['files'])), "\n";
 foreach ($report['files']['caf%E9 100%25.php']['functions'] as $key => $function) {
     echo "  $key: ", count($function['outcomes']), " outcomes\n";
 }
-$cli = escapeshellarg(getenv('OPCOV_CLI'));
-passthru("$cli merge " . escapeshellarg("$dir/b.json") . ' ' . escapeshellarg("$dir/a.json") . ' -o ' . escapeshellarg("$dir/merged.json"), $status);
-var_dump($status, file_get_contents("$dir/merged.json") === file_get_contents("$dir/both.json"));
+$merge = opcov_cli(['merge', "$dir/b.json", "$dir/a.json", '-o', "$dir/merged.json"]);
+echo $merge->output;
+var_dump($merge->status, file_get_contents("$dir/merged.json") === file_get_contents("$dir/both.json"));
 foreach (['lcov', 'clover', 'html'] as $format) {
-    passthru("$cli convert " . escapeshellarg("$dir/both.json") . " --format $format -o " . escapeshellarg("$dir/out.$format"), $status);
-    echo "$format: $status\n";
+    $convert = opcov_cli(['convert', "$dir/both.json", '--format', $format, '-o', "$dir/out.$format"]);
+    echo $convert->output, "$format: {$convert->status}\n";
 }
 $lcov = file_get_contents("$dir/out.lcov");
 preg_match_all('/^SF:.*$/m', $lcov, $lines);

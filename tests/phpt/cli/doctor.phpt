@@ -13,32 +13,29 @@ if (opcov_opcache_ini() === null) {
 --FILE--
 <?php
 require __DIR__ . '/../support/coverage.inc';
-preg_match('~extension=["\']?([^"\' ]*opcov[^"\' ]*)~', getenv('TEST_PHP_EXTRA_ARGS'), $match);
+$extension = current(array_filter(opcov_extra_args(), static fn (string $argument): bool => str_starts_with($argument, 'extension=') && str_contains($argument, 'opcov'))) ?: throw new RuntimeException('TEST_PHP_EXTRA_ARGS loads no opcov extension');
 $scan = sys_get_temp_dir() . '/opcov-doctor-ini-' . getmypid();
 mkdir($scan);
-$doctor = static function (string $ini) use ($scan): string {
+$doctor = static function (string $ini) use ($scan): OpcovProcess {
     file_put_contents($scan . '/opcov.ini', $ini);
-    $command = 'PHP_INI_SCAN_DIR=' . escapeshellarg($scan) . ' PHPRC= '
-        . escapeshellarg(getenv('OPCOV_CLI')) . ' doctor --php ' . escapeshellarg(PHP_BINARY) . ' --format json; echo "exit $?"';
-    return opcov_child('<?php echo shell_exec(' . var_export($command, true) . ');');
+    return opcov_cli(['doctor', '--php', PHP_BINARY, '--format', 'json'], ['PHP_INI_SCAN_DIR' => $scan, 'PHPRC' => '']);
 };
-$summary = static function (string $output): string {
-    [$json, $exit] = explode("\nexit ", trim($output));
-    $checkup = json_decode($json, true);
+$summary = static function (OpcovProcess $doctor): string {
+    $checkup = json_decode($doctor->output, true);
     return json_encode([
-        'exit' => (int) $exit,
+        'exit' => $doctor->status,
         'loaded' => $checkup['runtime'] !== null,
         'self_test' => $checkup['self_test'],
         'findings' => array_map(static fn (array $finding): string => $finding['code'] . ': ' . $finding['fix'], $checkup['findings']),
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
 };
-echo $summary($doctor("extension={$match[1]}\n"));
+echo $summary($doctor("{$extension}\n"));
 echo $summary($doctor(''));
 $opcache = '';
 foreach (opcov_opcache_ini() as $name => $value) {
     $opcache .= "$name=$value\n";
 }
-echo $summary($doctor("extension={$match[1]}\n{$opcache}opcache.enable_cli=1\nopcache.protect_memory=1\n"));
+echo $summary($doctor("{$extension}\n{$opcache}opcache.enable_cli=1\nopcache.protect_memory=1\n"));
 unlink($scan . '/opcov.ini');
 rmdir($scan);
 ?>

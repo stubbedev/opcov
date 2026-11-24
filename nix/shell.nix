@@ -89,6 +89,13 @@
                    fun:_dl_allocate_tls
                    fun:pthread_create@@GLIBC_*
                 }
+                # Xdebug's MINIT reads /proc/self/mountinfo into an 8 KiB stack buffer and splits it as a C string; a mountinfo of 8 KiB or more leaves the buffer without a terminating NUL, so the split reads past it. compat/xdebug-develop.phpt loads Xdebug in a child PHP.
+                {
+                   xdebug-mountinfo-unterminated
+                   Memcheck:Cond
+                   ...
+                   fun:read_systemd_private_tmp_directory
+                }
               ''}"
             ];
           };

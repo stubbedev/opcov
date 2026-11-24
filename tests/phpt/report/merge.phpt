@@ -26,9 +26,9 @@ $run = static function (array $tests, string $out) use ($app): string {
 $add = ['Tests\CalcTest::test_add' => 'add(1, 2); sign(1)'];
 $sign = ['Tests\CalcTest::test_sign' => 'sign(-1)'];
 echo $run($add, "$dir/add.json"), $run($sign, "$dir/sign.json"), $run($sign + $add, "$dir/both.json");
-$cli = escapeshellarg(getenv('OPCOV_CLI'));
-passthru("$cli merge " . escapeshellarg("$dir/sign.json") . ' ' . escapeshellarg("$dir/add.json") . ' -o ' . escapeshellarg("$dir/merged.json"), $status);
-var_dump($status);
+$merge = opcov_cli(['merge', "$dir/sign.json", "$dir/add.json", '-o', "$dir/merged.json"]);
+echo $merge->output;
+var_dump($merge->status);
 var_dump(file_get_contents("$dir/merged.json") === file_get_contents("$dir/both.json"));
 $merged = json_decode(file_get_contents("$dir/merged.json"), true);
 echo json_encode([$merged['tests'], $merged['files']['calc.php']['lines']]), "\n";

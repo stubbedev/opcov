@@ -28,7 +28,7 @@ echo implode(',', array_keys(\opcov\stop()['$work']['lines'])), "\n";
 \opcov\start();
 work(1);
 echo implode(',', array_keys(\opcov\stop()['$work']['lines'])), "\n";
-PHP, [], opcov_sibling_binary('phpdbg'), [], '-qrr');
+PHP, [], opcov_sibling_binary('phpdbg'), [], ['-qrr']);
 ?>
 --EXPECT--
 phpdbg

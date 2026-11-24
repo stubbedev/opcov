@@ -131,9 +131,10 @@ extensions' own php-src test suites switched off:
   where the uninitialised value or the leaked block came from even after a
   module is unloaded; `--trace-children-skip=/bin/*,/sbin/*,/usr/*`, because
   `run-tests.php` traces child processes and a host executable such as
-  `/bin/sh` (which `shell_exec()` and `passthru()` run) uses the host's
-  dynamic linker, which on Ubuntu is stripped of the symbols memcheck needs to
-  start, so such a child runs untraced, along with everything it spawns; and
+  `/bin/sh` uses the host's dynamic linker, which on Ubuntu is stripped of the
+  symbols memcheck needs to start, so such a child runs untraced, along with
+  everything it spawns (which is why the tests start every child without a
+  shell, see [Test layers](#test-layers)); and
   `--suppressions` with the suppression file in `nix/shell.nix`, one entry per
   known false positive, each with its justification. It also sets
   `USE_TRACKED_ALLOC=1`, which `run-tests.php -m` does not: with
@@ -217,11 +218,17 @@ extension builds set `OPCOV_ALLOW_UNRELEASED_PHP=1` (`phptForPhpSrc` in
 order. `just watch [job]` reruns a bacon job on every save. `just --list`
 shows every recipe.
 
-A `.phpt` test that has to start another PHP process must go through
-`opcov_child()` in `tests/phpt/support/coverage.inc`. It strips the CGI
-variables `run-tests.php` sets (`REDIRECT_STATUS`, `SCRIPT_FILENAME`); a
-`php-cgi` child that inherits them runs the test file itself again, and the
-process tree grows without bound.
+A `.phpt` test that has to start another process must go through
+`tests/phpt/support/coverage.inc`: `opcov_child()` for PHP, `opcov_cli()` for
+the opcov binary, both built on `opcov_spawn()`. It starts the child with
+`proc_open()` and an argument array, never through a shell, so the Valgrind
+job traces the child (see `--trace-children-skip` above); it passes the
+current environment minus the CGI request variables `run-tests.php` sets
+(`REDIRECT_STATUS`, `SCRIPT_FILENAME` and the rest), because a `php-cgi`
+child that inherits them runs the test file itself again, and the process
+tree grows without bound. `opcov_child()` splits `TEST_PHP_EXTRA_ARGS`, a
+shell-quoted string, into arguments as `/bin/sh` would, and refuses one that
+needs shell expansion.
 
 ### Running tests locally
 

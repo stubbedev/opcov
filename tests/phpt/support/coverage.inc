@@ -11,24 +11,114 @@ function opcov_lines(string $file, callable $run): string
     return basename($file) . "\n  covered: " . implode(',', $covered) . "\n  uncovered: " . implode(',', $uncovered) . "\n";
 }
 
-function opcov_child(string $script, array $ini = [], ?string $binary = null, array $environment = [], string $options = ''): string
+final class OpcovProcess
+{
+    public function __construct(public readonly string $output, public readonly int $status)
+    {
+    }
+}
+
+function opcov_shell_words(string $text): array
+{
+    $words = [];
+    $word = null;
+    $length = strlen($text);
+    for ($at = 0; $at < $length; $at++) {
+        $char = $text[$at];
+        if ($char === ' ' || $char === "\t" || $char === "\n") {
+            if ($word !== null) {
+                $words[] = $word;
+                $word = null;
+            }
+            continue;
+        }
+        $word ??= '';
+        if ($char === "'") {
+            $close = strpos($text, "'", $at + 1);
+            if ($close === false) {
+                throw new UnexpectedValueException("unterminated single quote at byte $at of shell words: $text");
+            }
+            $word .= substr($text, $at + 1, $close - $at - 1);
+            $at = $close;
+            continue;
+        }
+        if ($char === '"') {
+            for ($at++; $at < $length && $text[$at] !== '"'; $at++) {
+                if ($text[$at] === '$' || $text[$at] === '`') {
+                    throw new UnexpectedValueException("shell expansion at byte $at of shell words: $text");
+                }
+                if ($text[$at] === '\\' && $at + 1 < $length && str_contains("\$`\"\\\n", $text[$at + 1])) {
+                    $at++;
+                }
+                $word .= $text[$at];
+            }
+            if ($at >= $length) {
+                throw new UnexpectedValueException("unterminated double quote in shell words: $text");
+            }
+            continue;
+        }
+        if ($char === '\\') {
+            if (++$at >= $length) {
+                throw new UnexpectedValueException("trailing backslash in shell words: $text");
+            }
+            $word .= $text[$at];
+            continue;
+        }
+        if (str_contains('$`;|&<>()*?[]{}~#', $char)) {
+            throw new UnexpectedValueException("unquoted shell metacharacter '$char' at byte $at of shell words: $text");
+        }
+        $word .= $char;
+    }
+    if ($word !== null) {
+        $words[] = $word;
+    }
+    return $words;
+}
+
+function opcov_extra_args(): array
+{
+    static $arguments = null;
+    return $arguments ??= opcov_shell_words((string) getenv('TEST_PHP_EXTRA_ARGS'));
+}
+
+function opcov_spawn(array $command, array $environment = []): OpcovProcess
+{
+    $inherited = getenv();
+    foreach (['REDIRECT_STATUS', 'SCRIPT_FILENAME', 'PATH_TRANSLATED', 'REQUEST_METHOD', 'QUERY_STRING', 'CONTENT_TYPE', 'CONTENT_LENGTH', 'HTTP_COOKIE'] as $cgiRequest) {
+        unset($inherited[$cgiRequest]);
+    }
+    $process = proc_open($command, [0 => ['null'], 1 => ['pipe', 'w'], 2 => ['redirect', 1]], $pipes, null, $environment + $inherited);
+    if ($process === false) {
+        throw new RuntimeException('cannot start ' . implode(' ', $command));
+    }
+    $output = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    $status = proc_close($process);
+    if ($output === false) {
+        throw new RuntimeException('cannot read the output of ' . implode(' ', $command));
+    }
+    return new OpcovProcess($output, $status);
+}
+
+function opcov_cli(array $arguments, array $environment = []): OpcovProcess
+{
+    return opcov_spawn([getenv('OPCOV_CLI') ?: throw new RuntimeException('OPCOV_CLI does not name the opcov binary'), ...$arguments], $environment);
+}
+
+function opcov_child(string $script, array $ini = [], ?string $binary = null, array $environment = [], array $options = []): string
 {
     $file = tempnam(sys_get_temp_dir(), 'opcov-child-');
     file_put_contents($file, $script);
-    $settings = '';
+    $command = [$binary ?? (getenv('TEST_PHP_EXECUTABLE') ?: throw new RuntimeException('TEST_PHP_EXECUTABLE does not name the PHP under test')), '-n', ...$options, ...opcov_extra_args()];
     foreach ($ini as $name => $value) {
-        $settings .= ' -d ' . escapeshellarg($name . '=' . $value);
+        array_push($command, '-d', $name . '=' . $value);
     }
-    $variables = '';
-    foreach ($environment as $name => $value) {
-        $variables .= ' ' . escapeshellarg($name . '=' . $value);
+    $command[] = $file;
+    try {
+        return opcov_spawn($command, $environment)->output;
+    } finally {
+        unlink($file);
     }
-    $executable = $binary === null ? getenv('TEST_PHP_EXECUTABLE_ESCAPED') : escapeshellarg($binary);
-    $cgiRequest = ' -u REDIRECT_STATUS -u SCRIPT_FILENAME -u PATH_TRANSLATED -u REQUEST_METHOD -u QUERY_STRING -u CONTENT_TYPE -u CONTENT_LENGTH -u HTTP_COOKIE';
-    $command = 'env' . $cgiRequest . $variables . ' ' . $executable . ' -n ' . $options . ' ' . getenv('TEST_PHP_EXTRA_ARGS') . $settings . ' ' . escapeshellarg($file) . ' 2>&1';
-    $output = shell_exec($command);
-    unlink($file);
-    return (string) $output;
 }
 
 function opcov_filesystem_takes_non_utf8_names(): bool
