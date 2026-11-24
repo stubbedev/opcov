@@ -202,11 +202,19 @@ pub enum Decision {
     Skipped(SkipReason),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatternMatch {
+    Matched,
+    Unmatched,
+    Failed,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SkipReason {
     NotInCollectPaths,
     ExcludedByPath(PathBuf),
     ExcludedByPattern,
+    PatternFailed,
     StreamWrapper,
     Unresolvable,
 }
@@ -224,12 +232,13 @@ impl fmt::Display for SkipReason {
                 entry.display()
             ),
             Self::ExcludedByPattern => f.write_str("matched by opcov.exclude_pattern"),
+            Self::PatternFailed => {
+                f.write_str("opcov.exclude_pattern failed to match against its resolved path")
+            }
             Self::StreamWrapper => {
                 f.write_str("loaded through a stream wrapper, which is not selectable by path")
             }
-            Self::Unresolvable => {
-                f.write_str("its path cannot be resolved to an existing UTF-8 file name")
-            }
+            Self::Unresolvable => f.write_str("its path cannot be resolved to an existing file"),
         };
     }
 }
@@ -241,7 +250,7 @@ impl Selection {
     }
 
     #[must_use]
-    pub fn decide(&self, file: CompiledFile<'_>, pattern_excluded: bool) -> Decision {
+    pub fn decide(&self, file: CompiledFile<'_>, pattern: PatternMatch) -> Decision {
         let path = match file {
             CompiledFile::Resolved(path) | CompiledFile::Eval { host: path } => path,
             CompiledFile::StreamWrapper(_) => return Decision::Skipped(SkipReason::StreamWrapper),
@@ -253,9 +262,10 @@ impl Selection {
         if let Some(entry) = self.exclude.first_containing(path) {
             return Decision::Skipped(SkipReason::ExcludedByPath(entry.to_path_buf()));
         }
-        if pattern_excluded {
-            return Decision::Skipped(SkipReason::ExcludedByPattern);
-        }
-        return Decision::Selected;
+        return match pattern {
+            PatternMatch::Unmatched => Decision::Selected,
+            PatternMatch::Matched => Decision::Skipped(SkipReason::ExcludedByPattern),
+            PatternMatch::Failed => Decision::Skipped(SkipReason::PatternFailed),
+        };
     }
 }

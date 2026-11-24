@@ -128,7 +128,9 @@ subject up in the jump table itself to record the arm taken.
   wrapper) are not selectable by path. They run unmeasured and are listed as
   skipped; nothing fails.
 - A file name that cannot be resolved to an existing file (for example
-  `Command line code` of `php -r`) or that is not valid UTF-8 is skipped.
+  `Command line code` of `php -r`) is skipped. Names that are not valid UTF-8
+  are measured like any other; reports encode them losslessly (see
+  `docs/report-schema.md`).
 
 ## Executable lines
 
@@ -195,7 +197,8 @@ All functions live in the `opcov` namespace.
 | `conflicts` | every unsupported setup found now, as `code`, `problem` and `fix` (OPcache, JIT, Xdebug and PCOV coverage modes; see [support.md](support.md#opcache-and-jit) and [compatibility.md](compatibility.md)) |
 | `selected_files` | the measured files compiled so far |
 | `skipped_files` | compiled file => why it is not measured |
-| `counters` | `files_selected`, `files_skipped`, `units` (live compiled copies of measured code), `probes_installed`, `probes_fired`, `probes_rearmed` (re-arms by `start()`, `reset()` and request end), `watches_installed` (successor watches a branch source installed because it could not decide its outcome from the operands), `pending_discards` (watches dropped unresolved: an exception, `stop()`, a destroyed unit, or a frame that left), `jump_table_files` |
+| `failed_files` | measured file whose model could not be built => `{code, reason}`; the file is left out and collection continues for every other file |
+| `counters` | `files_selected`, `files_skipped`, `files_failed`, `units` (live compiled copies of measured code), `probes_installed`, `probes_fired`, `probes_rearmed` (re-arms by `start()`, `reset()` and request end), `watches_installed` (successor watches a branch source installed because it could not decide its outcome from the operands), `pending_discards` (watches dropped unresolved: an exception, `stop()`, a destroyed unit, or a frame that left), `jump_table_files` |
 
 After `exit()` or a fatal error during collection, shutdown functions still
 see a consistent opcov: `collecting` is still `true`, `stop($test)` attributes

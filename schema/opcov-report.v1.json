@@ -58,8 +58,10 @@
           "properties": {
             "mode": { "const": "relative" },
             "root": {
-              "type": "string",
-              "pattern": "^/$|^(/([^/.][^/]*|\\.[^/.][^/]*|\\.\\.[^/]+))+$"
+              "allOf": [
+                { "$ref": "#/$defs/encodedBytes" },
+                { "pattern": "^/$|^(/([^/.][^/]*|\\.[^/.][^/]*|\\.\\.[^/]+))+$" }
+              ]
             }
           }
         },
@@ -73,9 +75,18 @@
         }
       ]
     },
-    "sourcePath": {
+    "encodedBytes": {
+      "description": "Bytes in opcov's canonical encoding: valid UTF-8 as is, `%` as `%25`, every byte that is not part of valid UTF-8 as `%XX` in uppercase hex. Readers also reject an escape that stands for a byte the encoding writes as is.",
       "type": "string",
-      "pattern": "^/?([^/.][^/]*|\\.[^/.][^/]*|\\.\\.[^/]+)(/([^/.][^/]*|\\.[^/.][^/]*|\\.\\.[^/]+))*$"
+      "pattern": "^([^%]|%[0-9A-F]{2})*$"
+    },
+    "sourcePath": {
+      "allOf": [
+        { "$ref": "#/$defs/encodedBytes" },
+        {
+          "pattern": "^/?([^/.][^/]*|\\.[^/.][^/]*|\\.\\.[^/]+)(/([^/.][^/]*|\\.[^/.][^/]*|\\.\\.[^/]+))*$"
+        }
+      ]
     },
     "testIndex": {
       "type": "integer",
@@ -120,7 +131,7 @@
         },
         "functions": {
           "type": "object",
-          "propertyNames": { "minLength": 1 },
+          "propertyNames": { "$ref": "#/$defs/encodedBytes", "minLength": 1 },
           "additionalProperties": { "$ref": "#/$defs/function" }
         }
       }

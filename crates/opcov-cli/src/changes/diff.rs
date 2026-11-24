@@ -1,7 +1,10 @@
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
+use std::os::unix::ffi::OsStrExt as _;
 use std::path::PathBuf;
 
 use opcov_core::cfg::Line;
+use opcov_core::encoding;
 
 use super::{Change, ChangeError, ChangeSet, FileChange, LineRange};
 
@@ -118,25 +121,24 @@ impl Parser<'_> {
                 .unwrap_or_default()
                 .to_vec(),
         };
-        let text = String::from_utf8(bytes)
-            .map_err(|error| return self.fail(format!("path is not UTF-8: {error}")))?;
-        let mut components = text.split('/');
+        let shown = encoding::encode(&bytes);
+        let mut components = bytes.split(|&byte| return byte == b'/');
         for _ in 0..self.strip {
             if components.next().is_none() {
                 return Err(self.fail(format!(
-                    "cannot strip {} leading components from {text:?}",
+                    "cannot strip {} leading components from {shown:?}",
                     self.strip
                 )));
             }
         }
-        let stripped: Vec<&str> = components.collect();
-        if stripped.is_empty() || stripped.iter().all(|component| return component.is_empty()) {
+        let stripped: Vec<&[u8]> = components.collect();
+        if stripped.iter().all(|component| return component.is_empty()) {
             return Err(self.fail(format!(
-                "stripping {} leading components leaves no path in {text:?}",
+                "stripping {} leading components leaves no path in {shown:?}",
                 self.strip
             )));
         }
-        return Ok(PathBuf::from(stripped.join("/")));
+        return Ok(PathBuf::from(OsStr::from_bytes(&stripped.join(&b'/'))));
     }
 
     fn new_side(&mut self, raw: &[u8]) -> Result<(), ChangeError> {

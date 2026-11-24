@@ -1,17 +1,20 @@
+use std::borrow::{Borrow, Cow};
 use std::fmt;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 use super::model::Line;
+use crate::encoding;
 
 const MAIN_PREFIX: &str = "{main}@";
 const CLOSURE_PREFIX: &str = "{closure}@";
 const ANONYMOUS_CLASS_PREFIX: &str = "class@anonymous@";
 const ORDINAL_SEPARATOR: char = '#';
 const MEMBER_SEPARATOR: &str = "::";
-const NAMESPACE_SEPARATOR: char = '\\';
+const NAMESPACE_SEPARATOR: u8 = b'\\';
 const PROPERTY_SIGIL: char = '$';
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -24,6 +27,7 @@ pub enum KeyErrorReason {
     InvalidLineNumber,
     InvertedLineSpan,
     InvalidOrdinal,
+    NotCanonical,
 }
 
 impl fmt::Display for KeyErrorReason {
@@ -37,6 +41,9 @@ impl fmt::Display for KeyErrorReason {
             Self::InvalidLineNumber => "a line number is not a canonical positive integer",
             Self::InvertedLineSpan => "the line span ends before it starts",
             Self::InvalidOrdinal => "the `#<n>` ordinal is not a canonical integer of at least 1",
+            Self::NotCanonical => {
+                "a `%` is neither `%25` nor the uppercase `%XX` escape of a byte that is not valid UTF-8"
+            }
         };
         return f.write_str(text);
     }
@@ -79,142 +86,120 @@ impl fmt::Display for KeyError {
 
 impl std::error::Error for KeyError {}
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
-#[serde(try_from = "String")]
-pub struct FilePath(Arc<str>);
-
-impl Serialize for FilePath {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        return serializer.serialize_str(&self.0);
-    }
+fn decoded(text: &str) -> Result<Cow<'_, [u8]>, KeyError> {
+    return encoding::decode(text)
+        .map_err(|_not_canonical| return KeyError::new(text, KeyErrorReason::NotCanonical));
 }
+
+fn file_path_bytes(bytes: &[u8]) -> Option<KeyErrorReason> {
+    if bytes.is_empty() {
+        return Some(KeyErrorReason::EmptyFilePath);
+    }
+    if bytes.contains(&0) {
+        return Some(KeyErrorReason::NulInFilePath);
+    }
+    return None;
+}
+
+fn is_identifier(name: &[u8]) -> bool {
+    let Some((&first, rest)) = name.split_first() else {
+        return false;
+    };
+    let starts_well = first == b'_' || first.is_ascii_alphabetic() || !first.is_ascii();
+    return starts_well
+        && rest
+            .iter()
+            .all(|&byte| return byte == b'_' || byte.is_ascii_alphanumeric() || !byte.is_ascii());
+}
+
+fn identifier_bytes(name: &[u8]) -> Option<KeyErrorReason> {
+    return (!is_identifier(name)).then_some(KeyErrorReason::InvalidIdentifier);
+}
+
+fn qualified_name_bytes(name: &[u8]) -> Option<KeyErrorReason> {
+    return (!name
+        .split(|&byte| return byte == NAMESPACE_SEPARATOR)
+        .all(is_identifier))
+    .then_some(KeyErrorReason::InvalidQualifiedName);
+}
+
+macro_rules! byte_name {
+    ($name:ident, $check:ident) => {
+        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
+        #[serde(try_from = "String")]
+        pub struct $name(Arc<str>);
+
+        impl $name {
+            #[expect(
+                clippy::missing_errors_doc,
+                reason = "error conditions are carried by the precise error types, and the source has no comments"
+            )]
+            pub fn from_bytes(bytes: &[u8]) -> Result<Self, KeyError> {
+                let text = encoding::encode(bytes);
+                if let Some(reason) = $check(bytes) {
+                    return Err(KeyError::new(&text, reason));
+                }
+                return Ok(Self(Arc::from(text)));
+            }
+
+            #[must_use]
+            pub fn as_str(&self) -> &str {
+                return &self.0;
+            }
+
+            #[must_use]
+            pub fn to_bytes(&self) -> Cow<'_, [u8]> {
+                return encoding::unescape(&self.0);
+            }
+        }
+
+        impl Serialize for $name {
+            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                return serializer.serialize_str(&self.0);
+            }
+        }
+
+        impl FromStr for $name {
+            type Err = KeyError;
+
+            fn from_str(text: &str) -> Result<Self, Self::Err> {
+                if let Some(reason) = $check(&decoded(text)?) {
+                    return Err(KeyError::new(text, reason));
+                }
+                return Ok(Self(Arc::from(text)));
+            }
+        }
+
+        impl TryFrom<String> for $name {
+            type Error = KeyError;
+
+            fn try_from(text: String) -> Result<Self, Self::Error> {
+                return text.parse();
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                return f.write_str(&self.0);
+            }
+        }
+    };
+}
+
+byte_name!(FilePath, file_path_bytes);
+byte_name!(Identifier, identifier_bytes);
+byte_name!(QualifiedName, qualified_name_bytes);
 
 impl FilePath {
     #[must_use]
-    pub fn as_str(&self) -> &str {
+    pub fn to_path_buf(&self) -> PathBuf {
+        return encoding::path_of(&self.0);
+    }
+}
+
+impl Borrow<str> for FilePath {
+    fn borrow(&self) -> &str {
         return &self.0;
-    }
-}
-
-impl TryFrom<String> for FilePath {
-    type Error = KeyError;
-
-    fn try_from(path: String) -> Result<Self, Self::Error> {
-        return path.parse();
-    }
-}
-
-impl FromStr for FilePath {
-    type Err = KeyError;
-
-    fn from_str(path: &str) -> Result<Self, Self::Err> {
-        if path.is_empty() {
-            return Err(KeyError::new(path, KeyErrorReason::EmptyFilePath));
-        }
-        if path.contains('\0') {
-            return Err(KeyError::new(path, KeyErrorReason::NulInFilePath));
-        }
-        return Ok(Self(Arc::from(path)));
-    }
-}
-
-impl fmt::Display for FilePath {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        return f.write_str(&self.0);
-    }
-}
-
-fn is_identifier(name: &str) -> bool {
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    let starts_well = first == '_' || first.is_ascii_alphabetic() || !first.is_ascii();
-    return starts_well
-        && chars.all(|c| return c == '_' || c.is_ascii_alphanumeric() || !c.is_ascii());
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
-#[serde(try_from = "String")]
-pub struct Identifier(Arc<str>);
-
-impl Serialize for Identifier {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        return serializer.serialize_str(&self.0);
-    }
-}
-
-impl Identifier {
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        return &self.0;
-    }
-}
-
-impl FromStr for Identifier {
-    type Err = KeyError;
-
-    fn from_str(name: &str) -> Result<Self, Self::Err> {
-        if !is_identifier(name) {
-            return Err(KeyError::new(name, KeyErrorReason::InvalidIdentifier));
-        }
-        return Ok(Self(Arc::from(name)));
-    }
-}
-
-impl TryFrom<String> for Identifier {
-    type Error = KeyError;
-
-    fn try_from(name: String) -> Result<Self, Self::Error> {
-        return name.parse();
-    }
-}
-
-impl fmt::Display for Identifier {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        return f.write_str(&self.0);
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
-#[serde(try_from = "String")]
-pub struct QualifiedName(Arc<str>);
-
-impl Serialize for QualifiedName {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        return serializer.serialize_str(&self.0);
-    }
-}
-
-impl QualifiedName {
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        return &self.0;
-    }
-}
-
-impl FromStr for QualifiedName {
-    type Err = KeyError;
-
-    fn from_str(name: &str) -> Result<Self, Self::Err> {
-        if !name.split(NAMESPACE_SEPARATOR).all(is_identifier) {
-            return Err(KeyError::new(name, KeyErrorReason::InvalidQualifiedName));
-        }
-        return Ok(Self(Arc::from(name)));
-    }
-}
-
-impl TryFrom<String> for QualifiedName {
-    type Error = KeyError;
-
-    fn try_from(name: String) -> Result<Self, Self::Error> {
-        return name.parse();
-    }
-}
-
-impl fmt::Display for QualifiedName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        return f.write_str(&self.0);
     }
 }
 
@@ -435,7 +420,8 @@ impl FunctionKey {
         clippy::missing_errors_doc,
         reason = "error conditions are carried by the precise error types, and the source has no comments"
     )]
-    pub fn member(class: ClassRef, name: &str) -> Result<Self, KeyError> {
+    pub fn member(class: ClassRef, name: &[u8]) -> Result<Self, KeyError> {
+        let name = encoding::encode(name);
         let hook = name
             .rsplit_once(MEMBER_SEPARATOR)
             .and_then(|(property, hook)| return hook_member(property, hook));
@@ -748,6 +734,29 @@ mod tests {
                 },
                 "ünïcode_fn",
             ),
+            (
+                FunctionKey::Method {
+                    class: ClassRef::Named(QualifiedName::from_bytes(b"App\\Caf\xe9").unwrap()),
+                    method: Identifier::from_bytes(b"r\xe9sum\xe9").unwrap(),
+                },
+                "App\\Caf%E9::r%E9sum%E9",
+            ),
+            (
+                FunctionKey::PropertyHook {
+                    class: ClassRef::Named(QualifiedName::from_bytes(b"\xe9").unwrap()),
+                    property: Identifier::from_bytes(b"\xff").unwrap(),
+                    hook: HookKind::Get,
+                },
+                "%E9::$%FF::get",
+            ),
+            (
+                FunctionKey::Closure {
+                    file: FilePath::from_bytes(b"/app/100%/\xe9:1-2.php").unwrap(),
+                    lines: span(3, 4),
+                    ordinal: 0,
+                },
+                "{closure}@/app/100%25/%E9:1-2.php:3-4",
+            ),
         ];
     }
 
@@ -812,6 +821,13 @@ mod tests {
             ),
             ("class@anonymous@/a.php::m", KeyErrorReason::MissingLineSpan),
             ("Foo::$bar::get::x", KeyErrorReason::InvalidQualifiedName),
+            ("Caf%e9::x", KeyErrorReason::NotCanonical),
+            ("Caf%41::x", KeyErrorReason::NotCanonical),
+            ("Foo::b%25r", KeyErrorReason::InvalidIdentifier),
+            ("A%25\\B", KeyErrorReason::InvalidQualifiedName),
+            ("{main}@/a%", KeyErrorReason::NotCanonical),
+            ("{main}@/a%00", KeyErrorReason::NotCanonical),
+            ("{closure}@/%C3%A9.php:1-2", KeyErrorReason::NotCanonical),
         ];
         for (text, reason) in cases {
             let error = text.parse::<FunctionKey>().unwrap_err();
@@ -856,6 +872,39 @@ mod tests {
                 "{text} keeps whether it names a file"
             );
         }
+    }
+
+    #[test]
+    fn names_are_built_from_bytes_and_give_them_back() {
+        let member = FunctionKey::member(named("A"), b"$\xe9t\xe9::set").unwrap();
+        assert_eq!(
+            member.to_string(),
+            "A::$%E9t%E9::set",
+            "a hook member from bytes"
+        );
+        let method = FunctionKey::member(named("A"), b"\xe9").unwrap();
+        assert_eq!(method.to_string(), "A::%E9", "a method member from bytes");
+        let file = FilePath::from_bytes(b"/srv/\xe9%.php").unwrap();
+        assert_eq!(
+            &*file.to_bytes(),
+            b"/srv/\xe9%.php",
+            "file bytes round-trip"
+        );
+        assert_eq!(
+            file.to_path_buf().as_os_str().as_encoded_bytes(),
+            b"/srv/\xe9%.php",
+            "the path names the same bytes"
+        );
+        assert_eq!(
+            FilePath::from_bytes(b"/a\0b").unwrap_err().reason(),
+            KeyErrorReason::NulInFilePath,
+            "a NUL byte stays invalid"
+        );
+        assert_eq!(
+            Identifier::from_bytes(b"a-b").unwrap_err().input(),
+            "a-b",
+            "the error names the encoded input"
+        );
     }
 
     #[test]

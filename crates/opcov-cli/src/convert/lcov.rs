@@ -1,11 +1,14 @@
 use std::io::{self, Write};
+use std::os::unix::ffi::OsStrExt as _;
 
 use super::{Context, ConvertError};
 use crate::view::{FileView, Taken};
 
 fn record(out: &mut impl Write, file: &FileView<'_>) -> io::Result<()> {
     writeln!(out, "TN:")?;
-    writeln!(out, "SF:{}", file.location)?;
+    out.write_all(b"SF:")?;
+    out.write_all(file.disk.as_os_str().as_bytes())?;
+    writeln!(out)?;
     let named: Vec<_> = file
         .functions
         .iter()

@@ -114,6 +114,12 @@ These rules apply to every format.
   Closures and arrow functions belong to the class of the innermost method or
   hook that contains them. Everything else (functions, `{main}`, closures at
   file level) belongs to the file.
+- **Names that are not UTF-8.** Paths and function keys may hold bytes that
+  are not UTF-8, which reports encode as `%XX` (see "Bytes that are not
+  UTF-8" in `docs/report-schema.md`). lcov writes `SF` as the raw path, so
+  tools can open the file, and `FN`/`FNDA` names in their encoded form;
+  Clover, Cobertura and HTML cannot hold invalid bytes and use the encoded
+  form throughout.
 
 ### lcov
 

@@ -124,7 +124,8 @@ fn file_model() -> impl Strategy<Value = FileModel> {
         any::<[u8; 32]>(),
         prop::collection::btree_set(1_u32..300, 0..6),
         prop::collection::btree_map(
-            (0_u8..6).prop_map(|number| return format!("App\\C{number}::run")),
+            (prop::sample::select(vec!["C", "C%E9", "\u{e9}"]), 0_u8..6)
+                .prop_map(|(class, number)| return format!("App\\{class}{number}::run")),
             function_model(),
             0..4,
         ),
@@ -146,7 +147,11 @@ pub(super) fn universe() -> impl Strategy<Value = Universe> {
             .collect::<Vec<_>>();
     });
     let files = prop::collection::btree_map(
-        (0_u8..3, 0_u8..10).prop_map(|(dir, number)| return format!("src/d{dir}/F{number}.php")),
+        (
+            prop::sample::select(vec!["d0", "d1", "d%E9", "d%25"]),
+            0_u8..10,
+        )
+            .prop_map(|(dir, number)| return format!("src/{dir}/F{number}.php")),
         file_model(),
         0..=5,
     );

@@ -222,7 +222,7 @@ mod decisions {
     use std::path::{Path, PathBuf};
 
     use opcov_core::filter::{
-        CaseSensitivity, CompiledFile, Decision, FilterError, PathSetting, Selection,
+        CaseSensitivity, CompiledFile, Decision, FilterError, PathSetting, PatternMatch, Selection,
         SelectionConfig, SkipReason,
     };
 
@@ -233,7 +233,10 @@ mod decisions {
     }
 
     fn decide(selection: &Selection, file: &str) -> Decision {
-        return selection.decide(CompiledFile::Resolved(Path::new(file)), false);
+        return selection.decide(
+            CompiledFile::Resolved(Path::new(file)),
+            PatternMatch::Unmatched,
+        );
     }
 
     fn excluded_by(entry: &str) -> Decision {
@@ -255,12 +258,16 @@ mod decisions {
                 "matched by opcov.exclude_pattern",
             ),
             (
+                SkipReason::PatternFailed,
+                "opcov.exclude_pattern failed to match against its resolved path",
+            ),
+            (
                 SkipReason::StreamWrapper,
                 "loaded through a stream wrapper, which is not selectable by path",
             ),
             (
                 SkipReason::Unresolvable,
-                "its path cannot be resolved to an existing UTF-8 file name",
+                "its path cannot be resolved to an existing file",
             ),
         ];
         for (reason, text) in cases {
@@ -398,7 +405,10 @@ mod decisions {
     fn not_collected_takes_precedence_over_exclusion_reasons() {
         let selection = selection("/srv/app", "/srv/other");
         assert_eq!(
-            selection.decide(CompiledFile::Resolved(Path::new("/srv/other/x.php")), true),
+            selection.decide(
+                CompiledFile::Resolved(Path::new("/srv/other/x.php")),
+                PatternMatch::Failed
+            ),
             NOT_COLLECTED,
             "a file outside the collect paths is reported as such"
         );
@@ -407,10 +417,23 @@ mod decisions {
     #[test]
     fn exclude_pattern_verdict_skips_collected_files() {
         let selection = selection("/srv/app", "");
+        let decide = |pattern| {
+            return selection.decide(CompiledFile::Resolved(Path::new("/srv/app/x.php")), pattern);
+        };
         assert_eq!(
-            selection.decide(CompiledFile::Resolved(Path::new("/srv/app/x.php")), true),
+            decide(PatternMatch::Matched),
             Decision::Skipped(SkipReason::ExcludedByPattern),
             "pattern exclusion"
+        );
+        assert_eq!(
+            decide(PatternMatch::Failed),
+            Decision::Skipped(SkipReason::PatternFailed),
+            "a failed match skips only this file"
+        );
+        assert_eq!(
+            decide(PatternMatch::Unmatched),
+            Decision::Selected,
+            "no match"
         );
     }
 
@@ -420,7 +443,7 @@ mod decisions {
         assert_eq!(
             selection.decide(
                 CompiledFile::Resolved(Path::new("/srv/app/vendor/x.php")),
-                true
+                PatternMatch::Matched
             ),
             excluded_by("/srv/app/vendor"),
             "path exclusion names its entry"
@@ -435,7 +458,7 @@ mod decisions {
                 CompiledFile::Eval {
                     host: Path::new(host),
                 },
-                false,
+                PatternMatch::Unmatched,
             );
         };
         assert_eq!(
@@ -461,18 +484,24 @@ mod decisions {
         assert_eq!(
             selection.decide(
                 CompiledFile::StreamWrapper("phar:///srv/app.phar/x.php"),
-                false
+                PatternMatch::Unmatched
             ),
             Decision::Skipped(SkipReason::StreamWrapper),
             "phar"
         );
         assert_eq!(
-            selection.decide(CompiledFile::StreamWrapper("vfs://root/x.php"), false),
+            selection.decide(
+                CompiledFile::StreamWrapper("vfs://root/x.php"),
+                PatternMatch::Unmatched
+            ),
             Decision::Skipped(SkipReason::StreamWrapper),
             "vfs"
         );
         assert_eq!(
-            selection.decide(CompiledFile::Unresolvable("Command line code"), false),
+            selection.decide(
+                CompiledFile::Unresolvable("Command line code"),
+                PatternMatch::Unmatched
+            ),
             Decision::Skipped(SkipReason::Unresolvable),
             "unresolvable"
         );
@@ -628,7 +657,7 @@ mod decisions {
 mod reference_agreement {
     use std::path::{Path, PathBuf};
 
-    use opcov_core::filter::{CaseSensitivity, CompiledFile, Decision, SkipReason};
+    use opcov_core::filter::{CaseSensitivity, CompiledFile, Decision, PatternMatch, SkipReason};
     use proptest::prelude::*;
 
     use super::support::{identity, selection_with};
@@ -671,7 +700,7 @@ mod reference_agreement {
         collect: &[String],
         exclude: &[String],
         file: &str,
-        pattern_excluded: bool,
+        pattern: PatternMatch,
         case: CaseSensitivity,
     ) -> Decision {
         if !collect
@@ -687,10 +716,11 @@ mod reference_agreement {
         if let Some(entry) = shortest {
             return Decision::Skipped(SkipReason::ExcludedByPath(PathBuf::from(entry)));
         }
-        if pattern_excluded {
-            return Decision::Skipped(SkipReason::ExcludedByPattern);
-        }
-        return Decision::Selected;
+        return match pattern {
+            PatternMatch::Matched => Decision::Skipped(SkipReason::ExcludedByPattern),
+            PatternMatch::Failed => Decision::Skipped(SkipReason::PatternFailed),
+            PatternMatch::Unmatched => Decision::Selected,
+        };
     }
 
     proptest! {
@@ -699,15 +729,19 @@ mod reference_agreement {
             collect in prop::collection::vec(path(), 0..5),
             exclude in prop::collection::vec(path(), 0..5),
             files in prop::collection::vec(path(), 1..10),
-            pattern_excluded in any::<bool>(),
+            pattern in prop_oneof![
+                Just(PatternMatch::Matched),
+                Just(PatternMatch::Unmatched),
+                Just(PatternMatch::Failed),
+            ],
             case in case(),
         ) {
             let selection = selection_with(&collect.join(":"), &exclude.join(":"), identity(), case);
             prop_assert_eq!(selection.is_empty_collect(), collect.is_empty(), "empty collect");
             for file in &files {
                 prop_assert_eq!(
-                    selection.decide(CompiledFile::Resolved(Path::new(file)), pattern_excluded),
-                    reference(&collect, &exclude, file, pattern_excluded, case),
+                    selection.decide(CompiledFile::Resolved(Path::new(file)), pattern),
+                    reference(&collect, &exclude, file, pattern, case),
                     "file {}", file
                 );
             }

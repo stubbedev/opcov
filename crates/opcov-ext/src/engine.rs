@@ -13,7 +13,7 @@ use std::{
 use foldhash::fast::FixedState;
 
 use opcov_core::{
-    cfg::{Analysis, FunctionKey, Line, Plan},
+    cfg::{Analysis, FilePath, FunctionKey, Line, Plan},
     filter::{Selection, SkipReason},
     report::{Settings, Sha256},
 };
@@ -40,8 +40,6 @@ pub(crate) enum OffReason {
     Selection(String),
     CollectPathsEmpty,
     InvalidPattern(String),
-    PatternFailed(String),
-    Snapshot { file: String, message: String },
     NothingSelected { compiled: usize },
     Conflicts(Conflicts),
 }
@@ -59,8 +57,6 @@ impl OffReason {
             Self::Selection(_) => Code::InvalidSelection,
             Self::CollectPathsEmpty => Code::CollectPathsEmpty,
             Self::InvalidPattern(_) => Code::InvalidExcludePattern,
-            Self::PatternFailed(_) => Code::ExcludePatternFailed,
-            Self::Snapshot { .. } => Code::SnapshotFailed,
             Self::NothingSelected { .. } => Code::NothingSelected,
             Self::Conflicts(conflicts) => conflicts.first().code(),
         };
@@ -97,12 +93,6 @@ impl OffReason {
                 f,
                 "opcov.exclude_pattern is not a valid PCRE pattern with delimiters: {pattern}"
             ),
-            Self::PatternFailed(path) => {
-                write!(f, "opcov.exclude_pattern failed to match against {path}")
-            }
-            Self::Snapshot { file, message } => {
-                write!(f, "cannot analyse code compiled from {file}: {message}")
-            }
             Self::NothingSelected { compiled } => write!(
                 f,
                 "opcov.collect_paths selected none of the {compiled} files compiled during this run"
@@ -552,9 +542,28 @@ impl Source {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Unmodelled {
+    pub(crate) message: String,
+}
+
+impl fmt::Display for Unmodelled {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        return write!(
+            f,
+            "{}",
+            Explained {
+                code: Code::SnapshotFailed,
+                text: &self.message
+            }
+        );
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct FileRecord {
-    pub(crate) path: String,
+    pub(crate) path: FilePath,
+    pub(crate) unmodelled: Option<Unmodelled>,
     pub(crate) source: Option<Source>,
     pub(crate) lines: BTreeSet<Line>,
     pub(crate) functions: BTreeMap<FunctionKey, FunctionId>,
@@ -585,28 +594,37 @@ impl FileRecord {
     pub(crate) fn compiled_from(&mut self, compiled: Result<Content, String>) {
         self.source = Some(Source::next(self.source.take(), compiled));
     }
+
+    pub(crate) fn give_up(&mut self, message: String) {
+        self.unmodelled.get_or_insert(Unmodelled { message });
+    }
+
+    pub(crate) const fn modelled(&self) -> bool {
+        return self.unmodelled.is_none();
+    }
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct Files {
     records: Vec<FileRecord>,
-    by_path: Map<String, FileId>,
+    by_path: Map<FilePath, FileId>,
     functions: Vec<FunctionRecord>,
 }
 
 impl Files {
-    pub(crate) fn intern(&mut self, path: &str) -> Option<FileId> {
-        if let Some(&id) = self.by_path.get(path) {
+    pub(crate) fn intern(&mut self, path: FilePath) -> Option<FileId> {
+        if let Some(&id) = self.by_path.get(&path) {
             return Some(id);
         }
         let id = FileId(u32::try_from(self.records.len()).ok()?);
         self.records.push(FileRecord {
-            path: path.to_owned(),
+            path: path.clone(),
+            unmodelled: None,
             source: None,
             lines: BTreeSet::new(),
             functions: BTreeMap::new(),
         });
-        self.by_path.insert(path.to_owned(), id);
+        self.by_path.insert(path, id);
         return Some(id);
     }
 

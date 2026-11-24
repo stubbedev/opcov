@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 
 use opcov_core::cfg::{Line, LoopShape};
 use opcov_core::filter::{
-    CaseSensitivity, CompiledFile, Decision, Selection, SkipReason, UnresolvedSelection,
+    CaseSensitivity, CompiledFile, Decision, PatternMatch, Selection, SkipReason,
+    UnresolvedSelection,
 };
 use opcov_core::kind::EdgeKind;
 use opcov_core::report::{
@@ -21,7 +22,7 @@ use crate::changes::{Change, ChangeSet, FileChange, resolve};
 use crate::failure::{Failure, Verdict};
 use crate::source;
 use crate::stream;
-use crate::view::{is_nested, location};
+use crate::view::is_nested;
 
 const PHP_EXTENSION: &str = "php";
 
@@ -408,7 +409,7 @@ fn split_unloaded<'c>(
             });
             continue;
         }
-        match canonical(Path::new(&location(&header.paths, &path)))? {
+        match canonical(&header.paths.disk_path(&path))? {
             Some(disk) => candidates.push((path, changes, disk)),
             None => unmeasured.push(Unmeasured {
                 path: path.to_string(),
@@ -422,7 +423,8 @@ fn split_unloaded<'c>(
     let selection = selection(&header.settings, base)?;
     let mut unloaded = Vec::new();
     for (path, changes, disk) in candidates {
-        let reason = match selection.decide(CompiledFile::Resolved(&disk), false) {
+        let reason = match selection.decide(CompiledFile::Resolved(&disk), PatternMatch::Unmatched)
+        {
             Decision::Skipped(reason) => Unmeasurable::NotSelected(reason),
             Decision::Selected if header.settings.exclude_pattern.is_some() => {
                 Unmeasurable::PatternNotEvaluated

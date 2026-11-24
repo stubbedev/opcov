@@ -133,7 +133,8 @@ sequenceDiagram
   owned model of `opcov-core` (`opcov_core::cfg::Function`) and frees the arena.
   The engine's CFG already understands every jump opcode, `try`/`catch`/
   `finally`, generators and unreachable blocks. A function whose snapshot
-  fails turns collection off with `snapshot-failed`. The snapshot is kept for
+  fails leaves its file out with `snapshot-failed` in `get_status()`'s
+  `failed_files`; every other file is still measured. The snapshot is kept for
   `\opcov\get_debug_info()`; the per-opcode working copies used to place
   probes are dropped once the unit is built.
 - **Plan.** `opcov_core::cfg::Plan` classifies every edge, numbers the

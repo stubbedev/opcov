@@ -38,6 +38,8 @@ pub(crate) enum EntryPoint {
     SelftestForceWatch,
     #[cfg(feature = "engine-selftest")]
     SelftestPanicInProbe,
+    #[cfg(feature = "engine-selftest")]
+    SelftestFailSnapshot,
 }
 
 impl EntryPoint {
@@ -71,6 +73,8 @@ impl EntryPoint {
             Self::SelftestForceWatch => "opcov\\selftest_force_watch()",
             #[cfg(feature = "engine-selftest")]
             Self::SelftestPanicInProbe => "opcov\\selftest_panic_in_probe()",
+            #[cfg(feature = "engine-selftest")]
+            Self::SelftestFailSnapshot => "opcov\\selftest_fail_snapshot()",
         };
     }
 }

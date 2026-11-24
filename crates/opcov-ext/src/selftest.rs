@@ -46,6 +46,12 @@ pub(crate) const SELFTEST_FORCE_WATCH_FUNCTION: zend_function_entry = function_e
     &SELFTEST_PANIC_ARGINFO,
 );
 
+pub(crate) const SELFTEST_FAIL_SNAPSHOT_FUNCTION: zend_function_entry = function_entry(
+    c"opcov\\selftest_fail_snapshot",
+    selftest_fail_snapshot,
+    &SELFTEST_PANIC_ARGINFO,
+);
+
 pub(crate) const SELFTEST_PANIC_FUNCTION: zend_function_entry = function_entry(
     c"opcov\\selftest_panic",
     selftest_panic,
@@ -300,6 +306,18 @@ unsafe extern "C" fn selftest_panic_in_probe(
         // SAFETY: the engine calls this handler with the frame of this call.
         if unsafe { accepts_no_arguments(execute_data) } {
             crate::probes::INJECT_PANIC.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+    });
+}
+
+unsafe extern "C" fn selftest_fail_snapshot(
+    execute_data: *mut zend_execute_data,
+    _return_value: *mut zval,
+) {
+    guard(EntryPoint::SelftestFailSnapshot, (), || {
+        // SAFETY: the engine calls this handler with the frame of this call.
+        if unsafe { accepts_no_arguments(execute_data) } {
+            crate::compiler::FAIL_NEXT_SNAPSHOT.store(true, core::sync::atomic::Ordering::Relaxed);
         }
     });
 }

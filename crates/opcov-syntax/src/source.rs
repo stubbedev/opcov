@@ -1,11 +1,13 @@
 use std::fmt;
-use std::str::FromStr;
 
 use mago_allocator::prelude::LocalArena;
 use mago_database::file::FileId;
 use mago_span::HasSpan;
 use mago_syntax::parser::parse_file_content;
-use opcov_core::cfg::{ClassRef, FilePath, FunctionKey, HookKind, KeyError, Line, LineSpan};
+use opcov_core::cfg::{
+    ClassRef, FilePath, FunctionKey, HookKind, Identifier, KeyError, Line, LineSpan, QualifiedName,
+};
+use opcov_core::encoding;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
@@ -26,7 +28,6 @@ use position::{ByteSpan, LineIndex, LineRange, OffsetOutOfRange, next_token};
 pub enum SyntaxErrorKind {
     TooLarge { bytes: usize },
     Parse { position: Position, message: String },
-    NonUtf8Name { name: String, valid_up_to: usize },
     InvalidName(KeyError),
     UnknownPropertyHook { name: String, line: Line },
     MemberOutsideClass { line: Line },
@@ -65,10 +66,6 @@ impl fmt::Display for SyntaxError {
             SyntaxErrorKind::Parse { position, message } => {
                 write!(f, "cannot parse `{path}` at {position}: {message}")
             }
-            SyntaxErrorKind::NonUtf8Name { name, valid_up_to } => write!(
-                f,
-                "cannot map `{path}`: the name `{name}` is not valid UTF-8 after byte {valid_up_to}"
-            ),
             SyntaxErrorKind::InvalidName(error) => write!(f, "cannot map `{path}`: {error}"),
             SyntaxErrorKind::UnknownPropertyHook { name, line } => write!(
                 f,
@@ -241,20 +238,12 @@ impl Builder<'_> {
         });
     }
 
-    fn text<'b>(&self, bytes: &'b [u8]) -> Result<&'b str, SyntaxError> {
-        return std::str::from_utf8(bytes).map_err(|error| {
-            return self.fail(SyntaxErrorKind::NonUtf8Name {
-                name: String::from_utf8_lossy(bytes).into_owned(),
-                valid_up_to: error.valid_up_to(),
-            });
-        });
-    }
-
-    fn name<T: FromStr<Err = KeyError>>(&self, bytes: &[u8]) -> Result<T, SyntaxError> {
-        return self
-            .text(bytes)?
-            .parse()
-            .map_err(|error| return self.fail(SyntaxErrorKind::InvalidName(error)));
+    fn name<T>(
+        &self,
+        bytes: &[u8],
+        parse: fn(&[u8]) -> Result<T, KeyError>,
+    ) -> Result<T, SyntaxError> {
+        return parse(bytes).map_err(|error| return self.fail(SyntaxErrorKind::InvalidName(error)));
     }
 
     fn class(
@@ -267,7 +256,9 @@ impl Builder<'_> {
             None => Err(self.fail(SyntaxErrorKind::MemberOutsideClass {
                 line: self.line(at)?,
             })),
-            Some(RawClass::Named(name)) => Ok(ClassRef::Named(self.name(name)?)),
+            Some(RawClass::Named(name)) => {
+                Ok(ClassRef::Named(self.name(name, QualifiedName::from_bytes)?))
+            }
             Some(RawClass::Anonymous(span)) => {
                 let lines = self.line_span(*span)?;
                 Ok(ClassRef::Anonymous {
@@ -287,7 +278,7 @@ impl Builder<'_> {
             return Ok(HookKind::Set);
         }
         return Err(self.fail(SyntaxErrorKind::UnknownPropertyHook {
-            name: String::from_utf8_lossy(hook).into_owned(),
+            name: encoding::encode(hook).into_owned(),
             line: self.line(at)?,
         }));
     }
@@ -326,11 +317,11 @@ impl Builder<'_> {
                 file: self.path.clone(),
             },
             RawKey::Function { name } => FunctionKey::Function {
-                name: self.name(name)?,
+                name: self.name(name, QualifiedName::from_bytes)?,
             },
             RawKey::Method { class, method, at } => FunctionKey::Method {
                 class: self.class(class.as_ref(), *at, ranks)?,
-                method: self.name(method)?,
+                method: self.name(method, Identifier::from_bytes)?,
             },
             RawKey::Hook {
                 class,
@@ -346,7 +337,7 @@ impl Builder<'_> {
                 };
                 FunctionKey::PropertyHook {
                     class,
-                    property: self.name(property)?,
+                    property: self.name(property, Identifier::from_bytes)?,
                     hook: self.hook(hook, *at)?,
                 }
             }

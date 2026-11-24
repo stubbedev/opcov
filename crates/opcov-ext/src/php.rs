@@ -65,7 +65,8 @@ pub(crate) unsafe fn string(target: *mut zval, text: &str) -> Caught<()> {
     return caught(unsafe { opcov_zval_stringl(target, text.as_ptr().cast(), text.len()) });
 }
 
-pub(crate) unsafe fn set(array: *mut zval, key: &str, value: &mut zval) -> Caught<()> {
+pub(crate) unsafe fn set(array: *mut zval, key: impl AsRef<[u8]>, value: &mut zval) -> Caught<()> {
+    let key = key.as_ref();
     // SAFETY: the caller passes a live array zval; the array takes ownership of `value`.
     return caught(unsafe { opcov_add_assoc_zval(array, key.as_ptr().cast(), key.len(), value) });
 }

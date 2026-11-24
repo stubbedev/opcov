@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::marker::PhantomData;
 use std::num::NonZeroU32;
+use std::path::PathBuf;
 
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -9,6 +10,7 @@ use sha2::{Digest as _, Sha256 as Hasher};
 
 use super::error::{Collection, HitSite, ModelError, SchemaError};
 use crate::cfg::{FunctionKey, Line, LoopShape, OpIndex};
+use crate::encoding;
 use crate::kind::EdgeKind;
 
 const SCHEMA_FAMILY: &str = "opcov-report";
@@ -535,11 +537,16 @@ pub struct SourcePath(String);
 
 impl SourcePath {
     pub fn new(raw: String) -> Result<Self, ModelError> {
+        encoding::decode(&raw).map_err(ModelError::Encoding)?;
         let relative = raw.strip_prefix('/').unwrap_or(&raw);
         if !normalized(relative) {
             return Err(ModelError::InvalidPath { path: raw });
         }
         return Ok(Self(raw));
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ModelError> {
+        return Self::new(encoding::encode(bytes).into_owned());
     }
 
     #[must_use]
@@ -572,6 +579,7 @@ pub struct Root(String);
 
 impl Root {
     pub fn new(raw: String) -> Result<Self, ModelError> {
+        encoding::decode(&raw).map_err(ModelError::Encoding)?;
         let valid = raw == "/" || raw.strip_prefix('/').is_some_and(normalized);
         if !valid {
             return Err(ModelError::InvalidRoot { root: raw });
@@ -582,6 +590,11 @@ impl Root {
     #[must_use]
     pub fn as_str(&self) -> &str {
         return &self.0;
+    }
+
+    #[must_use]
+    pub fn to_path_buf(&self) -> PathBuf {
+        return encoding::path_of(&self.0);
     }
 }
 
@@ -615,6 +628,20 @@ impl PathBase {
             Self::Relative(_) => PathMode::Relative,
             Self::Absolute => PathMode::Absolute,
         };
+    }
+
+    #[must_use]
+    pub fn location(&self, path: &SourcePath) -> String {
+        return match self {
+            Self::Absolute => path.0.clone(),
+            Self::Relative(root) if root.0 == "/" => format!("/{path}"),
+            Self::Relative(root) => format!("{}/{path}", root.0),
+        };
+    }
+
+    #[must_use]
+    pub fn disk_path(&self, path: &SourcePath) -> PathBuf {
+        return encoding::path_of(&self.location(path));
     }
 
     pub fn locate(&self, compiled: &str) -> Result<SourcePath, ModelError> {

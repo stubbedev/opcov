@@ -8,7 +8,6 @@ use opcov_core::report::{FileCoverage, PathBase, Sha256, SourcePath};
 use opcov_syntax::{SourceFile, SyntaxError};
 
 use crate::failure::Failure;
-use crate::view::location;
 
 #[derive(Debug)]
 pub(crate) enum SourceError {
@@ -59,7 +58,7 @@ pub(crate) fn read_verified(
     path: &SourcePath,
     file: &FileCoverage,
 ) -> Result<Vec<u8>, SourceError> {
-    let disk = PathBuf::from(location(paths, path));
+    let disk = paths.disk_path(path);
     let bytes = match fs::read(&disk) {
         Ok(bytes) => bytes,
         Err(error) => return Err(SourceError::Read { path: disk, error }),

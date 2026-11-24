@@ -16,11 +16,6 @@ pub(crate) const unsafe fn bytes<'a>(string: *const zend_string) -> Option<&'a [
     });
 }
 
-pub(crate) unsafe fn text<'a>(string: *const zend_string) -> Option<&'a str> {
-    // SAFETY: forwarded from the caller.
-    return unsafe { bytes(string) }.and_then(|raw| return str::from_utf8(raw).ok());
-}
-
 pub(crate) fn compiler_globals() -> *mut zend_compiler_globals {
     // SAFETY: returns the current thread's compiler globals, valid for the whole request.
     return unsafe { opcov_compiler_globals() };

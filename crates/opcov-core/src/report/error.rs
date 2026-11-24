@@ -5,6 +5,7 @@ use std::io;
 use super::model::{LoopId, OutcomeId, PathMode, Root, SourcePath, Span, TestIndex, schema_id};
 use super::scan::Found;
 use crate::cfg::{FunctionKey, KeyError, Line};
+use crate::encoding::NotCanonical;
 use crate::kind::EdgeKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,6 +104,7 @@ pub enum ModelError {
     TooManyTests {
         count: usize,
     },
+    Encoding(NotCanonical),
     InvalidPath {
         path: String,
     },
@@ -183,6 +185,7 @@ impl fmt::Display for ModelError {
                 "{count} tests exceed the {} that test indexes can address",
                 u32::MAX
             ),
+            Self::Encoding(error) => write!(formatter, "path {error}"),
             Self::InvalidPath { path } => write!(
                 formatter,
                 "path {path:?} is not normalized: it is empty or has an empty, `.` or `..` segment"

@@ -35,10 +35,10 @@ use crate::{
 pub(crate) enum ReportError {
     Model(ModelError),
     Key { path: SourcePath, error: KeyError },
-    SourceChanged { path: String },
-    SourceUnreadable { path: String, reason: String },
-    SourceModified { path: String },
-    SourceUnknown { path: String },
+    SourceChanged { path: FilePath },
+    SourceUnreadable { path: FilePath, reason: String },
+    SourceModified { path: FilePath },
+    SourceUnknown { path: FilePath },
     VmKind(i32),
     PhpVersion,
     NotConfigured,
@@ -258,17 +258,15 @@ fn compiled(record: &FileRecord) -> Result<Option<Content>, ReportError> {
     };
 }
 
-fn digest_file(path: &str, compiled: Fingerprint) -> Result<Sha256, ReportError> {
-    let content = fs::read(path).map_err(|error| {
+fn digest_file(path: &FilePath, compiled: Fingerprint) -> Result<Sha256, ReportError> {
+    let content = fs::read(path.to_path_buf()).map_err(|error| {
         return ReportError::SourceUnreadable {
-            path: path.to_owned(),
+            path: path.clone(),
             reason: format!("cannot read it to write the report: {error}"),
         };
     })?;
     if Fingerprint::of(&content) != compiled {
-        return Err(ReportError::SourceModified {
-            path: path.to_owned(),
-        });
+        return Err(ReportError::SourceModified { path: path.clone() });
     }
     return Ok(Sha256::digest(&content));
 }
@@ -453,6 +451,9 @@ impl Engine {
     ) -> Result<Vec<Planned<'e>>, ReportError> {
         let mut planned = Vec::new();
         for (slot, (_, record)) in self.files.iter().enumerate() {
+            if !record.modelled() {
+                continue;
+            }
             let Some(content) = compiled(record)? else {
                 let hit = counts.get(slot).is_some_and(|&count| return count > 0);
                 if record.lines.is_empty() && !hit {
@@ -462,7 +463,7 @@ impl Engine {
                     path: record.path.clone(),
                 });
             };
-            let path = paths.locate(&record.path)?;
+            let path = paths.locate(record.path.as_str())?;
             let key_file: FilePath = path.as_str().parse().map_err(|error| {
                 return ReportError::Key {
                     path: path.clone(),

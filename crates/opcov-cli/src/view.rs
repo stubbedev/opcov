@@ -1,6 +1,7 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::path::PathBuf;
 
 use opcov_core::cfg::{ClassRef, FunctionKey, Line, LineSpan};
 use opcov_core::report::{FileCoverage, Function, HitSet, Identified, PathBase, SourcePath};
@@ -156,6 +157,7 @@ impl LineView<'_> {
 pub(crate) struct FileView<'r> {
     pub(crate) path: &'r SourcePath,
     pub(crate) location: String,
+    pub(crate) disk: PathBuf,
     pub(crate) lines: Vec<LineView<'r>>,
     pub(crate) functions: Vec<FunctionView<'r>>,
 }
@@ -217,14 +219,6 @@ pub(crate) fn line_totals<'l>(lines: impl Iterator<Item = &'l LineView<'l>>) -> 
         totals.branches.absorb(line.branches);
     }
     return totals;
-}
-
-pub(crate) fn location(paths: &PathBase, path: &SourcePath) -> String {
-    return match paths {
-        PathBase::Absolute => path.as_str().to_owned(),
-        PathBase::Relative(root) if root.as_str() == "/" => format!("/{path}"),
-        PathBase::Relative(root) => format!("{}/{path}", root.as_str()),
-    };
 }
 
 const fn key_lines(key: &FunctionKey) -> Option<LineSpan> {
@@ -413,7 +407,8 @@ pub(crate) fn file_view<'r>(
     }
     return FileView {
         path,
-        location: location(paths, path),
+        location: paths.location(path),
+        disk: paths.disk_path(path),
         lines,
         functions,
     };

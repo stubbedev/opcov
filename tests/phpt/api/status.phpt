@@ -15,6 +15,7 @@ echo json_encode(array_map("basename", $status["selected_files"])), "\n";
 foreach ($status["skipped_files"] as $file => $reason) {
     echo basename($file), ": $reason\n";
 }
+echo json_encode($status["failed_files"]), "\n";
 echo implode(",", array_keys($status["counters"])), "\n";
 var_dump($status["counters"]["probes_installed"] > 0, $status["counters"]["probes_fired"] > 0);
 --EXPECT--
@@ -23,6 +24,7 @@ bool(true)
 NULL
 ["work.php"]
 status.php: not in opcov.collect_paths
-files_selected,files_skipped,jump_table_files,pending_discards,probes_fired,probes_installed,probes_rearmed,units,watches_installed
+[]
+files_failed,files_selected,files_skipped,jump_table_files,pending_discards,probes_fired,probes_installed,probes_rearmed,units,watches_installed
 bool(true)
 bool(true)

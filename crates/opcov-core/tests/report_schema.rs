@@ -109,6 +109,23 @@ mod schema {
     }
 
     #[test]
+    fn names_and_paths_in_canonical_byte_encoding_are_valid() {
+        let document = mutate(r#""app/Foo.php""#, r#""app/F%E9o 100%25.php""#)
+            .replacen(r#""App\\Foo::bar""#, r#""App\\F%E9o::b%FFr""#, 1)
+            .replacen(r#""/srv/app""#, r#""/srv/%E9""#, 1);
+        assert!(
+            schema_accepts(&document),
+            "the schema accepts encoded names"
+        );
+        let report = Report::read(document.as_bytes()).unwrap();
+        assert_eq!(
+            String::from_utf8(bytes(&report)).unwrap(),
+            document,
+            "round trip is byte-identical"
+        );
+    }
+
+    #[test]
     fn rejected_by_schema_and_parser() {
         let sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
         let cases = [
@@ -189,6 +206,18 @@ mod schema {
             ),
             ("empty function key", mutate(r#""App\\Foo::bar""#, r#""""#)),
             (
+                "lone escape character in a path",
+                mutate(r#""app/Foo.php""#, r#""app/F%o.php""#),
+            ),
+            (
+                "lowercase escape in a function key",
+                mutate(r#""App\\Foo::bar""#, r#""App\\F%e9o::bar""#),
+            ),
+            (
+                "short escape in the root",
+                mutate(r#""/srv/app""#, r#""/srv/a%A""#),
+            ),
+            (
                 "schema version 2",
                 mutate("opcov-report/1", "opcov-report/2"),
             ),
@@ -225,6 +254,18 @@ mod schema {
             (
                 "malformed function key",
                 mutate(r#""App\\Foo::bar""#, r#""App\\Foo::ba-r""#),
+            ),
+            (
+                "escaped ASCII in a path",
+                mutate(r#""app/Foo.php""#, r#""app/F%6Fo.php""#),
+            ),
+            (
+                "escaped valid UTF-8 in a function key",
+                mutate(r#""App\\Foo::bar""#, r#""App\\F%C3%A9o::bar""#),
+            ),
+            (
+                "escaped ASCII in the root",
+                mutate(r#""/srv/app""#, r#""/srv/%61pp""#),
             ),
             (
                 "closure key without lines",

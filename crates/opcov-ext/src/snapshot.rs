@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use opcov_core::cfg::{
     Analysis, BlockFlags, BlockId, BlockInput, ClassRef, FilePath, FunctionFlags, FunctionInput,
-    FunctionKey, KeyError, Line, LineSpan, LoopInput, Op, Opcode, PhpVersion, SnapshotError,
+    FunctionKey, KeyError, Line, LineSpan, LoopInput, Op, Opcode, PhpVersion, QualifiedName,
+    SnapshotError,
 };
 use opcov_sys::{
     OPCOV_ENGINE_VERSION_ID, ZEND_ACC_ANON_CLASS, ZEND_ACC_CLOSURE, ZEND_BB_CATCH, ZEND_BB_FINALLY,
@@ -36,20 +37,33 @@ const PROTECTED_ENTRY: u32 =
 
 #[derive(Debug)]
 pub(crate) enum SnapshotFailure {
-    NotUtf8 { what: &'static str },
+    Missing {
+        what: &'static str,
+    },
     Key(KeyError),
-    LineZero { op: usize },
-    Count { what: &'static str },
-    InvertedSpan { start: Line, end: Line },
-    Unranked { what: &'static str },
+    LineZero {
+        op: usize,
+    },
+    Count {
+        what: &'static str,
+    },
+    InvertedSpan {
+        start: Line,
+        end: Line,
+    },
+    Unranked {
+        what: &'static str,
+    },
     Cfg(SnapshotError),
     Bailout,
+    #[cfg(feature = "engine-selftest")]
+    Injected,
 }
 
 impl fmt::Display for SnapshotFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         return match self {
-            Self::NotUtf8 { what } => write!(f, "the {what} is missing or not UTF-8"),
+            Self::Missing { what } => write!(f, "the {what} is missing"),
             Self::Key(error) => write!(f, "cannot name the function: {error}"),
             Self::LineZero { op } => write!(f, "opcode {op} has line 0"),
             Self::Count { what } => write!(f, "the engine reported an impossible {what}"),
@@ -65,6 +79,8 @@ impl fmt::Display for SnapshotFailure {
             ),
             Self::Cfg(error) => write!(f, "{error}"),
             Self::Bailout => write!(f, "a fatal error interrupted building the CFG"),
+            #[cfg(feature = "engine-selftest")]
+            Self::Injected => write!(f, "failure injected by opcov\\selftest_fail_snapshot()"),
         };
     }
 }
@@ -109,10 +125,10 @@ impl Names {
             return Ok(file.clone());
         }
         // SAFETY: the caller passes a compiled op array's file name, a live zend_string.
-        let file: FilePath = unsafe { zend::text(name) }
-            .ok_or(SnapshotFailure::NotUtf8 { what: "file name" })?
-            .parse()
-            .map_err(SnapshotFailure::Key)?;
+        let file = FilePath::from_bytes(
+            unsafe { zend::bytes(name) }.ok_or(SnapshotFailure::Missing { what: "file name" })?,
+        )
+        .map_err(SnapshotFailure::Key)?;
         self.file = Some((name.addr(), file.clone()));
         return Ok(file);
     }
@@ -140,18 +156,20 @@ unsafe fn class_ref(
     let class = unsafe { &*scope };
     if class.ce_flags & ZEND_ACC_ANON_CLASS == 0 {
         // SAFETY: a class entry's name is a live zend_string.
-        let name = unsafe { zend::text(class.name) }
-            .ok_or(SnapshotFailure::NotUtf8 { what: "class name" })?;
-        return Ok(ClassRef::Named(name.parse().map_err(SnapshotFailure::Key)?));
+        let name = unsafe { zend::bytes(class.name) }
+            .ok_or(SnapshotFailure::Missing { what: "class name" })?;
+        return Ok(ClassRef::Named(
+            QualifiedName::from_bytes(name).map_err(SnapshotFailure::Key)?,
+        ));
     }
     // SAFETY: an anonymous class is a user class, whose `info.user` arm is the active one.
     let user = unsafe { class.info.user };
     // SAFETY: a user class's file name is a live zend_string.
-    let file = unsafe { zend::text(user.filename) }.ok_or(SnapshotFailure::NotUtf8 {
+    let file = unsafe { zend::bytes(user.filename) }.ok_or(SnapshotFailure::Missing {
         what: "class file name",
     })?;
     return Ok(ClassRef::Anonymous {
-        file: file.parse().map_err(SnapshotFailure::Key)?,
+        file: FilePath::from_bytes(file).map_err(SnapshotFailure::Key)?,
         lines: line_span(user.line_start, user.line_end)?,
         ordinal: ordinals.class(scope).ok_or(SnapshotFailure::Unranked {
             what: "anonymous class",
@@ -187,12 +205,12 @@ pub(crate) unsafe fn name(
     } else {
         // SAFETY: checked non-null above; a compiled op array's function name is a live
         // zend_string.
-        let name = unsafe { zend::text(array.function_name) }.ok_or(SnapshotFailure::NotUtf8 {
+        let name = unsafe { zend::bytes(array.function_name) }.ok_or(SnapshotFailure::Missing {
             what: "function name",
         })?;
         if array.scope.is_null() {
             FunctionKey::Function {
-                name: name.parse().map_err(SnapshotFailure::Key)?,
+                name: QualifiedName::from_bytes(name).map_err(SnapshotFailure::Key)?,
             }
         } else {
             // SAFETY: a compiled op array's scope is a live class entry.

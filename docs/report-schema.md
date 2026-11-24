@@ -90,6 +90,9 @@ Either `{"mode": "relative", "root": "<absolute directory>"}` or
   every key of `files` is an absolute path and `root` is absent.
 
 A path never has an empty, `.` or `..` segment. The separator is `/`.
+`root` and the `files` keys are bytes in the canonical encoding described in
+[Bytes that are not UTF-8](#bytes-that-are-not-utf-8), so a file name that is
+not valid UTF-8, or contains `%`, is still represented exactly.
 
 ### `tests`
 
@@ -125,6 +128,13 @@ declares only classes, functions and constants has no executable line (see
 - `<file>` is exactly the `files` key the function is listed under: relative to
   `paths.root` in `relative` mode, absolute in `absolute` mode. A key that names
   another file is rejected.
+- PHP allows the bytes 0x80 to 0xFF in names, so a class, function, method or
+  property name need not be valid UTF-8. Every name and file in a key is in the
+  canonical encoding of [Bytes that are not UTF-8](#bytes-that-are-not-utf-8):
+  the method `résumé` (UTF-8) of a class whose name is the Latin-1 bytes
+  `Caf\xE9` has the key `Caf%E9::résumé`, since valid UTF-8 stays as it is.
+  Escapes never produce `\`, `:`, `$`, `#`, `@`,
+  `-` or `/`, so a key's structure reads the same before and after decoding.
 - Closures and arrow functions share the `{closure}` form: PHP compiles both to
   the same kind of function (`fn () => $x` and `function () { return $x; }`
   produce the same opcodes and flags), so nothing that reads compiled code can
@@ -220,6 +230,53 @@ strictly before the end.
 An array of test indexes, sorted ascending without duplicates. Every index is
 smaller than the length of `tests`.
 
+### Bytes that are not UTF-8
+
+PHP names and file paths are bytes, but JSON strings are Unicode. Every
+`files` key, `paths.root` and function key therefore holds bytes in this
+canonical, reversible encoding:
+
+- a maximal run of valid UTF-8 is written as it is, except `%`;
+- `%` is written `%25`;
+- every byte that is not part of valid UTF-8 (a stray continuation byte, a
+  truncated or overlong sequence, an encoded surrogate, anything above
+  U+10FFFF) is written `%XX`, two uppercase hexadecimal digits.
+
+| Bytes | Encoded |
+|---|---|
+| `/srv/app/Foo.php` | `/srv/app/Foo.php` |
+| `/srv/café.php` (UTF-8) | `/srv/café.php` |
+| `/srv/caf\xE9.php` (Latin-1) | `/srv/caf%E9.php` |
+| `100%.php` | `100%25.php` |
+| the class `\xA9` (symfony/cache's `ValueWrapper`) | `%A9` |
+
+Decoding replaces every `%XX` by its byte. A reader accepts a string only when
+encoding its decoded bytes gives the string back, so `%` not followed by two
+hexadecimal digits, lowercase digits, and an escape of a byte that the encoding
+writes as it is (`%41`, or `%C3%A9` for the valid `é`) are rejected. Each byte
+string thus has exactly one encoding and each valid string exactly one byte
+string; opcov checks both directions with property tests
+(`crates/opcov-core/tests/encoding.rs`), and the JSON Schema checks the escape
+syntax (`$defs/encodedBytes`).
+
+The encoding is the identity on valid UTF-8 without `%`, which covers nearly
+every real name and path. It never writes an ASCII character other than `%`
+and hexadecimal digits in an escape, so splitting or joining at `/`, `\`, `:`,
+`#`, `@`, `$` or `-` gives the same result on the encoded text as on the bytes:
+`<root>/<files key>` decodes to the file's absolute path.
+
+Other consumers of the encoding:
+
+- `\opcov\stop()` and `\opcov\executable()` key files by their raw path, as
+  PHP names them, and functions by their encoded key; `get_status()` lists
+  paths encoded. The PHPUnit driver and `opcov-cov` decode keys and paths back
+  to bytes for php-code-coverage ([phpunit.md](phpunit.md)).
+- `opcov convert` writes lcov's `SF` as the raw path bytes, so tools that open
+  the source find it; lcov function names (`FN`, `FNDA`) are the encoded keys.
+  Clover, Cobertura and HTML are XML or HTML documents, which cannot carry
+  bytes that are not UTF-8, so they write paths and names encoded. `opcov
+  gate`, `doctor` and HTML read sources from the decoded path.
+
 ## Canonical form
 
 A valid report is in canonical form. Beyond what the JSON Schema can express,
@@ -236,6 +293,8 @@ readers check and producers must emit:
   hooks, closures, each by its parts);
 - the `<file>` of every function key equal to the `files` key it is listed
   under;
+- `paths.root`, every `files` key and every function key in canonical byte
+  encoding;
 - outcomes and loops strictly ascending by the number in their id (opcov
   numbers outcomes by `site`, so their sites never decrease);
 - every test index within the test table;
@@ -270,9 +329,10 @@ file.
 ## Consuming a report
 
 1. Read `schema` and refuse anything but `opcov-report/1`.
-2. Resolve each `files` key against `paths.root` (relative mode) and compare
-   the file's current SHA-256 with `sha256`; on a mismatch the coverage of that
-   file is stale.
+2. Resolve each `files` key against `paths.root` (relative mode), decode the
+   result to bytes ([Bytes that are not UTF-8](#bytes-that-are-not-utf-8)) to
+   get the file name on disk, and compare the file's current SHA-256 with
+   `sha256`; on a mismatch the coverage of that file is stale.
 3. For each line, outcome and loop, map the indexes of its hit lists through
    `tests` to get the tests that hit it. An empty list means uncovered; for
    loops, an empty `zero` means "never ran zero times" (`null`: it cannot) and

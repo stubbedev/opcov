@@ -108,8 +108,8 @@ the VM kind of the running engine (HYBRID, CALL or TAILCALL) and whether
 collection is available. On macOS the library is `libopcov_ext.dylib`.
 
 The `engine-selftest` cargo feature adds `\opcov\engine_selftest()`,
-`\opcov\selftest_panic()`, `\opcov\selftest_panic_in_probe()` and
-`\opcov\selftest_force_watch()` for the `.phpt` tests under `engine/` and for
+`\opcov\selftest_panic()`, `\opcov\selftest_panic_in_probe()`,
+`\opcov\selftest_force_watch()` and `\opcov\selftest_fail_snapshot()` for the `.phpt` tests under `engine/` and for
 the outcome spike. Release builds never contain them.
 
 ### Against a debug php-src

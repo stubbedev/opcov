@@ -6,7 +6,7 @@ use core::{
 use std::{fs, ops::Range, sync::OnceLock};
 
 use opcov_core::{
-    cfg::{FunctionFlag, FunctionKey, Plan},
+    cfg::{FilePath, FunctionFlag, FunctionKey, Plan},
     report::Sha256,
 };
 use opcov_sys::{
@@ -20,7 +20,7 @@ use opcov_sys::{
 use crate::{
     branches::{self, Layout},
     engine::{
-        Content, Engine, FileId, Fingerprint, FunctionRecord, OffReason, Reserved, Unit, Verdict,
+        Content, Engine, FileId, FileRecord, Fingerprint, FunctionRecord, Reserved, Unit, Verdict,
         with_engine,
     },
     guard::{self, COLLECTION, EntryPoint, guard},
@@ -31,6 +31,10 @@ use crate::{
     snapshot::{self, Named, Names, PHP, Snapshot, SnapshotFailure},
     threads, zend,
 };
+
+#[cfg(feature = "engine-selftest")]
+pub(crate) static FAIL_NEXT_SNAPSHOT: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 type CompileFile = unsafe extern "C" fn(*mut zend_file_handle, c_int) -> *mut zend_op_array;
 type CompileString = unsafe extern "C" fn(
@@ -515,7 +519,19 @@ unsafe fn process(op_array: *mut zend_op_array, window: &mut Window) {
         return;
     }
     // SAFETY: as above.
-    let Verdict::Measure(file) = window.verdict(unsafe { (*op_array).filename }) else {
+    let verdict = window.verdict(unsafe { (*op_array).filename });
+    let measured = match verdict {
+        Verdict::Measure(file) => with_engine(|engine| {
+            return engine
+                .files
+                .get(file)
+                .is_some_and(FileRecord::modelled)
+                .then_some(file);
+        })
+        .flatten(),
+        Verdict::Skip(_) | Verdict::Off => None,
+    };
+    let Some(file) = measured else {
         // SAFETY: as above.
         unsafe { Reserved::NoProbes.write(op_array, slot) };
         return;
@@ -532,18 +548,23 @@ unsafe fn process(op_array: *mut zend_op_array, window: &mut Window) {
     let taken = unsafe { window.name(op_array) }
         // SAFETY: as above.
         .and_then(|named| return unsafe { snapshot::take(op_array, named) });
+    #[cfg(feature = "engine-selftest")]
+    let taken = taken.and_then(|snapshot| {
+        if FAIL_NEXT_SNAPSHOT.swap(false, core::sync::atomic::Ordering::Relaxed) {
+            return Err(SnapshotFailure::Injected);
+        }
+        return Ok(snapshot);
+    });
     with_engine(|engine| match taken {
         // SAFETY: as above.
         Ok(snapshot) => unsafe { engine.install_unit(op_array, file, snapshot) },
         Err(failure) => {
-            let path = engine
-                .files
-                .get(file)
-                .map_or_else(String::new, |record| return record.path.clone());
-            engine.set_problem(OffReason::Snapshot {
-                file: path,
-                message: failure.to_string(),
-            });
+            if let Some(record) = engine.files.get_mut(file) {
+                record.give_up(format!(
+                    "cannot analyse code compiled from {}: {failure}",
+                    record.path
+                ));
+            }
             // SAFETY: as above.
             unsafe { Reserved::NoProbes.write(op_array, slot) };
         }
@@ -585,7 +606,7 @@ enum Compiled {
     String(*const zend_string),
 }
 
-unsafe fn compiled_content(compiled: Compiled, path: &str) -> Result<Content, String> {
+unsafe fn compiled_content(compiled: Compiled, path: &FilePath) -> Result<Content, String> {
     let handle = match compiled {
         Compiled::String(source) => {
             // SAFETY: the caller passes the live source string of the compilation.
@@ -599,7 +620,7 @@ unsafe fn compiled_content(compiled: Compiled, path: &str) -> Result<Content, St
     // file, `buf` holds its `len` bytes until the handle is destroyed.
     let (buf, len) = unsafe { ((*handle).buf, (*handle).len) };
     if buf.is_null() {
-        return fs::read(path)
+        return fs::read(path.to_path_buf())
             .map(|bytes| return Content::File(Fingerprint::of(&bytes)))
             .map_err(|error| return format!("cannot read {path}: {error}"));
     }
@@ -614,14 +635,15 @@ unsafe fn record_source(main: *const zend_op_array, compiled: Compiled) {
     let Verdict::Measure(file) = decide(name) else {
         return;
     };
-    let path = with_engine(|engine| {
+    let Some(path) = with_engine(|engine| {
         return engine
             .files
             .get(file)
             .map(|record| return record.path.clone());
     })
-    .flatten()
-    .unwrap_or_default();
+    .flatten() else {
+        return;
+    };
     // SAFETY: forwarded from the caller.
     let content = unsafe { compiled_content(compiled, &path) };
     with_engine(|engine| {

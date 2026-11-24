@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Component, Path, PathBuf};
 
 use opcov_core::cfg::Line;
@@ -120,7 +121,7 @@ pub(crate) fn resolve(paths: &PathBase, base: &Path, changed: &Path) -> Option<S
     let absolute = normalize(&base.join(changed));
     let relative = match paths {
         PathBase::Absolute => absolute.as_path(),
-        PathBase::Relative(root) => absolute.strip_prefix(root.as_str()).ok()?,
+        PathBase::Relative(root) => absolute.strip_prefix(root.to_path_buf()).ok()?,
     };
-    return SourcePath::new(relative.to_str()?.to_owned()).ok();
+    return SourcePath::from_bytes(relative.as_os_str().as_bytes()).ok();
 }

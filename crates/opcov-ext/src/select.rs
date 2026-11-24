@@ -1,13 +1,17 @@
 use core::ptr::{self, NonNull};
 use std::{
     collections::BTreeMap,
+    ffi::OsStr,
     fs, io,
+    os::unix::ffi::OsStrExt as _,
     path::{Path, PathBuf},
 };
 
 use opcov_core::{
+    cfg::FilePath,
+    encoding,
     filter::{
-        CaseSensitivity, CompiledFile, Decision, SelectionConfig, SkipReason, eval_host,
+        CaseSensitivity, CompiledFile, Decision, PatternMatch, SelectionConfig, eval_host,
         stream_scheme,
     },
     report::Settings,
@@ -51,7 +55,7 @@ impl Pattern {
         });
     }
 
-    fn matches(self, subject: &str) -> Option<bool> {
+    fn matches(self, subject: &[u8]) -> PatternMatch {
         let mut matched = -1;
         // SAFETY: the pattern entry is kept alive by its reference; the engine matches a
         // request-scoped copy of `subject` and writes -1 for a matching error.
@@ -63,11 +67,13 @@ impl Pattern {
                 &raw mut matched,
             )
         };
-        caught(completed).ok()?;
+        if caught(completed).is_err() {
+            return PatternMatch::Failed;
+        }
         return match matched {
-            0 => Some(false),
-            1 => Some(true),
-            _ => None,
+            0 => PatternMatch::Unmatched,
+            1 => PatternMatch::Matched,
+            _ => PatternMatch::Failed,
         };
     }
 
@@ -137,8 +143,8 @@ pub(crate) fn configure() -> Request {
 
 #[derive(Debug)]
 enum Classified {
-    Resolved { path: PathBuf, report: String },
-    Eval { host: PathBuf, report: String },
+    Resolved { path: PathBuf, report: FilePath },
+    Eval { host: PathBuf, report: FilePath },
     StreamWrapper,
     Unresolvable,
 }
@@ -147,24 +153,33 @@ enum Classified {
 pub(crate) struct Directories(Map<PathBuf, PathBuf>);
 
 impl Directories {
-    fn split(path: &str) -> Option<(&str, &str)> {
-        let (parent, name) = path.rsplit_once('/')?;
+    fn split(path: &Path) -> Option<(&Path, &OsStr)> {
+        let bytes = path.as_os_str().as_bytes();
+        let slash = bytes.iter().rposition(|&byte| return byte == b'/')?;
+        let (parent, name) = bytes.split_at(slash);
+        let name = name.get(1..)?;
         let usable = CaseSensitivity::HOST == CaseSensitivity::Sensitive
-            && path.starts_with('/')
-            && !matches!(name, "" | "." | "..");
-        return usable.then_some((if parent.is_empty() { "/" } else { parent }, name));
+            && bytes.starts_with(b"/")
+            && !matches!(name, b"" | b"." | b"..");
+        let parent = if parent.is_empty() { b"/" } else { parent };
+        return usable.then(|| {
+            return (
+                Path::new(OsStr::from_bytes(parent)),
+                OsStr::from_bytes(name),
+            );
+        });
     }
 
-    fn canonicalize(&mut self, path: &str) -> io::Result<PathBuf> {
+    fn canonicalize(&mut self, path: &Path) -> io::Result<PathBuf> {
         let Some((parent, name)) = Self::split(path) else {
             return fs::canonicalize(path);
         };
-        let candidate = if let Some(known) = self.0.get(Path::new(parent)) {
+        let candidate = if let Some(known) = self.0.get(parent) {
             known.join(name)
         } else {
             let known = fs::canonicalize(parent)?;
             let joined = known.join(name);
-            self.0.insert(PathBuf::from(parent), known);
+            self.0.insert(parent.to_path_buf(), known);
             joined
         };
         if fs::symlink_metadata(&candidate)?.file_type().is_symlink() {
@@ -173,23 +188,22 @@ impl Directories {
         return Ok(candidate);
     }
 
-    fn resolve(&mut self, path: &str) -> Option<(PathBuf, String)> {
-        let resolved = self.canonicalize(path).ok()?;
-        let text = resolved.to_str()?.to_owned();
-        return Some((resolved, text));
+    fn resolve(&mut self, path: &str) -> Option<(PathBuf, FilePath)> {
+        let bytes = encoding::decode(path).ok()?;
+        let resolved = self
+            .canonicalize(Path::new(OsStr::from_bytes(&bytes)))
+            .ok()?;
+        let report = FilePath::from_bytes(resolved.as_os_str().as_bytes()).ok()?;
+        return Some((resolved, report));
     }
 }
 
 fn classify(reported: &str, directories: &mut Directories) -> Classified {
     if let Some(host) = eval_host(reported) {
-        return directories
-            .resolve(host)
-            .map_or(Classified::Unresolvable, |(host, _)| {
-                return Classified::Eval {
-                    host,
-                    report: reported.to_owned(),
-                };
-            });
+        let resolved = directories.resolve(host).zip(reported.parse().ok());
+        return resolved.map_or(Classified::Unresolvable, |((host, _), report)| {
+            return Classified::Eval { host, report };
+        });
     }
     if stream_scheme(reported).is_some() {
         return Classified::StreamWrapper;
@@ -202,9 +216,8 @@ fn classify(reported: &str, directories: &mut Directories) -> Classified {
 }
 
 pub(crate) fn decide(reported: &[u8]) -> Verdict {
-    let Ok(name) = str::from_utf8(reported) else {
-        return Verdict::Skip(SkipReason::Unresolvable);
-    };
+    let encoded = encoding::encode(reported);
+    let name: &str = &encoded;
     let cached = with_engine(|engine| {
         let request = engine.request.as_ref()?;
         request.selection.as_ref()?;
@@ -234,18 +247,11 @@ pub(crate) fn decide(reported: &[u8]) -> Verdict {
         }
         Classified::StreamWrapper | Classified::Unresolvable => None,
     };
-    let matched = match (pattern, subject.and_then(Path::to_str)) {
-        (Some(pattern), Some(subject)) => pattern.matches(subject).ok_or(subject),
-        _ => Ok(false),
+    let matched = match (pattern, subject) {
+        (Some(pattern), Some(subject)) => pattern.matches(subject.as_os_str().as_bytes()),
+        _ => PatternMatch::Unmatched,
     };
     return with_engine(|engine| {
-        let excluded = match matched {
-            Ok(excluded) => excluded,
-            Err(subject) => {
-                engine.set_problem(OffReason::PatternFailed(subject.to_owned()));
-                return Verdict::Off;
-            }
-        };
         let Some(selection) = engine
             .request
             .as_ref()
@@ -259,12 +265,12 @@ pub(crate) fn decide(reported: &[u8]) -> Verdict {
             Classified::StreamWrapper => CompiledFile::StreamWrapper(name),
             Classified::Unresolvable => CompiledFile::Unresolvable(name),
         };
-        let verdict = match selection.decide(compiled, excluded) {
+        let verdict = match selection.decide(compiled, matched) {
             Decision::Skipped(reason) => Verdict::Skip(reason),
             Decision::Selected => match &classified {
                 Classified::Resolved { report, .. } | Classified::Eval { report, .. } => engine
                     .files
-                    .intern(report)
+                    .intern(report.clone())
                     .map_or(Verdict::Off, Verdict::Measure),
                 Classified::StreamWrapper | Classified::Unresolvable => Verdict::Off,
             },
@@ -319,14 +325,14 @@ mod tests {
         ] {
             let path = scratch.path(relative);
             assert_eq!(
-                directories.canonicalize(&path).unwrap(),
+                directories.canonicalize(Path::new(&path)).unwrap(),
                 fs::canonicalize(&path).unwrap(),
                 "{relative}"
             );
         }
         assert_eq!(
             directories
-                .canonicalize(&scratch.path("link/src/alias.php"))
+                .canonicalize(Path::new(&scratch.path("link/src/alias.php")))
                 .unwrap(),
             scratch.0.join("real/src/a.php"),
             "a symlinked file resolves to its target"
@@ -338,11 +344,11 @@ mod tests {
         let scratch = Scratch::new("missing");
         let mut directories = Directories::default();
         directories
-            .canonicalize(&scratch.path("real/src/a.php"))
+            .canonicalize(Path::new(&scratch.path("real/src/a.php")))
             .unwrap();
         for missing in ["real/src/gone.php", "absent/a.php"] {
             let error = directories
-                .canonicalize(&scratch.path(missing))
+                .canonicalize(Path::new(&scratch.path(missing)))
                 .unwrap_err();
             assert_eq!(error.kind(), io::ErrorKind::NotFound, "{missing}");
         }

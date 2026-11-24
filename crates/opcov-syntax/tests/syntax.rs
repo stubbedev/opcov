@@ -3,7 +3,7 @@ mod syntax {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use opcov_core::cfg::{Analysis, FunctionKey, Line, OpIndex, Plan};
+    use opcov_core::cfg::{Analysis, FilePath, FunctionKey, Line, OpIndex, Plan};
     use opcov_core::kind::{EdgeKind, LoopKind};
     use opcov_syntax::{
         BranchKind, ConstructKind, FunctionSource, Location, LookupError, OutcomeRef, SourceFile,
@@ -519,6 +519,29 @@ mod syntax {
             panic!("expected a parse error, got {error}");
         };
         assert_eq!(position.line().get(), 2, "the error names the line");
+    }
+
+    #[test]
+    fn names_that_are_not_utf8_are_keyed_in_the_canonical_encoding() {
+        let source = b"<?php\nnamespace Caf\xe9;\nfunction \xe9t\xe9() {}\nclass Ma\xefs {\n    public function r\xe9sum\xe9() {}\n    public int $\xe9 { get => 1; }\n}\n$f = fn () => 1;\n";
+        let path = FilePath::from_bytes(b"/srv/\xe9%.php").unwrap();
+        let file = SourceFile::parse(path, source).unwrap();
+        let keys: Vec<String> = file
+            .functions()
+            .iter()
+            .map(|function| return function.key().to_string())
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "{main}@/srv/%E9%25.php",
+                "Caf%E9\\%E9t%E9",
+                "Caf%E9\\Ma%EFs::r%E9sum%E9",
+                "Caf%E9\\Ma%EFs::$%E9::get",
+                "{closure}@/srv/%E9%25.php:8-8",
+            ],
+            "every name keeps its bytes"
+        );
     }
 
     #[test]

@@ -5,7 +5,10 @@ message that ends with a link to one entry on this page. `opcov\get_status()`
 names the same entry in `off_code`, lists every conflict it finds under
 `conflicts`, and `php --ri opcov` prints them too. `opcov doctor` runs all of
 these checks in a child PHP process that uses your INI files and prints each
-problem with its fix.
+problem with its fix. A problem with a single file never turns collection off:
+opcov skips that file, and `get_status()` names the entry in the file's
+`skipped_files` reason ([exclude-pattern-failed](#exclude-pattern-failed)) or
+its `failed_files` code ([snapshot-failed](#snapshot-failed)).
 
 The heading of each entry is the stable code that the message links to.
 
@@ -114,23 +117,34 @@ for example `opcov.exclude_pattern=~/generated/~`.
 
 ## exclude-pattern-failed
 
-**Message:** `opcov.exclude_pattern failed to match against <path>`
+**Message:** `opcov.exclude_pattern failed to match against its resolved path`,
+the reason `\opcov\get_status()['skipped_files']` gives for the file.
 
-PCRE returned an error (for example a backtracking limit) while matching the
-pattern against a compiled file's path. opcov cannot decide whether that file is
-excluded.
+PCRE returned an error while matching the pattern against a compiled file's
+path, for example a backtracking limit, or a pattern with the `u` modifier
+meeting a file name that is not valid UTF-8. opcov cannot decide whether that
+file is excluded, so it skips that one file and keeps collecting every other
+file. The pattern is matched only when the file is otherwise selected.
 
-**Fix:** simplify the pattern, or raise `pcre.backtrack_limit`.
+**Fix:** simplify the pattern, raise `pcre.backtrack_limit`, or drop the `u`
+modifier when file names may not be UTF-8.
 
 ## snapshot-failed
 
-**Message:** `cannot analyse code compiled from <file>: <reason>`
+**Message:** `cannot analyse code compiled from <file>: <reason>`, the `reason`
+of the file's entry in `\opcov\get_status()['failed_files']`, whose `code` is
+`snapshot-failed`.
 
 opcov could not build the control-flow model of a function in a measured file.
-The file's coverage would be incomplete, so the report is refused.
+It skips that file from then on and keeps collecting every other file:
+`stop()`, `executable()` and `write_report()` leave the file out, and
+`get_status()` lists it under `failed_files` instead of `selected_files` (the
+counter `files_failed` counts them). Hits the file recorded before the failure,
+which needs a function compiled after the rest of the file, are dropped with it.
 
 **Fix:** file a bug with the message and the file (or a reduced copy). Until it
-is fixed, exclude the file with `opcov.exclude_paths`.
+is fixed, the file stays unmeasured; exclude it with `opcov.exclude_paths` to
+silence the entry.
 
 ## nothing-selected
 

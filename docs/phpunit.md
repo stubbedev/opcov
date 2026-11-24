@@ -274,6 +274,14 @@ as follows; `<file>` becomes the absolute path:
 Branches of functions that are not counted still appear in the HTML branch
 view and in the line colouring.
 
+Function keys and report paths carry names and file names that are not valid
+UTF-8 in opcov's canonical byte encoding
+([report-schema.md](report-schema.md#bytes-that-are-not-utf-8)), for example
+`Caf%E9::run` for a class named with the Latin-1 byte `\xE9`. The driver and
+`opcov-cov` decode them back to the raw bytes, which is what PHP and
+php-code-coverage use: the name above becomes `Caf\xE9->run`, and the file
+paths php-code-coverage reads and reports are the real file names.
+
 Path coverage stays refused: the driver keeps `canCollectPathCoverage()` at
 `false`, so `--path-coverage` stops the run with php-code-coverage's
 `opcov X does not support path coverage`. php-code-coverage 14 separates

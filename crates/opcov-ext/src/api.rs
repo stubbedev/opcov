@@ -1,12 +1,16 @@
 use core::ffi::c_char;
 use std::{
+    ffi::OsStr,
     fs,
+    os::unix::ffi::OsStrExt as _,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
 
 use opcov_core::{
     cfg::{FilePath, FunctionKey, Line},
+    encoding,
+    filter::SkipReason,
     output::write_atomically,
     report::{LoopId, OutcomeId, PathBase, Root},
 };
@@ -22,10 +26,11 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     accepts_no_arguments,
+    code::{Code, Explained},
     conflicts::{Conflict, Conflicts, Environment},
     engine::{
-        Covered, Engine, FileId, FiredList, FunctionId, OffReason, Probe, Role, Roles, Unit,
-        Verdict, with_engine,
+        Covered, Engine, FileId, FileRecord, FiredList, FunctionId, OffReason, Probe, Role, Roles,
+        Unit, Verdict, with_engine,
     },
     guard::{COLLECTION, Caught, EntryPoint, caught, guard},
     info, ini,
@@ -125,11 +130,15 @@ impl Engine {
         return selected.into_iter();
     }
 
-    fn path(&self, file: FileId) -> &str {
+    fn measured(&self, file: FileId) -> Option<&FileRecord> {
         return self
             .files
             .get(file)
-            .map_or("", |record| return record.path.as_str());
+            .filter(|record| return record.modelled());
+    }
+
+    fn path(&self, file: FileId) -> Option<&FilePath> {
+        return self.measured(file).map(|record| return &record.path);
     }
 }
 
@@ -202,7 +211,7 @@ struct FunctionHits<'a> {
 #[derive(Debug)]
 struct FileHits<'a> {
     file: FileId,
-    path: &'a str,
+    path: &'a FilePath,
     lines: Vec<u32>,
     functions: Vec<FunctionHits<'a>>,
 }
@@ -210,8 +219,9 @@ struct FileHits<'a> {
 fn file_entry<'f, 'a>(
     files: &'f mut Vec<FileHits<'a>>,
     file: FileId,
-    path: &'a str,
+    path: Option<&'a FilePath>,
 ) -> Option<&'f mut FileHits<'a>> {
+    let path = path?;
     let at = match files.binary_search_by_key(&file, |hits| return hits.file) {
         Ok(at) => at,
         Err(at) => {
@@ -350,11 +360,7 @@ unsafe fn emit_function(target: *mut zval, hits: &FunctionHits<'_>) -> Caught<()
                     php::set(&raw mut looped, name, &mut hit)?;
                 }
             }
-            php::set(
-                &raw mut loops,
-                &LoopId::new(number).to_string(),
-                &mut looped,
-            )?;
+            php::set(&raw mut loops, LoopId::new(number).to_string(), &mut looped)?;
         }
         php::set(target, "loops", &mut loops)?;
     }
@@ -385,7 +391,7 @@ unsafe fn emit_hits(engine: &Engine, return_value: *mut zval) -> Caught<()> {
                 php::set(&raw mut functions, hits.text, &mut function)?;
             }
             php::set(&raw mut entry, "functions", &mut functions)?;
-            php::set(return_value, file.path, &mut entry)?;
+            php::set(return_value, file.path.to_bytes(), &mut entry)?;
         }
     }
     return Ok(());
@@ -506,7 +512,7 @@ unsafe extern "C" fn reset(execute_data: *mut zend_execute_data, _return_value: 
     });
 }
 
-unsafe fn requested_paths<'a>(files: *mut HashTable) -> Result<Vec<&'a str>, u32> {
+unsafe fn requested_paths<'a>(files: *mut HashTable) -> Result<Vec<&'a [u8]>, u32> {
     // SAFETY: the caller passes the live argument array.
     let used = unsafe { zend::map_used(files) };
     let mut paths = Vec::new();
@@ -523,34 +529,27 @@ unsafe fn requested_paths<'a>(files: *mut HashTable) -> Result<Vec<&'a str>, u32
             return Err(index);
         }
         // SAFETY: a PHP string's bytes stay alive while the argument array does, i.e. this call.
-        let bytes = unsafe { core::slice::from_raw_parts(text.cast::<u8>(), length) };
-        let Ok(path) = str::from_utf8(bytes) else {
-            return Err(index);
-        };
-        paths.push(path);
+        paths.push(unsafe { core::slice::from_raw_parts(text.cast::<u8>(), length) });
     }
     return Ok(paths);
 }
 
 impl Engine {
-    fn find_file(&self, requested: &str) -> Option<FileId> {
-        if let Some(found) = self.files.find(requested) {
+    fn find_file(&self, requested: &[u8]) -> Option<FileId> {
+        if let Some(found) = self.files.find(&encoding::encode(requested)) {
             return Some(found);
         }
-        let resolved = fs::canonicalize(requested).ok()?;
-        return self.files.find(resolved.to_str()?);
+        let resolved = fs::canonicalize(OsStr::from_bytes(requested)).ok()?;
+        return self.files.find(&encoding::encode_path(&resolved));
     }
 
-    fn file_model(&self, file: FileId) -> Result<Entry, String> {
+    fn file_model(&self, file: FileId) -> Result<(&FilePath, Entry), String> {
         let record = self
             .files
             .get(file)
             .ok_or_else(|| return format!("file {file:?} is not recorded"))?;
-        let key_file: FilePath = record
-            .path
-            .parse()
-            .map_err(|error| return format!("{}: {error}", record.path))?;
-        return report::entry(&self.files, record, &key_file, &[])
+        return report::entry(&self.files, record, &record.path, &[])
+            .map(|entry| return (&record.path, entry))
             .map_err(|error| return format!("{}: {error}", record.path));
     }
 }
@@ -590,7 +589,7 @@ unsafe fn emit_entry(target: *mut zval, entry: &Entry) -> Result<(), EntryError>
         for (key, function) in &entry.functions {
             let mut model = zval::default();
             php::emit(&raw mut model, &serde_json::to_value(function)?)?;
-            php::set(&raw mut functions, &key.to_string(), &mut model)?;
+            php::set(&raw mut functions, key.to_string(), &mut model)?;
         }
         php::set(target, "functions", &mut functions)?;
     }
@@ -611,7 +610,7 @@ unsafe extern "C" fn executable(execute_data: *mut zend_execute_data, return_val
                 php::throw(
                     Exception::Logic,
                     &format!(
-                        "opcov\\executable() expects file paths; element {position} is not a UTF-8 string"
+                        "opcov\\executable() expects file paths; element {position} is not a string"
                     ),
                 );
                 return;
@@ -623,18 +622,21 @@ unsafe extern "C" fn executable(execute_data: *mut zend_execute_data, return_val
             files.extend(
                 requested
                     .iter()
-                    .filter_map(|path| return engine.find_file(path)),
+                    .filter_map(|path| return engine.find_file(path))
+                    .filter(|&file| return engine.measured(file).is_some()),
             );
-            files
-                .sort_unstable_by(|left, right| return engine.path(*left).cmp(engine.path(*right)));
+            files.sort_unstable_by(|left, right| {
+                return engine.path(*left).cmp(&engine.path(*right));
+            });
             files.dedup();
             let models = files
                 .iter()
                 .map(|&file| {
-                    let model = engine.file_model(file)?;
-                    return Ok((engine.path(file).to_owned(), model));
+                    return engine
+                        .file_model(file)
+                        .map(|(path, model)| return (path.clone(), model));
                 })
-                .collect::<Result<Vec<(String, Entry)>, String>>();
+                .collect::<Result<Vec<(FilePath, Entry)>, String>>();
             engine.scratch.files = files;
             return models;
         })
@@ -667,7 +669,7 @@ unsafe extern "C" fn executable(execute_data: *mut zend_execute_data, return_val
                         return;
                     }
                 }
-                if php::set(return_value, path, &mut entry).is_err() {
+                if php::set(return_value, path.to_bytes(), &mut entry).is_err() {
                     return;
                 }
             }
@@ -676,10 +678,22 @@ unsafe extern "C" fn executable(execute_data: *mut zend_execute_data, return_val
 }
 
 impl Engine {
-    fn status_detail(&self) -> (Vec<Value>, Map<String, Value>, Value) {
+    fn status_detail(&self) -> (Vec<Value>, Map<String, Value>, Map<String, Value>, Value) {
         let selected: Vec<Value> = self
             .selected_files()
-            .map(|file| return Value::String(self.path(file).to_owned()))
+            .filter_map(|file| return self.path(file))
+            .map(|path| return Value::String(path.to_string()))
+            .collect();
+        let failed: Map<String, Value> = self
+            .files
+            .iter()
+            .filter_map(|(_, record)| {
+                let unmodelled = record.unmodelled.as_ref()?;
+                return Some((
+                    record.path.to_string(),
+                    json!({"code": Code::SnapshotFailed.name(), "reason": unmodelled.to_string()}),
+                ));
+            })
             .collect();
         let skipped: Map<String, Value> = self
             .request
@@ -687,9 +701,7 @@ impl Engine {
             .flat_map(|request| return &request.decisions)
             .filter_map(|(name, verdict)| {
                 return match verdict {
-                    Verdict::Skip(reason) => {
-                        Some((name.clone(), Value::String(reason.to_string())))
-                    }
+                    Verdict::Skip(reason) => Some((name.clone(), Value::String(skip_text(reason)))),
                     Verdict::Measure(_) | Verdict::Off => None,
                 };
             })
@@ -697,6 +709,7 @@ impl Engine {
         let counters = json!({
             "files_selected": selected.len(),
             "files_skipped": skipped.len(),
+            "files_failed": failed.len(),
             "units": self.units.count_live(),
             "probes_installed": self.counters.probes_installed,
             "probes_fired": self.counters.probes_fired,
@@ -705,13 +718,28 @@ impl Engine {
             "pending_discards": self.counters.pending_discards,
             "jump_table_files": self.counters.jump_table_files,
         });
-        return (selected, skipped, counters);
+        return (selected, skipped, failed, counters);
     }
 }
 
+fn skip_text(reason: &SkipReason) -> String {
+    return match reason {
+        SkipReason::PatternFailed => Explained {
+            code: Code::ExcludePatternFailed,
+            text: reason,
+        }
+        .to_string(),
+        SkipReason::NotInCollectPaths
+        | SkipReason::ExcludedByPath(_)
+        | SkipReason::ExcludedByPattern
+        | SkipReason::StreamWrapper
+        | SkipReason::Unresolvable => reason.to_string(),
+    };
+}
+
 fn status(engine: Option<&Engine>, reason: Option<&OffReason>, environment: &Environment) -> Value {
-    let (selected, skipped, counters) = engine.map_or_else(
-        || return (Vec::new(), Map::new(), json!({})),
+    let (selected, skipped, failed, counters) = engine.map_or_else(
+        || return (Vec::new(), Map::new(), Map::new(), json!({})),
         Engine::status_detail,
     );
     let conflicts: Vec<Value> = environment
@@ -735,6 +763,7 @@ fn status(engine: Option<&Engine>, reason: Option<&OffReason>, environment: &Env
         "conflicts": conflicts,
         "selected_files": selected,
         "skipped_files": skipped,
+        "failed_files": failed,
         "counters": counters,
     });
 }
@@ -819,15 +848,19 @@ impl Engine {
         });
     }
 
-    fn debug_info(&self, requested: &str) -> Value {
+    fn debug_info(&self, requested: &[u8]) -> Value {
         let decision = self
             .request
             .as_ref()
-            .and_then(|request| return request.decisions.get(requested));
-        let skip = match decision {
-            Some(Verdict::Skip(reason)) => Value::String(reason.to_string()),
-            Some(Verdict::Off) => Value::String(String::from("collection is off")),
-            Some(Verdict::Measure(_)) | None => Value::Null,
+            .and_then(|request| return request.decisions.get(&*encoding::encode(requested)));
+        let failure = self
+            .find_file(requested)
+            .and_then(|file| return self.files.get(file)?.unmodelled.as_ref());
+        let skip = match (decision, failure) {
+            (_, Some(unmodelled)) => Value::String(unmodelled.to_string()),
+            (Some(Verdict::Skip(reason)), None) => Value::String(skip_text(reason)),
+            (Some(Verdict::Off), None) => Value::String(String::from("collection is off")),
+            (Some(Verdict::Measure(_)) | None, None) => Value::Null,
         };
         let Some(file) = self.find_file(requested) else {
             return json!({"skip_reason": skip, "executable_lines": [], "functions": {}, "probes": [], "units": 0});
@@ -881,8 +914,7 @@ unsafe extern "C" fn get_debug_info(execute_data: *mut zend_execute_data, return
         }
         // SAFETY: the argument string stays alive during this call.
         let bytes = unsafe { core::slice::from_raw_parts(text.cast::<u8>(), length) };
-        let requested = String::from_utf8_lossy(bytes);
-        let built = with_engine(|engine| return engine.debug_info(&requested)).unwrap_or_else(|| {
+        let built = with_engine(|engine| return engine.debug_info(bytes)).unwrap_or_else(|| {
             return json!({"skip_reason": "collection is off", "executable_lines": [], "functions": {}, "probes": [], "units": 0});
         });
         // SAFETY: the engine passes this call's return slot.
@@ -898,7 +930,7 @@ const ABSOLUTE_OPTION: &str = "absolute_paths";
 
 #[derive(Debug, Default)]
 struct ReportOptions {
-    root: Option<String>,
+    root: Option<PathBuf>,
     absolute: bool,
 }
 
@@ -939,7 +971,7 @@ unsafe fn type_name(value: *const zval) -> String {
     return name.to_string_lossy().into_owned();
 }
 
-unsafe fn root_option(value: *const zval) -> Result<String, Refusal> {
+unsafe fn root_option(value: *const zval) -> Result<PathBuf, Refusal> {
     let mut text: *const c_char = core::ptr::null();
     let mut length = 0_usize;
     // SAFETY: the caller passes a live array value.
@@ -955,19 +987,13 @@ unsafe fn root_option(value: *const zval) -> Result<String, Refusal> {
     }
     // SAFETY: a PHP string's bytes stay alive while the argument array does, i.e. this call.
     let bytes = unsafe { core::slice::from_raw_parts(text.cast::<u8>(), length) };
-    let root = str::from_utf8(bytes).map_err(|_utf8| {
-        return Refusal::option(
-            Exception::Value,
-            &format!("key \"{ROOT_OPTION}\" must be valid UTF-8"),
-        );
-    })?;
-    if root.is_empty() || root.contains('\0') {
+    if bytes.is_empty() || bytes.contains(&0) {
         return Err(Refusal::option(
             Exception::Value,
             &format!("key \"{ROOT_OPTION}\" must be a non-empty path without NUL bytes"),
         ));
     }
-    return Ok(root.to_owned());
+    return Ok(PathBuf::from(OsStr::from_bytes(bytes)));
 }
 
 unsafe fn report_options(options: *mut HashTable) -> Result<ReportOptions, Refusal> {
@@ -1047,16 +1073,13 @@ fn working_directory() -> Result<PathBuf, Refusal> {
             "cannot determine the working directory",
         ));
     }
-    let text = core::ffi::CStr::from_bytes_until_nul(&buffer)
-        .ok()
-        .and_then(|path| return path.to_str().ok())
-        .ok_or_else(|| {
-            return Refusal::new(
-                Exception::Runtime,
-                "the working directory is not a valid UTF-8 path",
-            );
-        })?;
-    return Ok(PathBuf::from(text));
+    let path = core::ffi::CStr::from_bytes_until_nul(&buffer).map_err(|_unterminated| {
+        return Refusal::new(
+            Exception::Runtime,
+            "the working directory the engine returned is not NUL-terminated",
+        );
+    })?;
+    return Ok(PathBuf::from(OsStr::from_bytes(path.to_bytes())));
 }
 
 fn report_paths(options: &ReportOptions, cwd: &Path) -> Result<PathBase, Refusal> {
@@ -1076,13 +1099,7 @@ fn report_paths(options: &ReportOptions, cwd: &Path) -> Result<PathBase, Refusal
             ),
         );
     })?;
-    let text = resolved.to_str().ok_or_else(|| {
-        return Refusal::new(
-            Exception::Runtime,
-            format!("the report root {} is not valid UTF-8", resolved.display()),
-        );
-    })?;
-    let root = Root::new(text.to_owned()).map_err(|error| {
+    let root = Root::new(encoding::encode_path(&resolved).into_owned()).map_err(|error| {
         return Refusal::new(Exception::Runtime, format!("invalid report root: {error}"));
     })?;
     return Ok(PathBase::Relative(root));
@@ -1108,10 +1125,7 @@ unsafe fn report_arguments(
     // SAFETY: the path argument's bytes stay alive during this call.
     let bytes = unsafe { core::slice::from_raw_parts(text.cast::<u8>(), length) };
     let parsed = (|| {
-        let path = str::from_utf8(bytes).map_err(|_utf8| {
-            return Refusal::new(Exception::Value, "Argument #1 ($path) must be valid UTF-8");
-        })?;
-        if path.is_empty() {
+        if bytes.is_empty() {
             return Err(Refusal::new(
                 Exception::Value,
                 "Argument #1 ($path) must not be empty",
@@ -1121,7 +1135,7 @@ unsafe fn report_arguments(
         let options = unsafe { report_options(options) }?;
         let cwd = working_directory()?;
         let paths = report_paths(&options, &cwd)?;
-        return Ok((cwd.join(path), paths));
+        return Ok((cwd.join(OsStr::from_bytes(bytes)), paths));
     })();
     return Some(parsed);
 }
