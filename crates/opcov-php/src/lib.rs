@@ -10,6 +10,8 @@
 
 mod analysis;
 mod consumers;
+mod facts;
+mod hierarchy;
 mod index;
 mod laravel;
 mod matching;
@@ -22,7 +24,7 @@ mod target;
 mod tree;
 mod types;
 
-pub use consumers::{Search, Use};
+pub use consumers::{Search, Untyped, Use};
 pub use index::{Index, IndexError, IndexStats};
 pub use members::Member;
 pub use project::{Project, ProjectError};

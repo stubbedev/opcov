@@ -6,6 +6,7 @@ use mago_syntax::parser::parse_file;
 use mago_syntax::walker::Walker;
 use serde::Serialize;
 
+use crate::consumers::Untyped;
 use crate::index::Index;
 use crate::members::{Collector, Lines, Member, Members, innermost_callable};
 use crate::target::{Request, Target};
@@ -58,14 +59,16 @@ pub struct Tree {
     pub changed: Vec<Member>,
     pub consumers: Vec<Consumer>,
     pub analysed: usize,
+    pub untyped: Vec<Untyped>,
 }
 
 impl Index {
     fn members_of(&self, path: &str) -> Vec<Member> {
         let Some(file) = self
-            .sources
-            .iter()
-            .find(|file| return file.name.as_ref() == path.as_bytes())
+            .positions
+            .get(path)
+            .and_then(|position| return self.sources.get(*position))
+            .map(|source| return &source.file)
         else {
             return Vec::new();
         };
@@ -119,7 +122,7 @@ impl Index {
             .collect();
         let mut members: BTreeMap<String, Vec<Member>> = BTreeMap::new();
         let mut consumers: BTreeMap<(String, String), Consumer> = BTreeMap::new();
-        let mut analysed = 0_usize;
+        let mut untyped: BTreeSet<Untyped> = BTreeSet::new();
         for level in 1..=depth {
             if frontier.is_empty() {
                 break;
@@ -128,7 +131,7 @@ impl Index {
                 targets: std::mem::take(&mut frontier),
                 within: within.to_vec(),
             });
-            analysed = analysed.saturating_add(search.analysed);
+            untyped.extend(search.untyped);
             for found in search.uses {
                 let in_file = members
                     .entry(found.path.clone())
@@ -194,7 +197,8 @@ impl Index {
         return Tree {
             changed,
             consumers,
-            analysed,
+            analysed: self.analysed(),
+            untyped: untyped.into_iter().collect(),
         };
     }
 }

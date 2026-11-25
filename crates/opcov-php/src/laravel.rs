@@ -13,6 +13,7 @@ use mago_syntax::walker::Walker;
 use mago_word::{Word, word};
 
 use crate::analysis::{Context, with_analysis};
+use crate::consumers::Untyped;
 
 mod aliases;
 mod builder_calls;
@@ -35,6 +36,7 @@ pub(crate) struct Facts {
     pub(crate) forwards: Forwards,
     pub(crate) models: usize,
     pub(crate) facades: usize,
+    pub(crate) untyped: Vec<Untyped>,
 }
 
 pub(crate) fn aliases_stub(root: &Path) -> File {
@@ -58,7 +60,7 @@ fn descendants(metadata: &CodebaseMetadata, ancestor: &[u8]) -> Vec<Word> {
     return found;
 }
 
-fn facades(context: &Context<'_>, sources: &[File]) -> BTreeMap<Word, Word> {
+fn facades(context: &Context<'_>, sources: &[File]) -> (BTreeMap<Word, Word>, Vec<Untyped>) {
     let wanted: BTreeSet<FileId> = [container::FACADE, container::SERVICE_PROVIDER]
         .into_iter()
         .flat_map(|ancestor| return descendants(context.metadata, ancestor))
@@ -71,17 +73,24 @@ fn facades(context: &Context<'_>, sources: &[File]) -> BTreeMap<Word, Word> {
         })
         .collect();
     let mut bindings = container::Bindings::default();
+    let mut untyped = Vec::new();
     for file in sources
         .iter()
         .filter(|file| return wanted.contains(&file.file_id()))
     {
-        with_analysis(context, file, |program, names, artifacts| {
-            let mut found = container::Found::default();
-            container::Collector { names }.walk_program(program, &mut found);
-            bindings.add(found, artifacts);
+        with_analysis(context, file, |program, names, analysed| match analysed {
+            Ok(artifacts) => {
+                let mut found = container::Found::default();
+                container::Collector { names }.walk_program(program, &mut found);
+                bindings.add(found, artifacts);
+            }
+            Err(error) => untyped.push(Untyped {
+                path: String::from_utf8_lossy(file.name.as_ref()).into_owned(),
+                error: error.to_string(),
+            }),
         });
     }
-    return bindings.facades(context.metadata);
+    return (bindings.facades(context.metadata), untyped);
 }
 
 fn builder_forwards_to_model(metadata: &mut CodebaseMetadata) {
@@ -110,7 +119,7 @@ pub(crate) fn apply(
     settings: &Settings,
     sources: &[File],
 ) -> Facts {
-    let facades = facades(
+    let (facades, untyped) = facades(
         &Context {
             metadata,
             registry,
@@ -163,5 +172,6 @@ pub(crate) fn apply(
         forwards,
         models: models.len(),
         facades: facades.len(),
+        untyped,
     };
 }

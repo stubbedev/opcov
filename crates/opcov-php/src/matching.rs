@@ -1,24 +1,17 @@
 use std::collections::BTreeMap;
 
-use mago_analyzer::artifacts::AnalysisArtifacts;
+use std::collections::BTreeSet;
+
 use mago_codex::metadata::CodebaseMetadata;
-use mago_codex::ttype::atomic::TAtomic;
-use mago_codex::ttype::atomic::object::TObject;
-use mago_codex::ttype::union::TUnion;
-use mago_span::Span;
 use mago_word::{ascii_lowercase_word, word};
 
+use crate::facts::{NEW, Reference, short_name};
+use crate::hierarchy::Hierarchy;
 use crate::laravel::Forwards;
 use crate::laravel::{Hooks, ModelEvent};
-use crate::sites::{ClassReference, FirstArgument, Site};
 use crate::target::{Kind, Request, Target};
-use crate::types::{Classes, Reading, classes_of, literal_strings};
+use crate::types::{Classes, Reading, classes_of};
 
-const BUILDER: &str = "Illuminate\\Database\\Eloquent\\Builder";
-const RELATION: &str = "Illuminate\\Database\\Eloquent\\Relations\\Relation";
-const MODEL: &str = "Illuminate\\Database\\Eloquent\\Model";
-const BUILDER_TEMPLATE: &str = "TModel";
-const RELATION_TEMPLATE: &str = "TRelatedModel";
 const SHOULD_QUEUE: &str = "Illuminate\\Contracts\\Queue\\ShouldQueue";
 const BUS_DISPATCHABLE: &str = "Illuminate\\Foundation\\Bus\\Dispatchable";
 const EVENT_DISPATCHABLE: &str = "Illuminate\\Foundation\\Events\\Dispatchable";
@@ -27,7 +20,6 @@ const QUEUE_ENTRY_METHODS: [&str; 2] = ["handle", "failed"];
 const COMMAND: &str = "Illuminate\\Console\\Command";
 const COMMAND_ENTRY: &str = "handle";
 const CONSTRUCTOR: &str = "__construct";
-const NEW: &str = "new";
 const VIA: &str = " via ";
 const COMMAND_CALLERS: [(&str, &[&str]); 5] = [
     ("Illuminate\\Support\\Facades\\Artisan", &["call", "queue"]),
@@ -62,6 +54,7 @@ struct Creation {
 }
 
 pub(crate) struct Matcher<'c> {
+    hierarchy: Hierarchy<'c>,
     codebase: &'c CodebaseMetadata,
     forwards: &'c Forwards,
     members: BTreeMap<(Kind, String), Vec<Target>>,
@@ -69,7 +62,6 @@ pub(crate) struct Matcher<'c> {
     creations: BTreeMap<String, Vec<Creation>>,
     model_events: Vec<Fired>,
     commands: Vec<Run>,
-    trait_users: BTreeMap<String, Vec<String>>,
 }
 
 impl<'c> Matcher<'c> {
@@ -80,6 +72,7 @@ impl<'c> Matcher<'c> {
         request: &Request,
     ) -> Self {
         let mut matcher = Self {
+            hierarchy: Hierarchy(codebase),
             codebase,
             forwards,
             members: BTreeMap::new(),
@@ -87,25 +80,7 @@ impl<'c> Matcher<'c> {
             creations: BTreeMap::new(),
             model_events: Vec::new(),
             commands: Vec::new(),
-            trait_users: BTreeMap::new(),
         };
-        let mut classes: Vec<_> = codebase.class_likes.values().collect();
-        classes.sort_by_key(|class| return class.name);
-        for class in classes {
-            let mut used: Vec<String> = class
-                .used_traits
-                .iter()
-                .map(|used| return lower(&used.to_string()))
-                .collect();
-            used.sort();
-            for trait_name in used {
-                matcher
-                    .trait_users
-                    .entry(trait_name)
-                    .or_default()
-                    .push(class.original_name.to_string());
-            }
-        }
         for target in &request.targets {
             let key = (target.kind, target.kind.member_key(&target.member));
             let Some(class) = &target.class else {
@@ -138,7 +113,7 @@ impl<'c> Matcher<'c> {
                 });
             }
             if target.member.eq_ignore_ascii_case(COMMAND_ENTRY)
-                && matcher.is(class, COMMAND)
+                && matcher.hierarchy.is(class, COMMAND)
                 && let Some(name) = hooks.command(class)
             {
                 matcher.commands.push(Run {
@@ -158,45 +133,11 @@ impl<'c> Matcher<'c> {
         return matcher;
     }
 
-    fn exists(&self, class: &str) -> bool {
-        return self.codebase.class_like_exists(class.as_bytes());
-    }
-
-    fn is(&self, child: &str, parent: &str) -> bool {
-        return child.eq_ignore_ascii_case(parent)
-            || self
-                .codebase
-                .is_instance_of(child.as_bytes(), parent.as_bytes());
-    }
-
-    fn is_trait(&self, class: &str) -> bool {
-        return self.codebase.trait_exists(class.as_bytes());
-    }
-
-    fn uses_trait(&self, class: &str, used: &str) -> bool {
-        if self
-            .codebase
-            .class_uses_trait(class.as_bytes(), used.as_bytes())
-        {
-            return true;
-        }
-        return self
-            .codebase
-            .get_class_like(class.as_bytes())
-            .is_some_and(|metadata| {
-                return metadata.all_parent_classes.iter().any(|parent| {
-                    return self
-                        .codebase
-                        .class_uses_trait(parent.as_bytes(), used.as_bytes());
-                });
-            });
-    }
-
     fn bus_dispatched(&self, class: &str) -> bool {
         return self
             .codebase
             .class_implements(class.as_bytes(), SHOULD_QUEUE.as_bytes())
-            || self.uses_trait(class, BUS_DISPATCHABLE);
+            || self.hierarchy.uses_trait(class, BUS_DISPATCHABLE);
     }
 
     fn subscribed_events(&self, class: &str, method: &str) -> Vec<String> {
@@ -270,20 +211,21 @@ impl<'c> Matcher<'c> {
     }
 
     fn receiver_reaches(&self, kind: Kind, receiver: &str, target: &str, member: &str) -> bool {
-        if self.is_trait(target) {
-            return self.uses_trait(receiver, target);
+        if self.hierarchy.is_trait(target) {
+            return self.hierarchy.uses_trait(receiver, target);
         }
-        if self.is(target, receiver) {
+        if self.hierarchy.is(target, receiver) {
             return true;
         }
-        if !self.is(receiver, target) {
+        if !self.hierarchy.is(receiver, target) {
             return false;
         }
         return self
             .declaring(kind, receiver, member)
             .is_some_and(|declaring| {
-                return self.is(target, &declaring)
-                    || self.is_trait(&declaring) && self.uses_trait(target, &declaring);
+                return self.hierarchy.is(target, &declaring)
+                    || self.hierarchy.is_trait(&declaring)
+                        && self.hierarchy.uses_trait(target, &declaring);
             });
     }
 
@@ -317,9 +259,9 @@ impl<'c> Matcher<'c> {
                 return match receivers {
                     Classes::Unknown => true,
                     Classes::Known(receivers) => {
-                        self.exists(class)
+                        self.hierarchy.exists(class)
                             && receivers.iter().any(|receiver| {
-                                return self.exists(receiver)
+                                return self.hierarchy.exists(receiver)
                                     && self.receiver_reaches(kind, receiver, class, member);
                             })
                     }
@@ -340,18 +282,18 @@ impl<'c> Matcher<'c> {
         let Classes::Known(classes) = classes else {
             return true;
         };
-        if !self.exists(class) {
+        if !self.hierarchy.exists(class) {
             return false;
         }
-        let target_is_trait = self.is_trait(class);
+        let target_is_trait = self.hierarchy.is_trait(class);
         return classes
             .iter()
-            .filter(|candidate| return self.exists(candidate))
+            .filter(|candidate| return self.hierarchy.exists(candidate))
             .any(|candidate| {
                 return if target_is_trait {
-                    self.uses_trait(candidate, class)
+                    self.hierarchy.uses_trait(candidate, class)
                 } else {
-                    self.is(candidate, class)
+                    self.hierarchy.is(candidate, class)
                 };
             });
     }
@@ -404,7 +346,7 @@ impl<'c> Matcher<'c> {
     fn creates_with(&self, class: &str, method: &str) -> bool {
         let method = ascii_lowercase_word(method.as_bytes());
         return [BUS_DISPATCHABLE, EVENT_DISPATCHABLE].iter().any(|used| {
-            return self.uses_trait(class, used)
+            return self.hierarchy.uses_trait(class, used)
                 && self
                     .codebase
                     .get_class_like(used.as_bytes())
@@ -414,9 +356,12 @@ impl<'c> Matcher<'c> {
 
     fn creation_use(&self, classes: &[String]) -> Vec<String> {
         let mut found = Vec::new();
-        for created in classes.iter().filter(|class| return self.exists(class)) {
+        for created in classes
+            .iter()
+            .filter(|class| return self.hierarchy.exists(class))
+        {
             for (entry_class, creations) in &self.creations {
-                if !self.is(created, entry_class) {
+                if !self.hierarchy.is(created, entry_class) {
                     continue;
                 }
                 for creation in creations {
@@ -435,139 +380,27 @@ impl<'c> Matcher<'c> {
         return found;
     }
 
-    fn template_argument(
-        &self,
-        class: &str,
-        parameters: Option<&[TUnion]>,
-        ancestor: &str,
-        template: &str,
-    ) -> Option<TUnion> {
-        if !self.is(class, ancestor) {
-            return None;
-        }
-        let metadata = self.codebase.get_class_like(class.as_bytes())?;
-        let own = |name: &str| {
-            return metadata
-                .template_types
-                .get_index_of(&word(name.as_bytes()))
-                .and_then(|position| return parameters?.get(position).cloned());
-        };
-        if let Some(bound) = own(template) {
-            return Some(bound);
-        }
-        let resolved = metadata
-            .template_extended_parameters
-            .get(&ascii_lowercase_word(ancestor.as_bytes()))?
-            .get(&word(template.as_bytes()))?;
-        let forwarded = resolved.types.iter().find_map(|atomic| {
-            return match atomic {
-                TAtomic::GenericParameter(parameter) => own(&parameter.parameter_name.to_string()),
-                _ => None,
-            };
-        });
-        return Some(forwarded.unwrap_or_else(|| return resolved.clone()));
-    }
-
-    fn query_models(&self, union: &TUnion, this: Option<&str>) -> Classes {
-        if classes_of(union, this, Reading::Objects) == Classes::Unknown {
-            return Classes::Unknown;
-        }
-        let mut models = Vec::new();
-        for atomic in union.types.iter() {
-            let TAtomic::Object(TObject::Named(named)) = atomic else {
-                continue;
-            };
-            for (ancestor, template) in [(BUILDER, BUILDER_TEMPLATE), (RELATION, RELATION_TEMPLATE)]
-            {
-                let Some(bound) = self.template_argument(
-                    &named.name.to_string(),
-                    named.get_type_parameters(),
-                    ancestor,
-                    template,
-                ) else {
-                    continue;
-                };
-                let Classes::Known(queried) = classes_of(&bound, this, Reading::Objects) else {
-                    return Classes::Unknown;
-                };
-                let concrete: Vec<String> = queried
-                    .into_iter()
-                    .filter(|name| return !name.eq_ignore_ascii_case(MODEL))
-                    .collect();
-                if concrete.is_empty() {
-                    return Classes::Unknown;
-                }
-                models.extend(concrete);
-            }
-        }
-        models.sort();
-        models.dedup();
-        return Classes::Known(models);
-    }
-
-    pub(crate) fn evaluate(
-        &self,
-        site: &Site,
-        artifacts: &AnalysisArtifacts,
-        this: Option<&str>,
-    ) -> Vec<String> {
-        let type_of = |span: &Span| return artifacts.get_expression_type(span);
-        let objects = |span: &Span| {
-            return type_of(span).map_or(Classes::Unknown, |union| {
-                return classes_of(union, this, Reading::Objects);
-            });
-        };
-        let classes = |reference: &ClassReference| {
-            return match reference {
-                ClassReference::Named(name) => Classes::Known(vec![name.clone()]),
-                ClassReference::Current => this.map_or(Classes::Unknown, |class| {
-                    return Classes::Known(vec![class.to_owned()]);
-                }),
-                ClassReference::Parent(parent) => {
-                    parent.as_ref().map_or(Classes::Unknown, |parent| {
-                        return Classes::Known(vec![parent.clone()]);
-                    })
-                }
-                ClassReference::Expression(span) => {
-                    type_of(span).map_or(Classes::Unknown, |union| {
-                        return classes_of(union, this, Reading::ClassNames);
-                    })
-                }
-            };
-        };
-        let names = |argument: Option<&FirstArgument>| {
-            let Some(argument) = argument else {
-                return Vec::new();
-            };
-            let mut names = type_of(&argument.span).map_or_else(Vec::new, literal_strings);
-            names.extend(argument.literal.clone());
-            return names;
-        };
-        return match site {
-            Site::Function { candidates } => self.global_use(Kind::Function, candidates),
-            Site::Constant { candidates } => self.global_use(Kind::GlobalConstant, candidates),
-            Site::Method { member: None, .. } | Site::Static { member: None, .. } => Vec::new(),
-            Site::Method {
-                receiver,
-                member: Some(member),
-                first_argument,
+    pub(crate) fn matches(&self, reference: &Reference) -> Vec<String> {
+        return match reference {
+            Reference::Function { candidates } => self.global_use(Kind::Function, candidates),
+            Reference::Constant { candidates } => self.global_use(Kind::GlobalConstant, candidates),
+            Reference::Method {
+                member,
+                receivers,
+                query,
+                names,
             } => {
-                let receivers = objects(receiver);
-                let query = type_of(receiver).map_or(Classes::Unknown, |union| {
-                    return self.query_models(union, this);
-                });
                 let mut found =
                     self.member_use(Kind::Method, member, &self.with_forwards(receivers.clone()));
-                found.extend(self.model_event_use(member, &receivers, &query));
-                found.extend(self.command_use(member, &receivers, &names(first_argument.as_ref())));
+                found.extend(self.model_event_use(member, receivers, query));
+                found.extend(self.command_use(member, receivers, names));
                 found
             }
-            Site::Static {
-                class,
-                member: Some(member),
-                first_argument,
+            Reference::Static {
+                member,
+                receivers,
+                names,
             } => {
-                let receivers = classes(class);
                 let mut found =
                     self.member_use(Kind::Method, member, &self.with_forwards(receivers.clone()));
                 if let Some(known) = receivers.as_known() {
@@ -578,41 +411,37 @@ impl<'c> Matcher<'c> {
                         .collect();
                     found.extend(self.creation_use(&created));
                 }
-                found.extend(self.model_event_use(member, &Classes::Known(Vec::new()), &receivers));
-                found.extend(self.command_use(member, &receivers, &names(first_argument.as_ref())));
+                found.extend(self.model_event_use(member, &Classes::Known(Vec::new()), receivers));
+                found.extend(self.command_use(member, receivers, names));
                 found
             }
-            Site::New { class } => {
-                let receivers = classes(class);
-                let mut found = self.member_use(Kind::Method, CONSTRUCTOR, &receivers);
-                found.extend(self.creation_use(receivers.as_known().unwrap_or_default()));
+            Reference::New { classes } => {
+                let mut found = self.member_use(Kind::Method, CONSTRUCTOR, classes);
+                found.extend(self.creation_use(classes.as_known().unwrap_or_default()));
                 found
             }
-            Site::ClassConstant { class, member } => {
-                self.member_use(Kind::Constant, member, &classes(class))
+            Reference::ClassConstant { member, classes } => {
+                self.member_use(Kind::Constant, member, classes)
             }
-            Site::Property { receiver, member } => {
-                self.member_use(Kind::Property, member, &objects(receiver))
-            }
-            Site::StaticProperty { class, member } => {
-                self.member_use(Kind::Property, member, &classes(class))
+            Reference::Property { member, receivers } => {
+                self.member_use(Kind::Property, member, receivers)
             }
         };
     }
 
-    pub(crate) fn needles(&self) -> Vec<String> {
-        let mut needles: Vec<String> = self
-            .members
-            .keys()
-            .chain(self.globals.keys())
-            .map(|(_, member)| return member.rsplit('\\').next().unwrap_or(member).to_owned())
-            .collect();
+    pub(crate) fn needles(&self) -> BTreeSet<String> {
         let constructs = self
             .members
             .contains_key(&(Kind::Method, CONSTRUCTOR.to_owned()));
-        if constructs || !self.creations.is_empty() {
-            needles.push(NEW.to_owned());
-        }
+        let creates = (constructs || !self.creations.is_empty()).then_some(NEW);
+        let mut needles: BTreeSet<String> = self
+            .members
+            .keys()
+            .chain(self.globals.keys())
+            .map(|(_, member)| return short_name(member))
+            .chain(creates)
+            .map(str::to_ascii_lowercase)
+            .collect();
         if !self.creations.is_empty() {
             for used in [BUS_DISPATCHABLE, EVENT_DISPATCHABLE] {
                 let methods = self
@@ -620,7 +449,8 @@ impl<'c> Matcher<'c> {
                     .get_class_like(used.as_bytes())
                     .into_iter()
                     .flat_map(|metadata| return metadata.methods.iter());
-                needles.extend(methods.map(ToString::to_string));
+                needles
+                    .extend(methods.map(|method| return method.to_string().to_ascii_lowercase()));
             }
         }
         for entry in &self.model_events {
@@ -630,7 +460,7 @@ impl<'c> Matcher<'c> {
                     .instance
                     .iter()
                     .chain(entry.event.query.iter())
-                    .cloned(),
+                    .map(|method| return method.to_ascii_lowercase()),
             );
         }
         if !self.commands.is_empty() {
@@ -638,20 +468,11 @@ impl<'c> Matcher<'c> {
                 COMMAND_CALLERS
                     .iter()
                     .flat_map(|(_, methods)| return methods.iter())
-                    .map(|method| return (*method).to_owned()),
+                    .map(|method| return method.to_ascii_lowercase()),
             );
         }
-        needles.retain(|needle| return !needle.is_empty());
-        needles.sort();
-        needles.dedup();
+        needles.remove("");
         return needles;
-    }
-
-    pub(crate) fn trait_users(&self, used: &str) -> &[String] {
-        return self
-            .trait_users
-            .get(&lower(used))
-            .map_or(&[], Vec::as_slice);
     }
 
     pub(crate) fn attributed(&self, target: String, using: Option<&str>) -> String {
@@ -663,7 +484,7 @@ impl<'c> Matcher<'c> {
             .and_then(|(_, member)| return member.split_once("::"))
             .map(|(class, _)| return class.to_owned());
         return match class {
-            Some(class) if self.is(using, &class) => format!("{target}{VIA}{using}"),
+            Some(class) if self.hierarchy.is(using, &class) => format!("{target}{VIA}{using}"),
             _ => target,
         };
     }

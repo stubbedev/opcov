@@ -615,8 +615,14 @@ found, until `--depth` levels or no new consumer.
 The text output lists the changed members and then the consumers, each as
 `path:first-last`, the member, its depth and the targets it uses, then a
 summary. `--format json` writes
-`{"changed": [{"path", "first", "last", "target"}], "consumers": [{"depth", "path", "first", "last", "member", "uses"}], "analysed", "index"}`;
+`{"changed": [{"path", "first", "last", "target"}], "consumers": [{"depth", "path", "first", "last", "member", "uses"}], "analysed", "untyped": [{"path", "error"}], "index"}`;
 `member` is null for code outside any function.
+
+A file is analysed only when it names a target as a whole word, and each
+file is analysed at most once however many levels search it; `analysed`
+counts those files. When the analyzer fails on a file, its uses are matched
+by name, as for a receiver of unknown type, and the file is listed under
+`untyped` with the analyzer's error.
 
 ## `opcov doctor`
 

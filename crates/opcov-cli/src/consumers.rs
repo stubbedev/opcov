@@ -116,6 +116,15 @@ pub(crate) fn render_text(out: &mut dyn Write, found: &Found) -> io::Result<()> 
             )?;
         }
     }
+    if !found.tree.untyped.is_empty() {
+        writeln!(
+            out,
+            "matched by name only, the analyzer could not type them:"
+        )?;
+        for untyped in &found.tree.untyped {
+            writeln!(out, "  {}\t{}", untyped.path, untyped.error)?;
+        }
+    }
     return writeln!(
         out,
         "consumers: {} changed member(s), {} consumer(s); analysed {} of {} project file(s); {} file(s) indexed, {} model(s), {} facade(s)",

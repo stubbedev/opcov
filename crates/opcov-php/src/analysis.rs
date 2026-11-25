@@ -2,6 +2,7 @@ use mago_allocator::LocalArena;
 use mago_analyzer::Analyzer;
 use mago_analyzer::analysis_result::AnalysisResult;
 use mago_analyzer::artifacts::AnalysisArtifacts;
+use mago_analyzer::error::AnalysisError;
 use mago_analyzer::plugin::PluginRegistry;
 use mago_analyzer::settings::Settings;
 use mago_codex::metadata::CodebaseMetadata;
@@ -21,8 +22,12 @@ pub(crate) struct Context<'a> {
 pub(crate) fn with_analysis<R>(
     context: &Context<'_>,
     file: &File,
-    inspect: impl FnOnce(&Program<'_>, &ResolvedNames<'_>, &AnalysisArtifacts) -> R,
-) -> Option<R> {
+    inspect: impl FnOnce(
+        &Program<'_>,
+        &ResolvedNames<'_>,
+        Result<&AnalysisArtifacts, AnalysisError>,
+    ) -> R,
+) -> R {
     let arena = LocalArena::new();
     let program = parse_file(&arena, file);
     let names = NameResolver::new(&arena).resolve(program);
@@ -35,6 +40,6 @@ pub(crate) fn with_analysis<R>(
         context.registry,
         context.settings.clone(),
     );
-    let artifacts = analyzer.analyze_with_artifacts(program, &mut result).ok()?;
-    return Some(inspect(program, &names, &artifacts));
+    let analysed = analyzer.analyze_with_artifacts(program, &mut result);
+    return inspect(program, &names, analysed.as_ref().map_err(Clone::clone));
 }

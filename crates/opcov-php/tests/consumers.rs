@@ -45,6 +45,20 @@ mod consumers {
     }
 
     #[test]
+    fn a_file_is_analysed_only_when_it_names_a_target_as_a_whole_word() {
+        let request: Request = serde_json::from_str(
+            r#"{"targets": ["method App\\Services\\Report::render"], "within": ["app/Uses/Lookalike.php"]}"#,
+        )
+        .unwrap();
+        let search = index().uses(&request);
+        assert_eq!(
+            (search.analysed, search.uses.len()),
+            (0, 0),
+            "renderer, prerender and render_all contain render but do not name it"
+        );
+    }
+
+    #[test]
     fn code_the_framework_calls_is_used_where_it_is_triggered() {
         let found = uses(
             r#"{"targets": ["method App\\Actions\\Publish::handle", "method App\\Jobs\\SendDigest::handle", "method App\\Jobs\\SendDigest::failed", "method App\\Jobs\\PlainHandler::handle", "method App\\Listeners\\PostSubscriber::onPublished"]}"#,

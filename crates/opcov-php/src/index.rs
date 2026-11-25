@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use mago_allocator::LocalArena;
@@ -13,10 +13,13 @@ use mago_names::resolver::NameResolver;
 use mago_prelude::Prelude;
 use mago_syntax::parser::parse_file;
 use mago_syntax::walker::Walker;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
+use crate::consumers::Untyped;
+use crate::facts::FileFacts;
+use crate::hierarchy::{TraitUsers, trait_users};
 use crate::laravel;
 use crate::laravel::Hooks;
 use crate::project::Project;
@@ -70,11 +73,31 @@ pub struct Index {
     pub(crate) metadata: CodebaseMetadata,
     pub(crate) registry: PluginRegistry,
     pub(crate) settings: Settings,
-    pub(crate) sources: Vec<File>,
+    pub(crate) sources: Vec<Source>,
     pub(crate) forwards: laravel::Forwards,
     pub(crate) hooks: Hooks,
+    pub(crate) trait_users: TraitUsers,
+    pub(crate) positions: HashMap<String, usize>,
+    pub(crate) untyped: Vec<Untyped>,
     root: PathBuf,
     stats: IndexStats,
+}
+
+pub(crate) struct Source {
+    pub(crate) file: File,
+    pub(crate) path: String,
+    pub(crate) facts: OnceLock<FileFacts>,
+}
+
+impl Source {
+    fn new(file: File) -> Self {
+        let path = String::from_utf8_lossy(file.name.as_ref()).into_owned();
+        return Self {
+            file,
+            path,
+            facts: OnceLock::new(),
+        };
+    }
 }
 
 impl std::fmt::Debug for Index {
@@ -124,7 +147,7 @@ struct Walk<'a> {
     settings: &'a Settings,
     seen: &'a Mutex<HashSet<PathBuf>>,
     looked_up: &'a Mutex<HashSet<String>>,
-    scanned: &'a Mutex<Vec<(Vec<u8>, CodebaseMetadata, Hooks)>>,
+    scanned: &'a Mutex<Vec<Part>>,
     failures: &'a Mutex<Vec<IndexError>>,
 }
 
@@ -174,6 +197,57 @@ fn scan(file: &File, settings: &Settings, reach: Reach) -> Scanned {
     };
 }
 
+type Part = (Vec<u8>, CodebaseMetadata, Hooks);
+
+fn scan_reachable(
+    project: &Project,
+    root: &Path,
+    settings: &Settings,
+    sources: &[File],
+) -> Result<Vec<Part>, IndexError> {
+    let seen: Mutex<HashSet<PathBuf>> = Mutex::new(project.source_files().into_iter().collect());
+    let looked_up: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
+    let extra: Vec<File> = project
+        .always()
+        .iter()
+        .filter(|path| return claim(&seen, (*path).clone()))
+        .map(|path| return load(root, path))
+        .chain(std::iter::once(Ok(laravel::aliases_stub(root))))
+        .collect::<Result<_, _>>()?;
+    let failures: Mutex<Vec<IndexError>> = Mutex::new(Vec::new());
+    let scanned: Mutex<Vec<Part>> = Mutex::new(Vec::new());
+    let walk = Walk {
+        project,
+        root,
+        settings,
+        seen: &seen,
+        looked_up: &looked_up,
+        scanned: &scanned,
+        failures: &failures,
+    };
+    rayon::scope(|scope| {
+        for file in sources {
+            scope.spawn(|scope| walk.visit(scope, file, Reach::Everything));
+        }
+        for file in &extra {
+            scope.spawn(|scope| walk.visit(scope, file, Reach::Declarations));
+        }
+    });
+    if let Some(failure) = failures
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .into_iter()
+        .min_by(|left, right| return left.path().cmp(&right.path()))
+    {
+        return Err(failure);
+    }
+    let mut parts = scanned
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    parts.sort_by(|left, right| return left.0.cmp(&right.0));
+    return Ok(parts);
+}
+
 impl Index {
     pub fn build(project: &Project) -> Result<Self, IndexError> {
         let settings = Settings::default();
@@ -183,47 +257,7 @@ impl Index {
             .par_iter()
             .map(|path| return load(&root, path))
             .collect::<Result<_, _>>()?;
-        let seen: Mutex<HashSet<PathBuf>> =
-            Mutex::new(project.source_files().into_iter().collect());
-        let looked_up: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
-        let extra: Vec<File> = project
-            .always()
-            .iter()
-            .filter(|path| return claim(&seen, (*path).clone()))
-            .map(|path| return load(&root, path))
-            .chain(std::iter::once(Ok(laravel::aliases_stub(&root))))
-            .collect::<Result<_, _>>()?;
-        let failures: Mutex<Vec<IndexError>> = Mutex::new(Vec::new());
-        let scanned: Mutex<Vec<(Vec<u8>, CodebaseMetadata, Hooks)>> = Mutex::new(Vec::new());
-        let walk = Walk {
-            project,
-            root: &root,
-            settings: &settings,
-            seen: &seen,
-            looked_up: &looked_up,
-            scanned: &scanned,
-            failures: &failures,
-        };
-        rayon::scope(|scope| {
-            for file in &sources {
-                scope.spawn(|scope| walk.visit(scope, file, Reach::Everything));
-            }
-            for file in &extra {
-                scope.spawn(|scope| walk.visit(scope, file, Reach::Declarations));
-            }
-        });
-        if let Some(failure) = failures
-            .into_inner()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .into_iter()
-            .min_by(|left, right| return left.path().cmp(&right.path()))
-        {
-            return Err(failure);
-        }
-        let mut parts = scanned
-            .into_inner()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        parts.sort_by(|left, right| return left.0.cmp(&right.0));
+        let parts = scan_reachable(project, &root, &settings, &sources)?;
         let scanned = parts.len();
         let Prelude {
             mut metadata,
@@ -246,6 +280,13 @@ impl Index {
         let facts = laravel::apply(&mut metadata, &registry, &settings, &sources);
         registry.register_method_provider(facts.provider);
         let forwards = facts.forwards;
+        let trait_users = trait_users(&metadata);
+        let sources: Vec<Source> = sources.into_iter().map(Source::new).collect();
+        let positions = sources
+            .iter()
+            .enumerate()
+            .map(|(position, source)| return (source.path.clone(), position))
+            .collect();
         let stats = IndexStats {
             scanned,
             sources: sources.len(),
@@ -259,6 +300,9 @@ impl Index {
             sources,
             forwards,
             hooks,
+            trait_users,
+            untyped: facts.untyped,
+            positions,
             root,
             stats,
         });

@@ -11,6 +11,18 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+### Changed
+
+- `opcov consumers` analyses each file at most once per run, however many
+  depth levels search it, and only when it names a target as a whole word.
+  On a large Laravel application a depth-2 search takes 35–43% fewer
+  instructions.
+
+### Fixed
+
+- `opcov consumers` no longer skips a file the analyzer fails on: its uses
+  are matched by name and the file is listed under `untyped`.
+
 ## [0.2.0] - 2026-11-25
 
 ### Added
