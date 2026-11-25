@@ -5,6 +5,7 @@ on:
     tags: ["v*"]
 
 permissions:
+  actions: write
   contents: read
 
 concurrency:
@@ -145,6 +146,7 @@ jobs:
     needs: [plan, nix, musl, images]
     runs-on: ubuntu-24.04
     permissions:
+      actions: write
       contents: write
       id-token: write
       attestations: write
