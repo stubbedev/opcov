@@ -150,7 +150,7 @@ mod tree {
     use std::path::Path;
     use std::sync::OnceLock;
 
-    use opcov_php::{Changed, FileChange, Index, Project};
+    use opcov_php::{Changed, FileChange, Index, Project, Query, Request, Tree};
 
     fn index() -> &'static Index {
         static INDEX: OnceLock<Index> = OnceLock::new();
@@ -167,9 +167,19 @@ mod tree {
         }];
     }
 
-    fn changed(ranges: Vec<(u32, u32)>, deletions: Vec<u32>) -> Vec<String> {
+    fn tree(ranges: Vec<(u32, u32)>, deletions: Vec<u32>, depth: u32) -> Tree {
         return index()
-            .changed_members(&change(ranges, deletions))
+            .answer(&Query {
+                changes: change(ranges, deletions),
+                request: Request::default(),
+                depth,
+            })
+            .tree;
+    }
+
+    fn changed(ranges: Vec<(u32, u32)>, deletions: Vec<u32>) -> Vec<String> {
+        return tree(ranges, deletions, 0)
+            .changed
             .into_iter()
             .map(|member| {
                 return format!(
@@ -208,9 +218,7 @@ mod tree {
 
     #[test]
     fn consumers_follow_the_call_graph_through_trait_copies() {
-        let members = index().changed_members(&change(vec![(18, 18)], vec![]));
-        let tree = index().consumers(members, &[], &[], 2);
-        let consumers: Vec<String> = tree
+        let consumers: Vec<String> = tree(vec![(18, 18)], vec![], 2)
             .consumers
             .iter()
             .map(|consumer| {

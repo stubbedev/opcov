@@ -5,14 +5,17 @@ use std::path::{Path, PathBuf};
 use mago_allocator::LocalArena;
 use mago_analyzer::plugin::PluginRegistry;
 use mago_analyzer::settings::Settings;
-use mago_codex::metadata::CodebaseMetadata;
+use mago_codex::metadata::{CodebaseEntryKeys, CodebaseMetadata};
 use mago_codex::populator::populate_codebase;
+use mago_codex::reference::SymbolReferences;
 use mago_codex::scanner::scan_program;
-use mago_database::file::File;
+use mago_codex::signature_builder::build_file_signature;
+use mago_database::file::{File, HasFileId};
 use mago_names::resolver::NameResolver;
 use mago_prelude::Prelude;
 use mago_syntax::parser::parse_file;
 use mago_syntax::walker::Walker;
+use mago_word::Word;
 use std::sync::{Mutex, OnceLock};
 
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
@@ -61,7 +64,7 @@ impl IndexError {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct IndexStats {
     pub scanned: usize,
     pub sources: usize,
@@ -76,6 +79,7 @@ pub struct Index {
     pub(crate) sources: Vec<Source>,
     pub(crate) forwards: laravel::Forwards,
     pub(crate) hooks: Hooks,
+    pub(crate) symbol_references: SymbolReferences,
     pub(crate) trait_users: TraitUsers,
     pub(crate) positions: HashMap<String, usize>,
     pub(crate) untyped: Vec<Untyped>,
@@ -83,19 +87,50 @@ pub struct Index {
     stats: IndexStats,
 }
 
+pub(crate) type Signature = Vec<(Word, u64, Vec<(Word, u64)>)>;
+
+pub(crate) fn signature(metadata: &CodebaseMetadata) -> Signature {
+    let mut nodes: Signature = metadata
+        .file_signatures
+        .values()
+        .flat_map(|file| return file.ast_nodes.iter())
+        .map(|node| {
+            return (
+                node.name,
+                node.signature_hash,
+                node.children
+                    .iter()
+                    .map(|child| return (child.name, child.signature_hash))
+                    .collect(),
+            );
+        })
+        .collect();
+    nodes.sort();
+    return nodes;
+}
+
+pub(crate) struct Record {
+    pub(crate) keys: CodebaseEntryKeys,
+    pub(crate) signature: Signature,
+    pub(crate) references: BTreeSet<String>,
+    pub(crate) hooks: Hooks,
+}
+
 pub(crate) struct Source {
     pub(crate) file: File,
     pub(crate) path: String,
     pub(crate) facts: OnceLock<FileFacts>,
+    pub(crate) record: Record,
 }
 
 impl Source {
-    fn new(file: File) -> Self {
+    pub(crate) fn new(file: File, record: Record) -> Self {
         let path = String::from_utf8_lossy(file.name.as_ref()).into_owned();
         return Self {
             file,
             path,
             facts: OnceLock::new(),
+            record,
         };
     }
 }
@@ -128,10 +163,10 @@ pub(crate) fn load(root: &Path, path: &Path) -> Result<File, IndexError> {
     ));
 }
 
-struct Scanned {
-    metadata: CodebaseMetadata,
-    references: BTreeSet<String>,
-    hooks: Hooks,
+pub(crate) struct Scanned {
+    pub(crate) metadata: CodebaseMetadata,
+    pub(crate) references: BTreeSet<String>,
+    pub(crate) hooks: Hooks,
 }
 
 fn claim<T: Eq + std::hash::Hash>(seen: &Mutex<HashSet<T>>, item: T) -> bool {
@@ -152,23 +187,34 @@ struct Walk<'a> {
 }
 
 impl Walk<'_> {
-    fn visit<'scope>(&'scope self, scope: &rayon::Scope<'scope>, file: &File, reach: Reach) {
+    fn visit<'scope>(&'scope self, scope: &rayon::Scope<'scope>, file: File, reach: Reach) {
         let Scanned {
             metadata,
             references,
             hooks,
-        } = scan(file, self.settings, reach);
+        } = scan(&file, self.settings, reach);
+        let unseen: Vec<String> = references
+            .iter()
+            .filter(|class| return claim(self.looked_up, class.to_ascii_lowercase()))
+            .cloned()
+            .collect();
         self.scanned
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push((file.name.to_vec(), metadata, hooks));
-        let unseen = references
-            .into_iter()
-            .filter(|class| return claim(self.looked_up, class.to_ascii_lowercase()));
+            .push(Part {
+                name: file.name.to_vec(),
+                metadata,
+                hooks,
+                origin: match reach {
+                    Reach::Everything => Origin::Source(file, references),
+                    Reach::Declarations => Origin::Declarations,
+                },
+            });
+        let unseen = unseen.into_iter();
         for path in unseen.filter_map(|class| return self.project.class_file(&class)) {
             if claim(self.seen, path.clone()) {
                 scope.spawn(move |scope| match load(self.root, &path) {
-                    Ok(file) => self.visit(scope, &file, Reach::Declarations),
+                    Ok(file) => self.visit(scope, file, Reach::Declarations),
                     Err(error) => self
                         .failures
                         .lock()
@@ -180,7 +226,7 @@ impl Walk<'_> {
     }
 }
 
-fn scan(file: &File, settings: &Settings, reach: Reach) -> Scanned {
+pub(crate) fn scan(file: &File, settings: &Settings, reach: Reach) -> Scanned {
     let arena = LocalArena::new();
     let program = parse_file(&arena, file);
     let names = NameResolver::new(&arena).resolve(program);
@@ -189,7 +235,10 @@ fn scan(file: &File, settings: &Settings, reach: Reach) -> Scanned {
     if reach == Reach::Everything {
         laravel::HookCollector { names: &names }.walk_program(program, &mut collecting);
     }
-    let metadata = scan_program(&arena, file, program, &names, settings.version);
+    let mut metadata = scan_program(&arena, file, program, &names, settings.version);
+    if reach == Reach::Everything {
+        metadata.set_file_signature(file.file_id(), build_file_signature(file, program, &names));
+    }
     return Scanned {
         metadata,
         references,
@@ -197,13 +246,23 @@ fn scan(file: &File, settings: &Settings, reach: Reach) -> Scanned {
     };
 }
 
-type Part = (Vec<u8>, CodebaseMetadata, Hooks);
+enum Origin {
+    Source(File, BTreeSet<String>),
+    Declarations,
+}
+
+struct Part {
+    name: Vec<u8>,
+    metadata: CodebaseMetadata,
+    hooks: Hooks,
+    origin: Origin,
+}
 
 fn scan_reachable(
     project: &Project,
     root: &Path,
     settings: &Settings,
-    sources: &[File],
+    sources: Vec<File>,
 ) -> Result<Vec<Part>, IndexError> {
     let seen: Mutex<HashSet<PathBuf>> = Mutex::new(project.source_files().into_iter().collect());
     let looked_up: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
@@ -229,7 +288,7 @@ fn scan_reachable(
         for file in sources {
             scope.spawn(|scope| walk.visit(scope, file, Reach::Everything));
         }
-        for file in &extra {
+        for file in extra {
             scope.spawn(|scope| walk.visit(scope, file, Reach::Declarations));
         }
     });
@@ -244,8 +303,16 @@ fn scan_reachable(
     let mut parts = scanned
         .into_inner()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    parts.sort_by(|left, right| return left.0.cmp(&right.0));
+    parts.sort_by(|left, right| return left.name.cmp(&right.name));
     return Ok(parts);
+}
+
+pub(crate) fn merged_hooks(sources: &[Source]) -> Hooks {
+    let mut hooks = Hooks::default();
+    for source in sources {
+        hooks.extend(source.record.hooks.clone());
+    }
+    return hooks;
 }
 
 impl Index {
@@ -257,7 +324,7 @@ impl Index {
             .par_iter()
             .map(|path| return load(&root, path))
             .collect::<Result<_, _>>()?;
-        let parts = scan_reachable(project, &root, &settings, &sources)?;
+        let parts = scan_reachable(project, &root, &settings, sources)?;
         let scanned = parts.len();
         let Prelude {
             mut metadata,
@@ -265,11 +332,28 @@ impl Index {
             ..
         } = Prelude::decode(PRELUDE)
             .map_err(|error| return IndexError::Prelude(error.to_string()))?;
-        let mut hooks = Hooks::default();
-        for (_, part, found) in parts {
-            metadata.extend(part);
-            hooks.extend(found);
+        let mut owned: Vec<(File, CodebaseMetadata, BTreeSet<String>, Hooks)> = Vec::new();
+        for part in parts {
+            match part.origin {
+                Origin::Source(file, references) => {
+                    metadata.extend_ref(&part.metadata);
+                    owned.push((file, part.metadata, references, part.hooks));
+                }
+                Origin::Declarations => metadata.extend(part.metadata),
+            }
         }
+        let sources: Vec<Source> = owned
+            .into_iter()
+            .map(|(file, part, references, hooks)| {
+                let record = Record {
+                    keys: part.extract_owned_keys(&metadata),
+                    signature: signature(&part),
+                    references,
+                    hooks,
+                };
+                return Source::new(file, record);
+            })
+            .collect();
         populate_codebase(
             &mut metadata,
             &mut symbol_references,
@@ -277,11 +361,12 @@ impl Index {
             HashSet::default(),
         );
         let mut registry = PluginRegistry::with_library_providers();
-        let facts = laravel::apply(&mut metadata, &registry, &settings, &sources);
+        let files: Vec<&File> = sources.iter().map(|source| return &source.file).collect();
+        let facts = laravel::apply(&mut metadata, &registry, &settings, &files);
         registry.register_method_provider(facts.provider);
         let forwards = facts.forwards;
         let trait_users = trait_users(&metadata);
-        let sources: Vec<Source> = sources.into_iter().map(Source::new).collect();
+        let hooks = merged_hooks(&sources);
         let positions = sources
             .iter()
             .enumerate()
@@ -300,6 +385,7 @@ impl Index {
             sources,
             forwards,
             hooks,
+            symbol_references,
             trait_users,
             untyped: facts.untyped,
             positions,

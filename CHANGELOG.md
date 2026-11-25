@@ -11,6 +11,14 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+### Added
+
+- `opcov serve` keeps a project's PHP index warm and follows edits: a body
+  edit updates the index in place, any other change rebuilds it. While it
+  runs, `opcov consumers` asks it, so a depth-2 search on a large Laravel
+  application takes 20–40 ms instead of 5–7 s, with the same results.
+  `--no-serve` searches in process.
+
 ### Changed
 
 - `opcov consumers` analyses each file at most once per run, however many

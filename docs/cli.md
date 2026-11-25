@@ -11,15 +11,16 @@ and merges, converts and checks it. Every subcommand prints `--help`.
 | `opcov impact` | From a baseline report, show the coverage of the functions a change touches and choose the tests that can reach them. |
 | `opcov stitch` | Lay a run of the tests a change reaches over the baseline report, giving the report a run of every test would give. |
 | `opcov consumers` | Find the code that uses changed PHP members, including the code the framework calls. |
+| `opcov serve` | Keep a project's PHP index warm and up to date, so `opcov consumers` answers in milliseconds. |
 | `opcov doctor` | Check that a PHP binary can collect coverage with opcov, or with `--report` diagnose a report: outcomes that match no source construct. |
 
 ## Exit codes
 
-| Code | `merge` | `convert` | `gate` | `impact` | `stitch` | `consumers` | `doctor` | `doctor --report` |
-|---|---|---|---|---|---|---|---|---|
-| 0 | merged | converted | pass: no findings | the selection bounds the change | stitched | searched | PHP loads opcov and the probe self-test passed | every outcome that counts toward verdicts has a source construct |
-| 1 | refused: the inputs do not merge (mismatching generator, settings, paths, file hash or model) | (not used) | findings | run every test: a change the baseline cannot bound | refused: a change the baseline cannot bound, a selected test the partial run lacks, or reports that do not merge | (not used) | problems found | findings |
-| 2 | could not run | could not run | could not run | could not run, or the baseline is not of the diff's base | could not run, the baseline is not of the diff's base, or the partial report is not of the working tree | could not run: no targets, an invalid request, or no Composer autoload maps | could not run | could not run |
+| Code | `merge` | `convert` | `gate` | `impact` | `stitch` | `consumers` | `serve` | `doctor` | `doctor --report` |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 | merged | converted | pass: no findings | the selection bounds the change | stitched | searched | stopped | PHP loads opcov and the probe self-test passed | every outcome that counts toward verdicts has a source construct |
+| 1 | refused: the inputs do not merge (mismatching generator, settings, paths, file hash or model) | (not used) | findings | run every test: a change the baseline cannot bound | refused: a change the baseline cannot bound, a selected test the partial run lacks, or reports that do not merge | (not used) | (not used) | problems found | findings |
+| 2 | could not run | could not run | could not run | could not run, or the baseline is not of the diff's base | could not run, the baseline is not of the diff's base, or the partial report is not of the working tree | could not run: no targets, an invalid request, no Composer autoload maps, or an error from `opcov serve` | could not run, or already running for the project | could not run | could not run |
 
 "Could not run" covers usage errors, unreadable or invalid reports, missing or
 unreadable inputs, a source file whose SHA-256 differs from the report's, a
@@ -526,6 +527,7 @@ running PHP.
 | `--target <TARGET>` | A member to find the uses of (repeatable): `method Class::name`, `constant Class::NAME` (enum cases too), `property Class::name`, `function name` or `global-constant NAME`. |
 | `--request <FILE>` | A JSON request, or `-` for standard input (see below). |
 | `--path <PATH>` | Search only this directory or file, relative to the root (repeatable). The default is every source the root `composer.json` autoloads. |
+| `--no-serve` | Search in this process even when `opcov serve` runs for the project. |
 | `--diff <DIFF>` | A unified diff of the change, relative to the root (`git diff -U0`), or `-` for standard input. The members it changes are targets. |
 | `--strip <N>` | Leading path components to remove from diff paths (default 1, which removes git's `a/` and `b/`). |
 | `--depth <N>` | Call-graph levels to follow (default 1). At depth 2, the code that uses the consumers is found too. |
@@ -616,13 +618,50 @@ The text output lists the changed members and then the consumers, each as
 `path:first-last`, the member, its depth and the targets it uses, then a
 summary. `--format json` writes
 `{"changed": [{"path", "first", "last", "target"}], "consumers": [{"depth", "path", "first", "last", "member", "uses"}], "analysed", "untyped": [{"path", "error"}], "index"}`;
-`member` is null for code outside any function.
+`member` is null for code outside any function, and `served` says whether
+`opcov serve` answered.
 
 A file is analysed only when it names a target as a whole word, and each
 file is analysed at most once however many levels search it; `analysed`
 counts those files. When the analyzer fails on a file, its uses are matched
 by name, as for a receiver of unknown type, and the file is listed under
 `untyped` with the analyzer's error.
+
+## `opcov serve`
+
+```sh
+opcov serve --root . &
+git diff -U0 | opcov consumers --diff - --depth 2
+opcov serve --stop
+```
+
+`opcov serve` indexes the project once, analyses every project file, and
+then keeps the index up to date as files change. While it runs,
+`opcov consumers` for the same root asks it instead of indexing the project
+itself, so a search after an edit takes milliseconds instead of seconds. The
+results are the same either way.
+
+| Option | Meaning |
+|---|---|
+| `--root <DIR>` | The project root (default: the current directory). |
+| `--stop` | Stop the server running for the project. |
+
+**Staying current.** The server watches the autoloaded source directories,
+`composer.json`, `composer.lock`, `config/` and `vendor/composer/`. Each
+`opcov consumers` call also hands it the files its diff names, so a search
+right after a save sees the save. An edit inside method or function bodies
+updates the index in place: the file's declarations are replaced and only
+its own facts are recomputed. A change to a declaration, a new or deleted
+file, a file whose body feeds the framework facts (facades, service
+providers, Eloquent builders and relations), a Composer change or an
+`config/app.php` change rebuilds the index. The server logs each update and
+rebuild with its duration on standard error.
+
+**The socket.** The server listens on a Unix socket in `$XDG_RUNTIME_DIR`,
+named after a digest of the project root, or in `<root>/.opcov/` when
+`XDG_RUNTIME_DIR` is unset. Add `.opcov/` to `.gitignore` in that case. A
+client of another opcov version is refused with a message to restart the
+server.
 
 ## `opcov doctor`
 

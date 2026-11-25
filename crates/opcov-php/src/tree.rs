@@ -4,16 +4,17 @@ use mago_allocator::LocalArena;
 use mago_names::resolver::NameResolver;
 use mago_syntax::parser::parse_file;
 use mago_syntax::walker::Walker;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::consumers::Untyped;
-use crate::index::Index;
+use crate::index::{Index, IndexStats};
 use crate::members::{Collector, Lines, Member, Members, innermost_callable};
 use crate::target::{Request, Target};
 
 const VIA: &str = " via ";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Changed {
     Whole,
     Parts {
@@ -22,7 +23,7 @@ pub enum Changed {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileChange {
     pub path: String,
     pub changed: Changed,
@@ -44,7 +45,7 @@ impl FileChange {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Consumer {
     pub depth: u32,
     pub path: String,
@@ -54,7 +55,7 @@ pub struct Consumer {
     pub uses: BTreeSet<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tree {
     pub changed: Vec<Member>,
     pub consumers: Vec<Consumer>,
@@ -62,7 +63,36 @@ pub struct Tree {
     pub untyped: Vec<Untyped>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Query {
+    pub changes: Vec<FileChange>,
+    pub request: Request,
+    pub depth: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Answer {
+    #[serde(flatten)]
+    pub tree: Tree,
+    pub index: IndexStats,
+}
+
 impl Index {
+    #[must_use]
+    pub fn answer(&self, query: &Query) -> Answer {
+        let changed = self.changed_members(&query.changes);
+        return Answer {
+            tree: self.consumers(
+                changed,
+                &query.request.targets,
+                &query.request.within,
+                query.depth,
+            ),
+            index: self.stats(),
+        };
+    }
+
     fn members_of(&self, path: &str) -> Vec<Member> {
         let Some(file) = self
             .positions
@@ -86,8 +116,7 @@ impl Index {
         return members.found;
     }
 
-    #[must_use]
-    pub fn changed_members(&self, changes: &[FileChange]) -> Vec<Member> {
+    pub(crate) fn changed_members(&self, changes: &[FileChange]) -> Vec<Member> {
         let mut touched: Vec<Member> = changes
             .iter()
             .flat_map(|change| {
@@ -102,8 +131,7 @@ impl Index {
         return touched;
     }
 
-    #[must_use]
-    pub fn consumers(
+    pub(crate) fn consumers(
         &self,
         changed: Vec<Member>,
         extra: &[Target],

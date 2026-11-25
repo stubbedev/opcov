@@ -60,7 +60,7 @@ fn descendants(metadata: &CodebaseMetadata, ancestor: &[u8]) -> Vec<Word> {
     return found;
 }
 
-fn facades(context: &Context<'_>, sources: &[File]) -> (BTreeMap<Word, Word>, Vec<Untyped>) {
+fn facades(context: &Context<'_>, sources: &[&File]) -> (BTreeMap<Word, Word>, Vec<Untyped>) {
     let wanted: BTreeSet<FileId> = [container::FACADE, container::SERVICE_PROVIDER]
         .into_iter()
         .flat_map(|ancestor| return descendants(context.metadata, ancestor))
@@ -113,11 +113,53 @@ fn builder_forwards_to_model(metadata: &mut CodebaseMetadata) {
     builder.mixins.push(mixin);
 }
 
+fn model_forwards(model: &Model) -> (String, Vec<String>) {
+    return (
+        model.name.to_string().to_ascii_lowercase(),
+        model.forwarded().iter().map(ToString::to_string).collect(),
+    );
+}
+
+const SENSITIVE: [&[u8]; 5] = [
+    container::FACADE,
+    container::SERVICE_PROVIDER,
+    ELOQUENT_BUILDER,
+    model::QUERY_BUILDER,
+    model::RELATION,
+];
+
+pub(crate) fn derives_facts_from_body(metadata: &CodebaseMetadata, class: &str) -> bool {
+    return SENSITIVE.iter().any(|ancestor| {
+        return class.as_bytes().eq_ignore_ascii_case(ancestor)
+            || metadata.is_instance_of(class.as_bytes(), ancestor);
+    });
+}
+
+pub(crate) fn reinstall_models(metadata: &mut CodebaseMetadata, classes: &[String]) -> Forwards {
+    let models: Vec<Model> = classes
+        .iter()
+        .filter(|class| return metadata.is_instance_of(class.as_bytes(), MODEL))
+        .filter_map(|class| return metadata.class_likes.get(&key(class.as_bytes())))
+        .map(|class| return class.original_name)
+        .collect::<Vec<Word>>()
+        .into_iter()
+        .map(|name| return Model::of(metadata, name))
+        .collect();
+    let planned: Vec<(Word, Members)> = models
+        .iter()
+        .map(|model| return (model.name, model.members(metadata)))
+        .collect();
+    for (owner, members) in planned {
+        install(metadata, owner, members);
+    }
+    return models.iter().map(model_forwards).collect();
+}
+
 pub(crate) fn apply(
     metadata: &mut CodebaseMetadata,
     registry: &PluginRegistry,
     settings: &Settings,
-    sources: &[File],
+    sources: &[&File],
 ) -> Facts {
     let (facades, untyped) = facades(
         &Context {
@@ -135,15 +177,7 @@ pub(crate) fn apply(
         .iter()
         .map(|model| return (model.name, model.members(metadata)))
         .collect();
-    let mut forwards: Forwards = models
-        .iter()
-        .map(|model| {
-            return (
-                model.name.to_string().to_ascii_lowercase(),
-                model.forwarded().iter().map(ToString::to_string).collect(),
-            );
-        })
-        .collect();
+    let mut forwards: Forwards = models.iter().map(model_forwards).collect();
     forwards.extend(facades.iter().map(|(facade, target)| {
         return (
             facade.to_string().to_ascii_lowercase(),

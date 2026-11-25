@@ -16,8 +16,8 @@ use super::members::{
 pub(super) const MODEL: &[u8] = b"Illuminate\\Database\\Eloquent\\Model";
 pub(super) const ELOQUENT_BUILDER: &[u8] = b"Illuminate\\Database\\Eloquent\\Builder";
 pub(super) const MODEL_TEMPLATE: &[u8] = b"TModel";
-const QUERY_BUILDER: &[u8] = b"Illuminate\\Database\\Query\\Builder";
-const RELATION: &[u8] = b"Illuminate\\Database\\Eloquent\\Relations\\Relation";
+pub(super) const QUERY_BUILDER: &[u8] = b"Illuminate\\Database\\Query\\Builder";
+pub(super) const RELATION: &[u8] = b"Illuminate\\Database\\Eloquent\\Relations\\Relation";
 const COLLECTION: &[u8] = b"Illuminate\\Database\\Eloquent\\Collection";
 const SCOPE_ATTRIBUTE: &[u8] = b"Illuminate\\Database\\Eloquent\\Attributes\\Scope";
 const SCOPE_PREFIX: &str = "scope";

@@ -13,6 +13,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use opcov_core::report::merge_streams;
+use opcov_php::Query;
 
 mod changes;
 mod checkup;
@@ -23,6 +24,7 @@ mod failure;
 mod gate;
 mod impact;
 mod output;
+mod serve;
 mod source;
 mod spool;
 mod stitch;
@@ -62,6 +64,10 @@ enum Command {
         about = "Find the code that uses changed PHP members: methods, functions, constants, properties and the code the framework calls"
     )]
     Consumers(ConsumersArgs),
+    #[command(
+        about = "Keep the PHP index of a project warm and up to date, so opcov consumers answers in milliseconds"
+    )]
+    Serve(ServeArgs),
     #[command(
         about = "Check that PHP can collect coverage with opcov, or with --report diagnose a report"
     )]
@@ -290,6 +296,23 @@ struct ConsumersArgs {
         help = "Output format: text, json, or files (one `path:first-last` per consumer, for `opcov gate --files @-`)"
     )]
     format: ConsumersFormat,
+    #[arg(
+        long,
+        help = "Search in this process even when opcov serve runs for the project"
+    )]
+    no_serve: bool,
+}
+
+#[derive(Debug, Args)]
+struct ServeArgs {
+    #[arg(
+        long,
+        value_name = "DIR",
+        help = "Project root, the directory holding composer.json and vendor/ [default: the current directory]"
+    )]
+    root: Option<PathBuf>,
+    #[arg(long, help = "Stop the opcov serve running for the project")]
+    stop: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -463,13 +486,40 @@ fn stitch_report(args: &StitchArgs) -> Result<Verdict, Failure> {
     );
 }
 
+fn project_root(root: Option<&Path>) -> Result<PathBuf, Failure> {
+    return root.map_or_else(
+        || {
+            return env::current_dir().map_err(|error| {
+                return Failure::io("resolve", Path::new("the current directory"), &error);
+            });
+        },
+        |root| return Ok(root.to_path_buf()),
+    );
+}
+
+fn serve_command(args: &ServeArgs) -> Result<Verdict, Failure> {
+    let root = project_root(args.root.as_deref())?;
+    if args.stop {
+        let stopped = serve::stop(&root)?;
+        write_stdout(|out| {
+            return writeln!(
+                out,
+                "{}",
+                if stopped {
+                    "opcov serve stopped"
+                } else {
+                    "opcov serve is not running"
+                }
+            );
+        })?;
+        return Ok(Verdict::Clean);
+    }
+    serve::serve(&root)?;
+    return Ok(Verdict::Clean);
+}
+
 fn consumers_report(args: &ConsumersArgs) -> Result<Verdict, Failure> {
-    let root = match &args.root {
-        Some(root) => root.clone(),
-        None => env::current_dir().map_err(|error| {
-            return Failure::io("resolve", Path::new("the current directory"), &error);
-        })?,
-    };
+    let root = project_root(args.root.as_deref())?;
     let json = args.request.as_deref().map(read_input).transpose()?;
     let source = args.request.as_deref().map_or_else(String::new, describe);
     let changes = args
@@ -485,12 +535,17 @@ fn consumers_report(args: &ConsumersArgs) -> Result<Verdict, Failure> {
         changes.is_some(),
         &source,
     )?;
-    let found = consumers::find(
-        &root,
-        &request,
-        changes.as_deref().unwrap_or_default(),
-        args.depth,
-    )?;
+    let query = Query {
+        changes: changes.unwrap_or_default(),
+        request,
+        depth: args.depth,
+    };
+    let via = if args.no_serve {
+        consumers::Via::Process
+    } else {
+        consumers::Via::Serve
+    };
+    let found = consumers::find(&root, &query, via)?;
     write_stdout(|out| {
         return match args.format {
             ConsumersFormat::Text => consumers::render_text(out, &found),
@@ -581,6 +636,7 @@ fn main() -> ExitCode {
         Command::Impact(args) => impact_report(args),
         Command::Stitch(args) => stitch_report(args),
         Command::Consumers(args) => consumers_report(args),
+        Command::Serve(args) => serve_command(args),
         Command::Doctor(args) => doctor(args),
     };
     return match result {

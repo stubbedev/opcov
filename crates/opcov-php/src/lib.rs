@@ -14,6 +14,7 @@ mod facts;
 mod hierarchy;
 mod index;
 mod laravel;
+mod live;
 mod matching;
 mod members;
 mod project;
@@ -26,7 +27,8 @@ mod types;
 
 pub use consumers::{Search, Untyped, Use};
 pub use index::{Index, IndexError, IndexStats};
+pub use live::Refresh;
 pub use members::Member;
 pub use project::{Project, ProjectError};
 pub use target::{Kind, Request, Target, TargetError};
-pub use tree::{Changed, Consumer, FileChange, Tree};
+pub use tree::{Answer, Changed, Consumer, FileChange, Query, Tree};

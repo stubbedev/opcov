@@ -1,17 +1,18 @@
 use std::io::{self, Write};
 use std::path::Path;
 
-use opcov_php::{Changed, FileChange, Index, IndexStats, Project, Request, Target, Tree};
+use opcov_php::{Answer, Changed, FileChange, Index, Project, Query, Request, Target};
 use serde::Serialize;
 
 use crate::changes::{Change, ChangeSet, FileChange as Lines};
 use crate::failure::Failure;
+use crate::serve;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct Found {
     #[serde(flatten)]
-    tree: Tree,
-    index: IndexStats,
+    answer: Answer,
+    served: bool,
 }
 
 pub(crate) fn changes(set: &ChangeSet) -> Vec<FileChange> {
@@ -70,26 +71,34 @@ pub(crate) fn request(
     return Ok(request);
 }
 
-pub(crate) fn find(
-    root: &Path,
-    request: &Request,
-    changes: &[FileChange],
-    depth: u32,
-) -> Result<Found, Failure> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Via {
+    Serve,
+    Process,
+}
+
+pub(crate) fn find(root: &Path, query: &Query, via: Via) -> Result<Found, Failure> {
+    if via == Via::Serve
+        && let Some(answer) = serve::ask(root, query)?
+    {
+        return Ok(Found {
+            answer,
+            served: true,
+        });
+    }
     let project = Project::open(root).map_err(|error| return Failure::failed(error.to_string()))?;
     let index =
         Index::build(&project).map_err(|error| return Failure::failed(error.to_string()))?;
-    let members = index.changed_members(changes);
     return Ok(Found {
-        tree: index.consumers(members, &request.targets, &request.within, depth),
-        index: index.stats(),
+        answer: index.answer(query),
+        served: false,
     });
 }
 
 pub(crate) fn render_text(out: &mut dyn Write, found: &Found) -> io::Result<()> {
-    if !found.tree.changed.is_empty() {
+    if !found.answer.tree.changed.is_empty() {
         writeln!(out, "changed members:")?;
-        for member in &found.tree.changed {
+        for member in &found.answer.tree.changed {
             writeln!(
                 out,
                 "  {}:{}-{}\t{}",
@@ -97,9 +106,9 @@ pub(crate) fn render_text(out: &mut dyn Write, found: &Found) -> io::Result<()> 
             )?;
         }
     }
-    if !found.tree.consumers.is_empty() {
+    if !found.answer.tree.consumers.is_empty() {
         writeln!(out, "consumers:")?;
-        for consumer in &found.tree.consumers {
+        for consumer in &found.answer.tree.consumers {
             let member = consumer
                 .member
                 .as_deref()
@@ -116,25 +125,30 @@ pub(crate) fn render_text(out: &mut dyn Write, found: &Found) -> io::Result<()> 
             )?;
         }
     }
-    if !found.tree.untyped.is_empty() {
+    if !found.answer.tree.untyped.is_empty() {
         writeln!(
             out,
             "matched by name only, the analyzer could not type them:"
         )?;
-        for untyped in &found.tree.untyped {
+        for untyped in &found.answer.tree.untyped {
             writeln!(out, "  {}\t{}", untyped.path, untyped.error)?;
         }
     }
     return writeln!(
         out,
-        "consumers: {} changed member(s), {} consumer(s); analysed {} of {} project file(s); {} file(s) indexed, {} model(s), {} facade(s)",
-        found.tree.changed.len(),
-        found.tree.consumers.len(),
-        found.tree.analysed,
-        found.index.sources,
-        found.index.scanned,
-        found.index.models,
-        found.index.facades
+        "consumers: {} changed member(s), {} consumer(s); analysed {} of {} project file(s); {} file(s) indexed, {} model(s), {} facade(s){}",
+        found.answer.tree.changed.len(),
+        found.answer.tree.consumers.len(),
+        found.answer.tree.analysed,
+        found.answer.index.sources,
+        found.answer.index.scanned,
+        found.answer.index.models,
+        found.answer.index.facades,
+        if found.served {
+            "; answered by opcov serve"
+        } else {
+            ""
+        }
     );
 }
 
@@ -144,7 +158,7 @@ pub(crate) fn render_json(out: &mut dyn Write, found: &Found) -> io::Result<()> 
 }
 
 pub(crate) fn render_files(out: &mut dyn Write, found: &Found) -> io::Result<()> {
-    for consumer in &found.tree.consumers {
+    for consumer in &found.answer.tree.consumers {
         writeln!(
             out,
             "{}:{}-{}",

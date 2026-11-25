@@ -5,7 +5,7 @@ use mago_syntax::cst::{
     LocalIdentifier, Property, PropertyItem, Trait,
 };
 use mago_syntax::walker::Walker;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::target::{Kind, Target};
 
@@ -31,17 +31,12 @@ impl Lines {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Member {
     pub path: String,
     pub first: u32,
     pub last: u32,
-    #[serde(serialize_with = "as_string")]
     pub target: Target,
-}
-
-fn as_string<S: serde::Serializer>(target: &Target, serializer: S) -> Result<S::Ok, S::Error> {
-    return serializer.collect_str(target);
 }
 
 impl Member {

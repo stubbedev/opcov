@@ -24,7 +24,7 @@ pub struct Use {
     pub target: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct Untyped {
     pub path: String,
     pub error: String,
@@ -151,6 +151,13 @@ impl Index {
         return source
             .facts
             .get_or_init(|| return self.analyse(&source.file));
+    }
+
+    pub fn warm(&self) -> usize {
+        self.sources.par_iter().for_each(|source| {
+            self.facts_of(source);
+        });
+        return self.sources.len();
     }
 
     pub(crate) fn analysed(&self) -> usize {
