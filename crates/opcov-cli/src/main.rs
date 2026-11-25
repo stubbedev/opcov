@@ -20,6 +20,7 @@ mod convert;
 mod doctor;
 mod failure;
 mod gate;
+mod impact;
 mod output;
 mod source;
 mod spool;
@@ -27,10 +28,10 @@ mod stream;
 mod view;
 mod xml;
 
-use changes::{ChangeSet, parse_diff, parse_list};
+use changes::{ChangeSet, Patch, parse_diff, parse_list};
 use convert::{Format, convert};
 use failure::{Failure, Severity, Verdict};
-use output::{write_atomically, write_stdout};
+use output::{write_atomically, write_stderr, write_stdout};
 
 #[derive(Debug, Parser)]
 #[command(name = "opcov", version, about)]
@@ -47,6 +48,10 @@ enum Command {
     Convert(ConvertArgs),
     #[command(about = "Check the changed functions of a change set against a report")]
     Gate(GateArgs),
+    #[command(
+        about = "Choose the tests a change can affect from a baseline report, and show the baseline coverage of the changed functions"
+    )]
+    Impact(ImpactArgs),
     #[command(
         about = "Check that PHP can collect coverage with opcov, or with --report diagnose a report"
     )]
@@ -106,11 +111,7 @@ struct ChangesArgs {
 }
 
 #[derive(Debug, Args)]
-struct GateArgs {
-    #[arg(long, value_name = "REPORT", help = "opcov report to check")]
-    report: PathBuf,
-    #[command(flatten)]
-    changes: ChangesArgs,
+struct Location {
     #[arg(
         long,
         value_name = "N",
@@ -124,8 +125,64 @@ struct GateArgs {
         help = "Directory that changed paths are relative to [default: the current directory]"
     )]
     base: Option<PathBuf>,
+}
+
+impl Location {
+    fn base(&self) -> Result<PathBuf, Failure> {
+        return self.base.as_ref().map_or_else(
+            || {
+                return env::current_dir().map_err(|error| {
+                    return Failure::io("resolve", Path::new("the current directory"), &error);
+                });
+            },
+            |base| return Ok(base.clone()),
+        );
+    }
+}
+
+#[derive(Debug, Args)]
+struct GateArgs {
+    #[arg(long, value_name = "REPORT", help = "opcov report to check")]
+    report: PathBuf,
+    #[command(flatten)]
+    changes: ChangesArgs,
+    #[command(flatten)]
+    location: Location,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text, help = "Output format")]
     format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ImpactFormat {
+    Text,
+    Json,
+    Filter,
+}
+
+#[derive(Debug, Args)]
+struct ImpactArgs {
+    #[arg(
+        long,
+        value_name = "REPORT",
+        help = "Baseline report: a run of the commit the diff starts from"
+    )]
+    report: PathBuf,
+    #[arg(
+        long,
+        value_name = "DIFF",
+        help = "Unified diff from the baseline's commit to the working tree (`git diff -U0 <commit>`), or `-` for standard input"
+    )]
+    diff: PathBuf,
+    #[command(flatten)]
+    location: Location,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "File or directory, relative to the base, whose changes cannot affect a test (repeatable)"
+    )]
+    ignore: Vec<PathBuf>,
+    #[arg(long, value_enum, default_value_t = ImpactFormat::Text, help = "Output format: text, json, or a PHPUnit/Pest --filter expression")]
+    format: ImpactFormat,
 }
 
 #[derive(Debug, Args)]
@@ -200,11 +257,19 @@ fn describe(path: &Path) -> String {
     return path.display().to_string();
 }
 
+fn invalid(error: &changes::ChangeError) -> Failure {
+    return Failure::failed(error.to_string());
+}
+
+fn read_patch(diff: &Path, strip: usize) -> Result<Patch, Failure> {
+    let input = read_input(diff)?;
+    return parse_diff(&describe(diff), &input, strip).map_err(|error| return invalid(&error));
+}
+
 fn read_changes(args: &GateArgs) -> Result<ChangeSet, Failure> {
-    let invalid = |error: changes::ChangeError| return Failure::failed(error.to_string());
     if let Some(diff) = &args.changes.diff {
-        let input = read_input(diff)?;
-        return parse_diff(&describe(diff), &input, args.strip).map_err(invalid);
+        return read_patch(diff, args.location.strip)
+            .map(|patch| return ChangeSet::of_patch(&patch));
     }
     let mut set = ChangeSet::default();
     for entry in &args.changes.files {
@@ -222,7 +287,7 @@ fn read_changes(args: &GateArgs) -> Result<ChangeSet, Failure> {
             }
             None => parse_list("argument", entry),
         };
-        set.merge(parsed.map_err(invalid)?);
+        set.merge(parsed.map_err(|error| return invalid(&error))?);
     }
     return Ok(set);
 }
@@ -244,15 +309,58 @@ fn emit_result<T>(
 fn gate_report(args: &GateArgs) -> Result<Verdict, Failure> {
     let header = stream::header(&args.report)?;
     let changes = read_changes(args)?;
-    let base = match &args.base {
-        Some(base) => base.clone(),
-        None => env::current_dir().map_err(|error| {
-            return Failure::io("resolve", Path::new("the current directory"), &error);
-        })?,
-    };
+    let base = args.location.base()?;
     let result = gate::evaluate(&args.report, &header, &changes, &base)?;
     emit_result(args.format, &result, gate::render_text, gate::render_json)?;
     return Ok(result.verdict());
+}
+
+fn impact_report(args: &ImpactArgs) -> Result<Verdict, Failure> {
+    let header = stream::header(&args.report)?;
+    let patch = read_patch(&args.diff, args.location.strip)?;
+    let base = args.location.base()?;
+    let result = impact::evaluate(&args.report, &header, &patch, &base, &args.ignore)?;
+    match args.format {
+        ImpactFormat::Text => emit_result(
+            OutputFormat::Text,
+            &result,
+            impact::render_text,
+            impact::render_json,
+        )?,
+        ImpactFormat::Json => emit_result(
+            OutputFormat::Json,
+            &result,
+            impact::render_text,
+            impact::render_json,
+        )?,
+        ImpactFormat::Filter => return emit_filter(&result),
+    }
+    return Ok(result.verdict());
+}
+
+fn emit_filter(result: &impact::ImpactResult<'_>) -> Result<Verdict, Failure> {
+    if result.verdict() == Verdict::Findings {
+        write_stderr(|out| return impact::render_text(out, result))?;
+        return Ok(Verdict::Findings);
+    }
+    return match impact::filter(result) {
+        impact::Filter::Expression(expression) => {
+            write_stdout(|out| return writeln!(out, "{expression}"))?;
+            Ok(Verdict::Clean)
+        }
+        impact::Filter::Empty => Ok(Verdict::Clean),
+        impact::Filter::Unnamed(names) => {
+            write_stderr(|out| {
+                return writeln!(
+                    out,
+                    "impact: run every test, a --filter cannot select {} selected test(s) that are not Class::method, such as {}",
+                    names.len(),
+                    names.first().map_or("", String::as_str)
+                );
+            })?;
+            Ok(Verdict::Findings)
+        }
+    };
 }
 
 fn doctor(args: &DoctorArgs) -> Result<Verdict, Failure> {
@@ -307,6 +415,7 @@ fn main() -> ExitCode {
         Command::Merge(args) => merge(args),
         Command::Convert(args) => convert_report(args),
         Command::Gate(args) => gate_report(args),
+        Command::Impact(args) => impact_report(args),
         Command::Doctor(args) => doctor(args),
     };
     return match result {

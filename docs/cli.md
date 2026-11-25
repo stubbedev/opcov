@@ -8,15 +8,16 @@ and merges, converts and checks it. Every subcommand prints `--help`.
 | `opcov merge` | Merge the reports of parallel workers into one report. |
 | `opcov convert` | Write a report as lcov, Clover XML, Cobertura XML or HTML. |
 | `opcov gate` | Check the functions a change touches: uncovered lines, unseen outcomes, loops. |
+| `opcov impact` | From a baseline report, show the coverage of the functions a change touches and choose the tests that can reach them. |
 | `opcov doctor` | Check that a PHP binary can collect coverage with opcov, or with `--report` diagnose a report: outcomes that match no source construct. |
 
 ## Exit codes
 
-| Code | `merge` | `convert` | `gate` | `doctor` | `doctor --report` |
-|---|---|---|---|---|---|
-| 0 | merged | converted | pass: no findings | PHP loads opcov and the probe self-test passed | every outcome that counts toward verdicts has a source construct |
-| 1 | refused: the inputs do not merge (mismatching generator, settings, paths, file hash or model) | (not used) | findings | problems found | findings |
-| 2 | could not run | could not run | could not run | could not run | could not run |
+| Code | `merge` | `convert` | `gate` | `impact` | `doctor` | `doctor --report` |
+|---|---|---|---|---|---|---|
+| 0 | merged | converted | pass: no findings | the selection bounds the change | PHP loads opcov and the probe self-test passed | every outcome that counts toward verdicts has a source construct |
+| 1 | refused: the inputs do not merge (mismatching generator, settings, paths, file hash or model) | (not used) | findings | run every test: a change the baseline cannot bound | problems found | findings |
+| 2 | could not run | could not run | could not run | could not run, or the baseline is not of the diff's base | could not run | could not run |
 
 "Could not run" covers usage errors, unreadable or invalid reports, missing or
 unreadable inputs, a source file whose SHA-256 differs from the report's, a
@@ -340,13 +341,102 @@ its changed lines, and the lines that runs of removed lines stood before.
 The parser reads `git diff` output and plain unified diffs: file headers
 `--- old` / `+++ new` (paths may be C-quoted by git; a tab and timestamp after
 the path are ignored), hunks `@@ -a[,b] +c[,d] @@` and their `+`, `-`, ` ` and
-`\ No newline at end of file` lines. New files (`--- /dev/null`) change every
-line; deleted files (`+++ /dev/null`) change nothing; renamed files are checked
-under their new path; pure renames, mode changes and binary files have no hunks
-and change nothing. Other lines (`diff --git`, `index`, `rename from`, ...) are
-skipped. A hunk before a `+++` header, a malformed hunk header, a line that
-does not fit the hunk's counts and a diff that ends inside a hunk are errors
-naming the line.
+`\ No newline at end of file` lines, git's `new file mode`, `deleted file
+mode`, `rename from`/`rename to`, `copy to` and `Binary files ... differ`
+lines. New files (`--- /dev/null`) change every line; deleted files (`+++
+/dev/null`) change nothing; renamed files are checked under their new path;
+pure renames, mode changes and binary files have no hunks and change nothing.
+Other lines (`index`, `similarity index`, ...) are skipped. A hunk before a
+`+++` header, a malformed hunk header, a line that does not fit the hunk's
+counts and a diff that ends inside a hunk are errors naming the line.
+
+## `opcov impact`
+
+```sh
+git diff -U0 "$BASELINE_COMMIT" | opcov impact --report baseline.json --diff -
+opcov impact --report baseline.json --diff branch.diff --format json
+vendor/bin/phpunit --filter "$(opcov impact --report baseline.json --diff branch.diff --format filter)"
+```
+
+`impact` answers two questions from a baseline report, without running a
+test: what coverage the functions a change touches had, and which tests must
+run to measure them again. The baseline is a report of the commit the diff
+starts from, typically the last run on `main`; the diff goes from that commit
+to the working tree.
+
+| Option | Meaning |
+|---|---|
+| `--report <REPORT>` | The baseline report. |
+| `--diff <DIFF>` | A unified diff from the baseline's commit to the working tree, or `-` for standard input. Any context size works; `git diff -U0` is smallest. |
+| `--strip <N>` | Leading path components to remove from diff paths, as for `gate` (default 1). |
+| `--base <DIR>` | The directory changed paths are relative to, as for `gate`. |
+| `--ignore <PATH>` | A file or directory, relative to the base, whose changes cannot affect a test, such as `docs` or `README.md`. Repeatable. |
+| `--format <text\|json\|filter>` | Output format (default `text`). `filter` prints a PHPUnit/Pest `--filter` expression for the selection. |
+
+### Why tests can be skipped
+
+A test's run on the changed code can only differ from its run on the
+baseline's commit once it executes changed code: until then it runs the same
+code with the same inputs. A test that never entered a changed function in the
+baseline therefore cannot reach the change, and its coverage of the changed
+functions is empty either way. The tests that did enter one are the
+selection; running them and gating their report checks the change as a run of
+the whole suite would.
+
+### Checking the baseline
+
+The baseline must be of the diff's base, file for file, or the selection is
+wrong. `impact` checks it instead of trusting it:
+
+- For every changed file, it rebuilds the base version from the working tree
+  file and the diff (the diff holds the removed lines) and compares its
+  SHA-256 with the baseline's. A context or added line that differs from the
+  working tree is an error naming the line.
+- Every other file of the baseline must still have its recorded SHA-256 on
+  disk.
+
+A mismatch exits 2 and lists the files; diff against the commit the baseline
+was built from.
+
+### What a change selects
+
+| Change | Selection |
+|---|---|
+| Function bodies of a measured file, with nothing else changed outside them | the tests that hit a line, outcome or loop of each changed function in the baseline; functions are chosen from the base version by the rules of [`gate`](#which-functions-are-checked) |
+| Only comments and whitespace outside function bodies | nothing |
+| Any other change outside function bodies of a measured file: constants, properties, attributes, imports, doc comments, an added, removed or renamed method, top-level code | unbounded: coverage cannot tell which tests read a constant or reach a new override |
+| A deleted or renamed measured file | every test that hit the file |
+| A file whose every class is the class of a baseline test, with no other functions | those test classes, whole (`classes`) |
+| A new file | its classes, whole, so new test classes run; unchanged code cannot reach a file that did not exist |
+| A changed `.php` file below the collect paths that no baseline test loaded | nothing: no test reached it |
+| Anything else: test helpers and base classes outside the collect paths, other files, binary files, files outside the report's root | unbounded, unless `--ignore` covers them |
+
+Doc comments count as declarations because PHP code can read them through
+reflection. A test class is recognised by name: the part of a test id before
+`::`.
+
+### Output
+
+The text output lists every changed file with its effect. A changed function
+shows its base lines, its baseline coverage (covered executable lines and
+branch outcomes that count toward verdicts) and the tests that reached it. The
+last line is the verdict: `impact: run N test(s) and M test class(es)`, or
+`impact: run every test, ...` with exit code 1.
+
+`--format json` writes one object: `verdict` (`bounded` or `unbounded`),
+`tests` (the selected baseline tests, without those of selected classes),
+`classes` (test classes to run whole) and `changes`, one entry per changed
+file with `old`, `new` and an `effect` (`functions`, `whole_file`,
+`test_classes`, `new_file`, `never_loaded`, `ignored`, `unbounded`) with its
+details.
+
+`--format filter` prints a regular expression for PHPUnit's and Pest's
+`--filter`, one alternative per class: the selected methods with every data
+set, and whole classes. It prints nothing when no test needs to run (exit 0),
+and for an unbounded change it prints nothing, writes the text output to
+standard error and exits 1. Tests whose ids are not `Class::method` (`.phpt`
+tests) cannot be selected by `--filter`; when the selection holds one, the
+filter format exits 1 as well.
 
 ## `opcov doctor`
 

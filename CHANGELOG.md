@@ -11,6 +11,23 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+### Added
+
+- `opcov impact` reads a baseline report and a diff, shows the baseline
+  coverage of every changed function and the tests that reached it, and
+  selects the tests that must run to measure the change, as text, JSON or a
+  PHPUnit/Pest `--filter` expression. It rebuilds each changed file's base
+  version from the diff and refuses a baseline whose hashes do not match, and
+  it exits 1 for changes coverage cannot bound (declarations outside function
+  bodies, test helpers, non-PHP files).
+
+### Changed
+
+- The diff parser of `opcov gate` reads git's rename, copy, new-file,
+  deleted-file and binary headers, so a rename without content changes and a
+  binary file are recognised instead of skipped silently; the functions it
+  checks are unchanged.
+
 ## [0.1.1] - 2026-11-24
 
 ### Fixed

@@ -21,3 +21,7 @@ mod doctor;
 #[cfg(test)]
 #[path = "cli/many.rs"]
 mod many;
+
+#[cfg(test)]
+#[path = "cli/impact.rs"]
+mod impact;

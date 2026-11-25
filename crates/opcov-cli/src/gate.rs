@@ -24,7 +24,7 @@ use crate::source;
 use crate::stream;
 use crate::view::is_nested;
 
-const PHP_EXTENSION: &str = "php";
+pub(crate) const PHP_EXTENSION: &str = "php";
 
 #[derive(Debug, Serialize)]
 pub(crate) struct OutcomeFinding {
@@ -117,7 +117,7 @@ pub(crate) struct UnloadedFile {
 }
 
 #[derive(Debug)]
-enum Unmeasurable {
+pub(crate) enum Unmeasurable {
     OutsideRoot,
     NotPhp,
     Missing,
@@ -189,7 +189,7 @@ fn innermost<'s>(functions: impl Iterator<Item = (usize, &'s FunctionSource)>) -
         .map(|(index, _)| return index);
 }
 
-fn owner_of_line(functions: &[FunctionSource], line: Line) -> Option<usize> {
+pub(crate) fn owner_of_line(functions: &[FunctionSource], line: Line) -> Option<usize> {
     return innermost(functions.iter().enumerate().filter(|(_, function)| {
         let (first, last) = line_range(function.span());
         return first <= line && line <= last;
@@ -207,7 +207,10 @@ fn encloses(outer: Span, inner: Span) -> bool {
     return outer.start() <= inner.start() && inner.end() <= outer.end();
 }
 
-fn changed_functions(functions: &[FunctionSource], change: &FileChange) -> BTreeSet<usize> {
+pub(crate) fn changed_functions(
+    functions: &[FunctionSource],
+    change: &FileChange,
+) -> BTreeSet<usize> {
     let FileChange::Parts(parts) = change else {
         return (0..functions.len()).collect();
     };
@@ -251,7 +254,7 @@ fn parent_of(functions: &[FunctionSource], child: usize) -> Option<usize> {
     }));
 }
 
-fn test_names<'r>(tests: &'r TestTable, hits: &HitSet) -> Vec<&'r str> {
+pub(crate) fn test_names<'r>(tests: &'r TestTable, hits: &HitSet) -> Vec<&'r str> {
     return hits
         .as_slice()
         .iter()
@@ -366,7 +369,7 @@ fn evaluate_file<'r>(
     });
 }
 
-fn selection(settings: &Settings, base: &Path) -> Result<Selection, Failure> {
+pub(crate) fn selection(settings: &Settings, base: &Path) -> Result<Selection, Failure> {
     return UnresolvedSelection::from_entries(
         settings.collect_paths.iter().cloned(),
         settings.exclude_paths.iter().cloned(),
@@ -383,7 +386,21 @@ fn selection(settings: &Settings, base: &Path) -> Result<Selection, Failure> {
     });
 }
 
-fn canonical(disk: &Path) -> Result<Option<PathBuf>, Failure> {
+pub(crate) fn unmeasurable(
+    settings: &Settings,
+    selection: &Selection,
+    disk: &Path,
+) -> Option<Unmeasurable> {
+    return match selection.decide(CompiledFile::Resolved(disk), PatternMatch::Unmatched) {
+        Decision::Skipped(reason) => Some(Unmeasurable::NotSelected(reason)),
+        Decision::Selected if settings.exclude_pattern.is_some() => {
+            Some(Unmeasurable::PatternNotEvaluated)
+        }
+        Decision::Selected => None,
+    };
+}
+
+pub(crate) fn canonical(disk: &Path) -> Result<Option<PathBuf>, Failure> {
     return match fs::canonicalize(disk) {
         Ok(resolved) => Ok(Some(resolved)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -423,24 +440,16 @@ fn split_unloaded<'c>(
     let selection = selection(&header.settings, base)?;
     let mut unloaded = Vec::new();
     for (path, changes, disk) in candidates {
-        let reason = match selection.decide(CompiledFile::Resolved(&disk), PatternMatch::Unmatched)
-        {
-            Decision::Skipped(reason) => Unmeasurable::NotSelected(reason),
-            Decision::Selected if header.settings.exclude_pattern.is_some() => {
-                Unmeasurable::PatternNotEvaluated
-            }
-            Decision::Selected => {
-                unloaded.push(UnloadedFile {
-                    path,
-                    changed: ChangedLines::of(&changes),
-                });
-                continue;
-            }
-        };
-        unmeasured.push(Unmeasured {
-            path: path.to_string(),
-            reason,
-        });
+        match unmeasurable(&header.settings, &selection, &disk) {
+            Some(reason) => unmeasured.push(Unmeasured {
+                path: path.to_string(),
+                reason,
+            }),
+            None => unloaded.push(UnloadedFile {
+                path,
+                changed: ChangedLines::of(&changes),
+            }),
+        }
     }
     return Ok((unloaded, unmeasured));
 }

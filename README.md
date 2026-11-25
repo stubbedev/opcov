@@ -109,7 +109,9 @@ git diff -U0 origin/main... | opcov gate --report build/opcov.json --diff -
 ```
 
 `opcov gate` reports uncovered lines, unseen outcomes and loops never run zero
-or two or more times in the functions the diff touches. The PHPUnit 13.3
+or two or more times in the functions the diff touches. `opcov impact`
+chooses the tests a change can reach from a baseline report, so the gate needs
+a run of those tests only ([gate.md](docs/gate.md#running-only-the-tests-the-change-can-reach)). The PHPUnit 13.3
 coverage driver, `.cov` conversion and `opcov merge`/`doctor` are in
 [phpunit.md](docs/phpunit.md) and [cli.md](docs/cli.md).
 

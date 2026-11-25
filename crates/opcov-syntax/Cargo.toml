@@ -15,6 +15,7 @@ mago-allocator = "=1.61.0"
 mago-database = "=1.61.0"
 mago-span = "=1.61.0"
 mago-syntax = "=1.61.0"
+mago-syntax-core = "=1.61.0"
 opcov-core.workspace = true
 serde.workspace = true
 

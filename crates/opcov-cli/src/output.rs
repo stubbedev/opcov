@@ -28,14 +28,25 @@ pub(crate) fn write_atomically(
     });
 }
 
+fn write_to(
+    name: &str,
+    handle: impl Write,
+    write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
+) -> Result<(), Failure> {
+    let mut out = BufWriter::new(handle);
+    return write(&mut out)
+        .and_then(|()| return out.flush())
+        .map_err(|error| return Failure::failed(format!("cannot write to {name}: {error}")));
+}
+
 pub(crate) fn write_stdout(
     write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
 ) -> Result<(), Failure> {
-    let stdout = io::stdout();
-    let mut out = BufWriter::new(stdout.lock());
-    return write(&mut out)
-        .and_then(|()| return out.flush())
-        .map_err(|error| {
-            return Failure::failed(format!("cannot write to standard output: {error}"));
-        });
+    return write_to("standard output", io::stdout().lock(), write);
+}
+
+pub(crate) fn write_stderr(
+    write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
+) -> Result<(), Failure> {
+    return write_to("standard error", io::stderr().lock(), write);
 }

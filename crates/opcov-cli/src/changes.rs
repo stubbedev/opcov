@@ -8,9 +8,11 @@ use opcov_core::report::{PathBase, SourcePath};
 
 mod diff;
 mod list;
+mod revert;
 
-pub(crate) use diff::parse_diff;
+pub(crate) use diff::{Content, FilePatch, Hunk, LineKind, Patch, parse_diff};
 pub(crate) use list::parse_list;
+pub(crate) use revert::original;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct LineRange {
@@ -76,12 +78,92 @@ impl ChangeSet {
         }
     }
 
+    pub(crate) fn of_patch(diff: &Patch) -> Self {
+        let mut set = Self::default();
+        for file in diff.files() {
+            let (Some(path), Content::Text(hunks)) = (&file.new, &file.content) else {
+                continue;
+            };
+            let changes: BTreeSet<Change> = hunks.iter().flat_map(hunk_changes).collect();
+            if !changes.is_empty() {
+                set.add(path.clone(), FileChange::Parts(changes));
+            }
+        }
+        return set;
+    }
+
     pub(crate) fn files(&self) -> impl Iterator<Item = (&Path, &FileChange)> {
         return self
             .0
             .iter()
             .map(|(path, change)| return (path.as_path(), change));
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Block {
+    Unchanged,
+    Removed { before: Line },
+    Added,
+}
+
+fn hunk_changes(hunk: &Hunk) -> Vec<Change> {
+    let mut changes = Vec::new();
+    let mut next = hunk.new_first;
+    let mut block = Block::Unchanged;
+    let close = |block: Block, changes: &mut Vec<Change>| {
+        if let Block::Removed { before } = block {
+            changes.push(Change::Deletion { before });
+        }
+    };
+    for line in &hunk.lines {
+        match line.kind {
+            LineKind::Added => {
+                changes.push(Change::Lines(LineRange::single(next)));
+                block = Block::Added;
+                next = Line::new(next.get().saturating_add(1)).unwrap_or(next);
+            }
+            LineKind::Removed => {
+                if matches!(block, Block::Unchanged) {
+                    block = Block::Removed { before: next };
+                }
+            }
+            LineKind::Context => {
+                close(block, &mut changes);
+                block = Block::Unchanged;
+                next = Line::new(next.get().saturating_add(1)).unwrap_or(next);
+            }
+        }
+    }
+    close(block, &mut changes);
+    return changes;
+}
+
+pub(crate) fn base_change(hunks: &[Hunk]) -> FileChange {
+    let mut changes = BTreeSet::new();
+    for hunk in hunks {
+        let mut old = hunk.old_first;
+        let mut replacing = false;
+        for line in &hunk.lines {
+            match line.kind {
+                LineKind::Removed => {
+                    changes.insert(Change::Lines(LineRange::single(old)));
+                    replacing = true;
+                    old = Line::new(old.get().saturating_add(1)).unwrap_or(old);
+                }
+                LineKind::Added => {
+                    if !replacing {
+                        changes.insert(Change::Deletion { before: old });
+                    }
+                }
+                LineKind::Context => {
+                    replacing = false;
+                    old = Line::new(old.get().saturating_add(1)).unwrap_or(old);
+                }
+            }
+        }
+    }
+    return FileChange::Parts(changes);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,7 +183,7 @@ impl fmt::Display for ChangeError {
     }
 }
 
-fn normalize(path: &Path) -> PathBuf {
+pub(crate) fn normalize(path: &Path) -> PathBuf {
     let mut normal = PathBuf::new();
     for component in path.components() {
         match component {

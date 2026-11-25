@@ -14,16 +14,19 @@ use serde::{Serialize, Serializer};
 mod collect;
 mod construct;
 mod matching;
+mod outline;
 mod position;
 
 pub use construct::{BranchKind, Construct, ConstructKind, ConstructOutcome, Location, Unmatched};
 pub use matching::{MatchedOutcome, Matching, OutcomeRef, outcome_refs};
+pub use outline::{Divergence, Outline};
 pub use position::{Column, Position, Span};
 
 use collect::{
     Placement, RawClass, RawClosure, RawConstruct, RawDeclaration, RawFunction, RawKey, collect,
 };
 use matching::Site;
+use outline::{Body, OutlineError, outline};
 use position::{ByteSpan, LineIndex, LineRange, OffsetOutOfRange, next_token};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,6 +126,7 @@ impl std::error::Error for LookupError {}
 pub struct FunctionSource {
     key: FunctionKey,
     span: Span,
+    bytes: ByteSpan,
     constructs: Vec<Construct>,
     sites: Vec<Site<Span, LineRange>>,
 }
@@ -395,8 +399,32 @@ impl Builder<'_> {
         return Ok(FunctionSource {
             key: keyed.key,
             span: self.span(keyed.raw.span)?,
+            bytes: keyed.raw.span,
             constructs,
             sites,
+        });
+    }
+
+    fn outline(&self, functions: &[FunctionSource]) -> Result<Outline, SyntaxError> {
+        let bodies = functions.iter().map(|function| {
+            return Body {
+                bytes: function.bytes,
+                key: &function.key,
+            };
+        });
+        return outline(self.source, bodies, |offset| {
+            return self.index.line(offset).ok();
+        })
+        .map_err(|error| {
+            return match error {
+                OutlineError::Offset(offset) => {
+                    self.fail(SyntaxErrorKind::OffsetOutOfRange { offset })
+                }
+                OutlineError::Lex { offset, message } => match self.index.position(offset) {
+                    Ok(position) => self.fail(SyntaxErrorKind::Parse { position, message }),
+                    Err(failure) => self.located(failure),
+                },
+            };
         });
     }
 
@@ -440,6 +468,20 @@ impl Builder<'_> {
 
 impl SourceFile {
     pub fn parse(path: FilePath, source: &[u8]) -> Result<Self, SyntaxError> {
+        return Self::parse_with(path, source, |_, _| return Ok(())).map(|(file, ())| return file);
+    }
+
+    pub fn parse_outlined(path: FilePath, source: &[u8]) -> Result<(Self, Outline), SyntaxError> {
+        return Self::parse_with(path, source, |builder, functions| {
+            return builder.outline(functions);
+        });
+    }
+
+    fn parse_with<T>(
+        path: FilePath,
+        source: &[u8],
+        extra: impl FnOnce(&Builder<'_>, &[FunctionSource]) -> Result<T, SyntaxError>,
+    ) -> Result<(Self, T), SyntaxError> {
         let too_large = || {
             return SyntaxError {
                 path: path.clone(),
@@ -469,7 +511,8 @@ impl SourceFile {
         }
         let collected = collect(program, length);
         let functions = builder.build(collected.functions, &collected.anonymous_classes)?;
-        return Ok(Self { path, functions });
+        let extra = extra(&builder, &functions)?;
+        return Ok((Self { path, functions }, extra));
     }
 
     #[must_use]

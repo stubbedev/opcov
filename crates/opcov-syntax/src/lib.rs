@@ -7,7 +7,7 @@
 mod source;
 
 pub use source::{
-    BranchKind, Column, Construct, ConstructKind, ConstructOutcome, FunctionSource, Location,
-    LookupError, MatchedOutcome, Matching, OutcomeRef, Position, SourceFile, Span, SyntaxError,
-    SyntaxErrorKind, Unmatched, outcome_refs,
+    BranchKind, Column, Construct, ConstructKind, ConstructOutcome, Divergence, FunctionSource,
+    Location, LookupError, MatchedOutcome, Matching, OutcomeRef, Outline, Position, SourceFile,
+    Span, SyntaxError, SyntaxErrorKind, Unmatched, outcome_refs,
 };

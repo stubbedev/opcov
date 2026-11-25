@@ -108,6 +108,48 @@ The gate checks the functions the diff touches. A change to a method can break
 its callers, which the diff does not touch; opcov builds no call graph, so pass
 the callers you want checked as extra `--files path:start-end` entries.
 
+### Running only the tests the change can reach
+
+The gate looks only at the changed functions, so only the tests that reach
+them need to run. `opcov impact` picks them from a baseline report, a run of
+the commit the branch starts from that the main branch's CI keeps anyway
+([cli.md](cli.md#opcov-impact)):
+
+```sh
+git diff -U0 "$BASELINE_COMMIT" > branch.diff
+status=0
+filter="$(opcov impact --report baseline.json --diff branch.diff --ignore docs --format filter)" || status=$?
+case "$status" in
+  0) [ -z "$filter" ] || vendor/bin/opcov-phpunit vendor/bin/phpunit --filter "$filter" ;;
+  1) vendor/bin/opcov-phpunit vendor/bin/phpunit ;;
+  *) exit "$status" ;;
+esac
+if [ -f build/opcov.json ]; then
+  opcov gate --report build/opcov.json --diff branch.diff
+else
+  opcov impact --report baseline.json --diff branch.diff --ignore docs --format json \
+    | jq -e '[.changes[].functions // [] | .[]] | length == 0'
+fi
+```
+
+Exit code 0 is a selection that bounds the change; exit code 1 means a change
+the baseline cannot bound (a constant, a new method, a test helper, a non-PHP
+file), and the full suite runs. A baseline of another commit is refused (exit
+code 2), since it would choose the wrong tests.
+
+An empty filter means no baseline test reached a changed function, so no test
+reaches it on the branch either and there is no report to gate. The change
+passes only when it changed no function at all (comments, whitespace, ignored
+or never-loaded files); otherwise every changed function is uncovered, which
+the last command turns into a failure and `impact`'s text output lists.
+
+In GitHub Actions the baseline is the main branch's last report, uploaded as
+an artifact with a file `commit` holding the commit it was built from;
+download it (for example with `actions/download-artifact` and the run id of
+that workflow run) and run the script above with
+`BASELINE_COMMIT="$(cat baseline/commit)"`. Check out with `fetch-depth: 0` so
+the commit exists.
+
 ## Comparison with an Xdebug-based gate
 
 `tools/measure/gate/` runs a real branch of a pinned corpus project through
