@@ -11,6 +11,12 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+### Fixed
+
+- `opcov doctor` reports a ZTS PHP as ZTS. It compared `PHP_ZTS`, a bool on
+  every supported PHP, with `1`, so the printed runtime and the JSON
+  `runtime.zts` always said NTS.
+
 ## [0.1.3] - 2026-11-25
 
 ### Added

@@ -34,7 +34,7 @@ const SELFTEST_SCRIPT: &str = r"<?php
 $result = [
     'loaded' => extension_loaded('opcov'),
     'php' => PHP_VERSION,
-    'zts' => PHP_ZTS === 1,
+    'zts' => ZEND_THREAD_SAFE,
     'sapi' => PHP_SAPI,
     'ini_file' => php_ini_loaded_file() ?: null,
     'scanned_files' => php_ini_scanned_files() ?: null,

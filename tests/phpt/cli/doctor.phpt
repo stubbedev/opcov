@@ -1,5 +1,5 @@
 --TEST--
-opcov doctor runs the probe self-test in a child PHP that reads the user's INI files: it passes with opcov loaded, names an unloaded extension, and lists every OPcache conflict with its fix and troubleshooting link
+opcov doctor runs the probe self-test in a child PHP that reads the user's INI files: it reports the thread safety of the PHP it ran, passes with opcov loaded, names an unloaded extension, and lists every OPcache conflict with its fix and troubleshooting link
 --SKIPIF--
 <?php
 require __DIR__ . '/../support/coverage.inc';
@@ -25,6 +25,7 @@ $summary = static function (OpcovProcess $doctor): string {
     return json_encode([
         'exit' => $doctor->status,
         'loaded' => $checkup['runtime'] !== null,
+        'thread_safety_matches' => ($checkup['runtime']['zts'] ?? ZEND_THREAD_SAFE) === ZEND_THREAD_SAFE,
         'self_test' => $checkup['self_test'],
         'findings' => array_map(static fn (array $finding): string => $finding['code'] . ': ' . $finding['fix'], $checkup['findings']),
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
@@ -43,12 +44,14 @@ rmdir($scan);
 {
     "exit": 0,
     "loaded": true,
+    "thread_safety_matches": true,
     "self_test": "passed",
     "findings": []
 }
 {
     "exit": 1,
     "loaded": false,
+    "thread_safety_matches": true,
     "self_test": "not_run",
     "findings": [
         "extension-not-loaded: add extension=opcov (or the full path of opcov.so) to an INI file this PHP reads; `php --ini` lists them"
@@ -57,6 +60,7 @@ rmdir($scan);
 {
     "exit": 1,
     "loaded": true,
+    "thread_safety_matches": true,
     "self_test": "not_run",
     "findings": [
         "opcache-protect-memory: set opcache.protect_memory=0",
