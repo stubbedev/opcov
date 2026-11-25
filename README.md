@@ -57,7 +57,7 @@ pie install opcov/opcov
 
 ```dockerfile
 FROM php:8.5-cli
-COPY --from=ghcr.io/stubbedev/opcov:0.1.3-php8.5 / /
+COPY --from=ghcr.io/stubbedev/opcov:0.1.4-php8.5 / /
 ```
 
 ```sh
