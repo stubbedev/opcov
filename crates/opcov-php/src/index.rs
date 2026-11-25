@@ -12,11 +12,13 @@ use mago_database::file::File;
 use mago_names::resolver::NameResolver;
 use mago_prelude::Prelude;
 use mago_syntax::parser::parse_file;
+use mago_syntax::walker::Walker;
 use std::sync::Mutex;
 
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::laravel;
+use crate::laravel::Hooks;
 use crate::project::Project;
 use crate::references::{Reach, referenced_classes};
 
@@ -70,6 +72,7 @@ pub struct Index {
     pub(crate) settings: Settings,
     pub(crate) sources: Vec<File>,
     pub(crate) forwards: laravel::Forwards,
+    pub(crate) hooks: Hooks,
     root: PathBuf,
     stats: IndexStats,
 }
@@ -105,6 +108,7 @@ pub(crate) fn load(root: &Path, path: &Path) -> Result<File, IndexError> {
 struct Scanned {
     metadata: CodebaseMetadata,
     references: BTreeSet<String>,
+    hooks: Hooks,
 }
 
 fn claim<T: Eq + std::hash::Hash>(seen: &Mutex<HashSet<T>>, item: T) -> bool {
@@ -120,7 +124,7 @@ struct Walk<'a> {
     settings: &'a Settings,
     seen: &'a Mutex<HashSet<PathBuf>>,
     looked_up: &'a Mutex<HashSet<String>>,
-    scanned: &'a Mutex<Vec<(Vec<u8>, CodebaseMetadata)>>,
+    scanned: &'a Mutex<Vec<(Vec<u8>, CodebaseMetadata, Hooks)>>,
     failures: &'a Mutex<Vec<IndexError>>,
 }
 
@@ -129,11 +133,12 @@ impl Walk<'_> {
         let Scanned {
             metadata,
             references,
+            hooks,
         } = scan(file, self.settings, reach);
         self.scanned
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push((file.name.to_vec(), metadata));
+            .push((file.name.to_vec(), metadata, hooks));
         let unseen = references
             .into_iter()
             .filter(|class| return claim(self.looked_up, class.to_ascii_lowercase()));
@@ -157,10 +162,15 @@ fn scan(file: &File, settings: &Settings, reach: Reach) -> Scanned {
     let program = parse_file(&arena, file);
     let names = NameResolver::new(&arena).resolve(program);
     let references = referenced_classes(file.contents.as_ref(), program, &names, reach);
+    let mut collecting = laravel::HookCollecting::default();
+    if reach == Reach::Everything {
+        laravel::HookCollector { names: &names }.walk_program(program, &mut collecting);
+    }
     let metadata = scan_program(&arena, file, program, &names, settings.version);
     return Scanned {
         metadata,
         references,
+        hooks: collecting.hooks,
     };
 }
 
@@ -184,7 +194,7 @@ impl Index {
             .chain(std::iter::once(Ok(laravel::aliases_stub(&root))))
             .collect::<Result<_, _>>()?;
         let failures: Mutex<Vec<IndexError>> = Mutex::new(Vec::new());
-        let scanned: Mutex<Vec<(Vec<u8>, CodebaseMetadata)>> = Mutex::new(Vec::new());
+        let scanned: Mutex<Vec<(Vec<u8>, CodebaseMetadata, Hooks)>> = Mutex::new(Vec::new());
         let walk = Walk {
             project,
             root: &root,
@@ -221,8 +231,10 @@ impl Index {
             ..
         } = Prelude::decode(PRELUDE)
             .map_err(|error| return IndexError::Prelude(error.to_string()))?;
-        for (_, part) in parts {
+        let mut hooks = Hooks::default();
+        for (_, part, found) in parts {
             metadata.extend(part);
+            hooks.extend(found);
         }
         populate_codebase(
             &mut metadata,
@@ -246,6 +258,7 @@ impl Index {
             settings,
             sources,
             forwards,
+            hooks,
             root,
             stats,
         });

@@ -549,14 +549,18 @@ large `vendor/` costs only the parts the application uses. Run
 - **Traits are analysed per using class.** A use the using class decides
   (`(new static())->handle()` in a trait) is reported as
   `<target> via <class>`; any other use belongs to the trait.
-- **Code the framework calls is used where it is triggered:**
-  - a queued job's entry methods (`queueEntryMethods`, such as `handle` and
-    `failed`) where the job is created or dispatched;
+- **Code the framework calls is used where it is triggered.** `consumers`
+  reads the hooks from the code itself:
+  - a queued job's `handle` and `failed` where the job is created or
+    dispatched;
   - an event subscriber's method where its event is created;
-  - model event handlers by the calls that fire the event
-    (`modelEventTargets`);
-  - console commands where they are run by name or class
-    (`commandTargets`).
+  - a model event handler by the calls that fire the event. That covers an
+    observer registered with `Model::observe()` or `#[ObservedBy]`, a
+    `static::<event>()` closure registered in a model's or trait's method,
+    and a subscriber of an event in `$dispatchesEvents`. A trait as the
+    model stands for every class that uses it;
+  - a console command's `handle` where it is run by its name or class. The
+    name comes from `#[AsCommand]`, `$signature` or `$name`.
 
 ### Laravel
 
@@ -580,22 +584,12 @@ needs to the analyzer, so chains keep their types instead of becoming `mixed`:
 
 ```json
 {
-    "targets": ["method App\\Jobs\\SendDigest::handle"],
-    "queueEntryMethods": ["handle", "failed"],
-    "modelEventTargets": [
-        {"target": "method App\\Observers\\PostObserver::created", "model": "App\\Models\\Post", "instance": ["save"], "query": ["create"]}
-    ],
-    "commandTargets": [
-        {"target": "method App\\Console\\Reindex::handle", "class": "App\\Console\\Reindex", "name": "app:reindex"}
-    ],
+    "targets": ["method App\\Jobs\\SendDigest::handle", "method App\\Observers\\PostObserver::created"],
     "within": ["app"]
 }
 ```
 
-Only `targets` is required. A model event target fires through `instance`
-methods called on the model (`$post->save()`), and through `query` methods
-called statically, on its builder or on a relation to it. A trait as the
-model stands for every class that uses it.
+`targets` is required. `within` limits the search like `--path`.
 
 ### Output
 

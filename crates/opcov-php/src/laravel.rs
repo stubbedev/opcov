@@ -17,10 +17,14 @@ use crate::analysis::{Context, with_analysis};
 mod aliases;
 mod builder_calls;
 mod container;
+mod hooks;
 mod members;
 mod model;
 
 pub(crate) use builder_calls::DynamicWheres;
+pub(crate) use hooks::{
+    Collecting as HookCollecting, Collector as HookCollector, Hooks, ModelEvent,
+};
 use members::{Binding, Forwarding, Members, install, key, object};
 use model::{ELOQUENT_BUILDER, MODEL, MODEL_TEMPLATE, Model};
 

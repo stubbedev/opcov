@@ -55,7 +55,7 @@ pub struct Search {
 impl Index {
     #[must_use]
     pub fn uses(&self, request: &Request) -> Search {
-        let matcher = Matcher::new(&self.metadata, &self.forwards, request);
+        let matcher = Matcher::new(&self.metadata, &self.forwards, &self.hooks, request);
         let mentions = AhoCorasick::builder()
             .ascii_case_insensitive(true)
             .build(matcher.needles())

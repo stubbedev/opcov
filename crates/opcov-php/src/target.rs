@@ -122,31 +122,10 @@ impl<'de> Deserialize<'de> for Target {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct ModelEvent {
-    pub target: Target,
-    pub model: String,
-    pub instance: Vec<String>,
-    pub query: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Command {
-    pub target: Target,
-    pub class: String,
-    pub name: String,
-}
-
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Request {
     pub targets: Vec<Target>,
-    #[serde(default)]
-    pub queue_entry_methods: Vec<String>,
-    #[serde(default)]
-    pub model_event_targets: Vec<ModelEvent>,
-    #[serde(default)]
-    pub command_targets: Vec<Command>,
     #[serde(default)]
     pub within: Vec<String>,
 }

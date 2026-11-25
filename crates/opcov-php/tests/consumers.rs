@@ -47,7 +47,7 @@ mod consumers {
     #[test]
     fn code_the_framework_calls_is_used_where_it_is_triggered() {
         let found = uses(
-            r#"{"targets": ["method App\\Actions\\Publish::handle", "method App\\Jobs\\SendDigest::handle", "method App\\Jobs\\SendDigest::failed", "method App\\Jobs\\PlainHandler::handle", "method App\\Listeners\\PostSubscriber::onPublished"], "queueEntryMethods": ["handle", "failed"]}"#,
+            r#"{"targets": ["method App\\Actions\\Publish::handle", "method App\\Jobs\\SendDigest::handle", "method App\\Jobs\\SendDigest::failed", "method App\\Jobs\\PlainHandler::handle", "method App\\Listeners\\PostSubscriber::onPublished"]}"#,
         );
         assert_eq!(
             found,
@@ -65,10 +65,9 @@ mod consumers {
     }
 
     #[test]
-    fn eloquent_chains_are_typed_through_builders_scopes_and_relations() {
+    fn eloquent_chains_and_model_events_are_typed_through_builders_scopes_and_relations() {
         let found = uses(
-            r#"{"targets": ["method App\\Models\\Post::publish", "method App\\Models\\Comment::approve"],
-                "modelEventTargets": [{"target": "method App\\Observers\\PostObserver::created", "model": "App\\Models\\Post", "instance": ["save"], "query": ["create"]}]}"#,
+            r#"{"targets": ["method App\\Models\\Post::publish", "method App\\Models\\Comment::approve", "method App\\Observers\\PostObserver::created", "method App\\Models\\MakesSlug::bootMakesSlug", "method App\\Listeners\\CommentSubscriber::onCreated"]}"#,
         );
         assert_eq!(
             found,
@@ -81,8 +80,10 @@ mod consumers {
                 "app/Uses/Eloquent.php:17 method App\\Models\\Comment::approve",
                 "app/Uses/Eloquent.php:18 method App\\Observers\\PostObserver::created",
                 "app/Uses/Eloquent.php:19 method App\\Observers\\PostObserver::created",
+                "app/Uses/Eloquent.php:20 method App\\Listeners\\CommentSubscriber::onCreated",
+                "app/Uses/Eloquent.php:20 method App\\Models\\MakesSlug::bootMakesSlug",
             ],
-            "static forwarding to a custom builder, dynamic wheres, query builder mixins, scopes, relation methods and properties all keep the model; another model's save fires nothing"
+            "static forwarding to a custom builder, dynamic wheres, query builder mixins, scopes, relation methods and properties all keep the model; an observer, a trait's boot closure and a dispatched event's subscriber fire on their own model's calls only"
         );
     }
 
@@ -104,8 +105,7 @@ mod consumers {
     #[test]
     fn facades_aliases_and_commands_resolve_to_their_classes() {
         let found = uses(
-            r#"{"targets": ["method App\\Services\\Clock::now", "method App\\Console\\Reindex::handle"],
-                "commandTargets": [{"target": "method App\\Console\\Reindex::handle", "class": "App\\Console\\Reindex", "name": "app:reindex"}]}"#,
+            r#"{"targets": ["method App\\Services\\Clock::now", "method App\\Console\\Reindex::handle"]}"#,
         );
         assert_eq!(
             found,

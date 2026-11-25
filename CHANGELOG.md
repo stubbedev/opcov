@@ -16,7 +16,9 @@ as the release notes, and refuses to release a version that has no section here.
 - `opcov consumers` finds the code that uses changed PHP members in process
   with mago, without running PHP. A use is matched by the receiver's type,
   including the code the framework calls: queued jobs, event subscribers,
-  model events and console commands.
+  model events and console commands. The hooks come from the code itself:
+  observers, `static::<event>()` closures, `$dispatchesEvents` and command
+  names, so a request names only the changed members.
   - **Laravel:** the types Laravel resolves at runtime are declared to the
     analyzer: model builders and static forwarding, scopes, dynamic wheres,
     relation properties, facades and root aliases.

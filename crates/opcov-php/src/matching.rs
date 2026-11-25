@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use mago_analyzer::artifacts::AnalysisArtifacts;
 use mago_codex::metadata::CodebaseMetadata;
@@ -9,8 +9,9 @@ use mago_span::Span;
 use mago_word::{ascii_lowercase_word, word};
 
 use crate::laravel::Forwards;
+use crate::laravel::{Hooks, ModelEvent};
 use crate::sites::{ClassReference, FirstArgument, Site};
-use crate::target::{Command, Kind, ModelEvent, Request, Target};
+use crate::target::{Kind, Request, Target};
 use crate::types::{Classes, Reading, classes_of, literal_strings};
 
 const BUILDER: &str = "Illuminate\\Database\\Eloquent\\Builder";
@@ -22,6 +23,9 @@ const SHOULD_QUEUE: &str = "Illuminate\\Contracts\\Queue\\ShouldQueue";
 const BUS_DISPATCHABLE: &str = "Illuminate\\Foundation\\Bus\\Dispatchable";
 const EVENT_DISPATCHABLE: &str = "Illuminate\\Foundation\\Events\\Dispatchable";
 const SUBSCRIBE: &str = "subscribe";
+const QUEUE_ENTRY_METHODS: [&str; 2] = ["handle", "failed"];
+const COMMAND: &str = "Illuminate\\Console\\Command";
+const COMMAND_ENTRY: &str = "handle";
 const CONSTRUCTOR: &str = "__construct";
 const NEW: &str = "new";
 const VIA: &str = " via ";
@@ -40,6 +44,17 @@ fn lower(text: &str) -> String {
     return text.to_ascii_lowercase();
 }
 
+struct Fired {
+    target: String,
+    event: ModelEvent,
+}
+
+struct Run {
+    target: String,
+    class: String,
+    name: String,
+}
+
 struct Creation {
     class: String,
     method: String,
@@ -52,8 +67,8 @@ pub(crate) struct Matcher<'c> {
     members: BTreeMap<(Kind, String), Vec<Target>>,
     globals: BTreeMap<(Kind, String), Target>,
     creations: BTreeMap<String, Vec<Creation>>,
-    model_events: Vec<ModelEvent>,
-    commands: Vec<Command>,
+    model_events: Vec<Fired>,
+    commands: Vec<Run>,
     trait_users: BTreeMap<String, Vec<String>>,
 }
 
@@ -61,6 +76,7 @@ impl<'c> Matcher<'c> {
     pub(crate) fn new(
         codebase: &'c CodebaseMetadata,
         forwards: &'c Forwards,
+        hooks: &Hooks,
         request: &Request,
     ) -> Self {
         let mut matcher = Self {
@@ -69,8 +85,8 @@ impl<'c> Matcher<'c> {
             members: BTreeMap::new(),
             globals: BTreeMap::new(),
             creations: BTreeMap::new(),
-            model_events: request.model_event_targets.clone(),
-            commands: request.command_targets.clone(),
+            model_events: Vec::new(),
+            commands: Vec::new(),
             trait_users: BTreeMap::new(),
         };
         let mut classes: Vec<_> = codebase.class_likes.values().collect();
@@ -90,11 +106,6 @@ impl<'c> Matcher<'c> {
                     .push(class.original_name.to_string());
             }
         }
-        let queue_entry_methods: BTreeSet<String> = request
-            .queue_entry_methods
-            .iter()
-            .map(|method| return lower(method))
-            .collect();
         for target in &request.targets {
             let key = (target.kind, target.kind.member_key(&target.member));
             let Some(class) = &target.class else {
@@ -105,8 +116,10 @@ impl<'c> Matcher<'c> {
             if target.kind != Kind::Method {
                 continue;
             }
-            if queue_entry_methods.contains(&lower(&target.member)) && matcher.bus_dispatched(class)
-            {
+            let queue_entry = QUEUE_ENTRY_METHODS
+                .iter()
+                .any(|method| return method.eq_ignore_ascii_case(&target.member));
+            if queue_entry && matcher.bus_dispatched(class) {
                 matcher
                     .creations
                     .entry(class.clone())
@@ -117,7 +130,24 @@ impl<'c> Matcher<'c> {
                         overridable: true,
                     });
             }
-            for event in matcher.subscribed_events(class, &target.member) {
+            let listens_to = matcher.subscribed_events(class, &target.member);
+            for event in hooks.model_events(class, &target.member, &listens_to) {
+                matcher.model_events.push(Fired {
+                    target: target.to_string(),
+                    event,
+                });
+            }
+            if target.member.eq_ignore_ascii_case(COMMAND_ENTRY)
+                && matcher.is(class, COMMAND)
+                && let Some(name) = hooks.command(class)
+            {
+                matcher.commands.push(Run {
+                    target: target.to_string(),
+                    class: class.clone(),
+                    name: name.to_owned(),
+                });
+            }
+            for event in listens_to {
                 matcher.creations.entry(event).or_default().push(Creation {
                     class: class.clone(),
                     method: target.member.clone(),
@@ -341,10 +371,11 @@ impl<'c> Matcher<'c> {
             .model_events
             .iter()
             .filter(|entry| {
-                return (fires(&entry.instance) && self.any_is(instance_of, &entry.model))
-                    || (fires(&entry.query) && self.any_is(query_of, &entry.model));
+                return (fires(&entry.event.instance)
+                    && self.any_is(instance_of, &entry.event.model))
+                    || (fires(&entry.event.query) && self.any_is(query_of, &entry.event.model));
             })
-            .map(|entry| return entry.target.to_string())
+            .map(|entry| return entry.target.clone())
             .collect();
     }
 
@@ -366,7 +397,7 @@ impl<'c> Matcher<'c> {
                     return name.eq_ignore_ascii_case(&entry.class) || *name == entry.name;
                 });
             })
-            .map(|entry| return entry.target.to_string())
+            .map(|entry| return entry.target.clone())
             .collect();
     }
 
@@ -593,7 +624,14 @@ impl<'c> Matcher<'c> {
             }
         }
         for entry in &self.model_events {
-            needles.extend(entry.instance.iter().chain(entry.query.iter()).cloned());
+            needles.extend(
+                entry
+                    .event
+                    .instance
+                    .iter()
+                    .chain(entry.event.query.iter())
+                    .cloned(),
+            );
         }
         if !self.commands.is_empty() {
             needles.extend(

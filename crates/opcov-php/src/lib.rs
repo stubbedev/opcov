@@ -23,4 +23,4 @@ mod types;
 pub use consumers::{Search, Use};
 pub use index::{Index, IndexError, IndexStats};
 pub use project::{Project, ProjectError};
-pub use target::{Command, Kind, ModelEvent, Request, Target, TargetError};
+pub use target::{Kind, Request, Target, TargetError};

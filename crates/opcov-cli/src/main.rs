@@ -254,7 +254,7 @@ struct ConsumersArgs {
     #[arg(
         long,
         value_name = "FILE",
-        help = "JSON request with targets, queueEntryMethods, modelEventTargets, commandTargets and within, or `-` for standard input"
+        help = "JSON request with targets and within, or `-` for standard input"
     )]
     request: Option<PathBuf>,
     #[arg(
