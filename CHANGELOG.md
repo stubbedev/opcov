@@ -21,6 +21,13 @@ as the release notes, and refuses to release a version that has no section here.
   it exits 1 for changes coverage cannot bound (declarations outside function
   bodies, test helpers, non-PHP files).
 
+- Every release carries the `opcov` command as a native binary for x86_64 and
+  aarch64 Linux (static, any libc) and macOS arm64, with checksums and
+  attestations. `opcov/phpunit` is now an optional Composer plugin that
+  downloads and verifies the binary for its version and installs it as
+  `vendor/bin/opcov`, which also fetches it on first use when the plugin is not
+  allowed.
+
 ### Changed
 
 - The diff parser of `opcov gate` reads git's rename, copy, new-file,

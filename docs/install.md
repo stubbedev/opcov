@@ -239,7 +239,43 @@ as `opcov.so` like a release archive. Building for musl additionally needs
 `cdylib`; `docker/musl.Dockerfile` does exactly this inside an official Alpine
 image.
 
-## Composer
+## The `opcov` command
 
-The PHPUnit and Pest integration (`opcov/phpunit`, which will require the
-matching extension through `ext-opcov`) does not exist yet.
+The `opcov` command-line tool (`merge`, `convert`, `gate`, `impact`, `doctor`;
+[cli.md](cli.md)) is a separate native binary. Every release carries it,
+statically linked on Linux:
+
+| Asset | Platform |
+|---|---|
+| `opcov-cli-v<version>-x86_64-linux-musl` | x86_64 Linux, any libc |
+| `opcov-cli-v<version>-arm64-linux-musl` | aarch64 Linux, any libc |
+| `opcov-cli-v<version>-arm64-darwin-bsdlibc` | macOS arm64 |
+
+Each is listed in the release's `SHA256SUMS` and has a build-provenance
+attestation, like the extension archives.
+
+**With Composer.** `composer require --dev opcov/phpunit` installs
+`vendor/bin/opcov`. The package is a Composer plugin: after `composer install`
+and `composer update` it downloads the binary for the host from the release
+that matches the package version, checks it against that release's
+`SHA256SUMS`, keeps it in the user cache directory (`$XDG_CACHE_HOME/opcov`,
+`~/.cache/opcov`, or `~/Library/Caches/opcov` on macOS) and places it in the
+package's `bin/`. Composer asks once whether to trust the plugin; to allow it
+without asking, add it to `allow-plugins`:
+
+```sh
+composer config allow-plugins.opcov/phpunit true
+```
+
+The plugin is optional: when it is not allowed, or the download fails, the
+install still succeeds, and `vendor/bin/opcov` downloads the binary on its
+first run instead. `vendor/bin/opcov` then replaces itself with the binary
+(through `ext-pcntl`, or as a child process with the same standard streams), so
+arguments, output and exit codes are the binary's. On a platform without a
+prebuilt binary it fails with the platforms that have one and the
+source-build command.
+
+**Without Composer.** Download the asset and verify it as in
+[Verifying an archive](#verifying-an-archive), or use the flake's `opcov-cli`
+package ([Nix](#nix)), or build it from source:
+`cargo install --locked --git https://github.com/stubbedev/opcov opcov-cli`.

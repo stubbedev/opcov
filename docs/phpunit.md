@@ -9,6 +9,7 @@ PHPUnit 13, Pest 4 and Pest 5. It provides:
 | `vendor/bin/opcov-phpunit` | A launcher that turns PHPUnit's `<source>` into the opcov INI settings and starts the test runner with them. |
 | `OpCov\PHPUnit\Driver` | A php-code-coverage driver for PHPUnit 13.3 and newer, so PHPUnit's own coverage reports (`--coverage-html`, `--coverage-clover`, ...) can use opcov instead of Xdebug or PCOV. |
 | `vendor/bin/opcov-cov` | Converts an opcov report into php-code-coverage's serialized `.cov` format, for `phpcov merge` and PHPUnit's report tooling. |
+| `vendor/bin/opcov` | The `opcov` command ([cli.md](cli.md)), a native binary the package's Composer plugin downloads and verifies ([install.md](install.md#the-opcov-command)). |
 
 ## Install
 
@@ -29,6 +30,12 @@ at startup it refuses an extension from another compatibility line (a different
 major version, or before 1.0.0 a different minor version) with
 `the opcov extension X is not compatible with opcov/phpunit Y`. `ext-pcntl` and
 `ext-posix` are needed by the launcher only.
+
+The package is an optional Composer plugin that installs the `opcov` command
+as `vendor/bin/opcov`. Allow it with
+`composer config allow-plugins.opcov/phpunit true`; without that, Composer
+skips it and `vendor/bin/opcov` downloads the binary on first use
+([install.md](install.md#the-opcov-command)).
 
 ## Register the extension
 

@@ -72,18 +72,22 @@
       then "musl"
       else "glibc";
 
+    darwinRelink = file: ''
+      otool -L ${file} | tail -n +2 | while read -r library _; do
+        case "$library" in
+          ${file} | /usr/lib/* | /System/Library/*) ;;
+          /nix/store/*/lib/libiconv.2.dylib) install_name_tool -change "$library" /usr/lib/libiconv.2.dylib ${file} ;;
+          *) echo "${file} links $library, which exists only inside Nix" >&2; exit 1 ;;
+        esac
+      done
+      codesign --force --sign - ${file}
+    '';
+
     portability =
       if hostPlatform.isDarwin
       then ''
         install_name_tool -id opcov.so opcov.so
-        otool -L opcov.so | tail -n +2 | while read -r library _; do
-          case "$library" in
-            opcov.so | /usr/lib/* | /System/Library/*) ;;
-            /nix/store/*/lib/libiconv.2.dylib) install_name_tool -change "$library" /usr/lib/libiconv.2.dylib opcov.so ;;
-            *) echo "opcov.so links $library, which exists only inside Nix" >&2; exit 1 ;;
-          esac
-        done
-        codesign --force --sign - opcov.so
+        ${darwinRelink "opcov.so"}
       ''
       else ''
         patchelf --print-needed opcov.so | while read -r library; do
@@ -114,6 +118,17 @@
         install -m 0644 ${extension php []}/lib/php/extensions/opcov.so opcov.so
         ${portability}
         just dist opcov.so ${version} ${libc} "$out"
+      '';
+
+    cliDist =
+      pkgs.runCommand "opcov-cli-dist-${version}" {
+        nativeBuildInputs = [pkgs.just pkgs.cctools pkgs.darwin.sigtool];
+      } ''
+        cp -r --no-preserve=mode ${suite} source
+        cd source
+        install -m 0755 ${lib.getExe opcov.cli} opcov
+        ${darwinRelink "opcov"}
+        just dist-cli ./opcov ${version} arm64-darwin-bsdlibc "$out"
       '';
 
     dockerImage = php: base: let
@@ -174,7 +189,9 @@
         opcov-cli = opcov.cli;
         release = pkgs.symlinkJoin {
           name = "opcov-release-${version}";
-          paths = lib.attrValues (lib.mapAttrs dist phpBuilds);
+          paths =
+            lib.attrValues (lib.mapAttrs dist phpBuilds)
+            ++ lib.optional (hostPlatform.isDarwin && hostPlatform.isAarch64) cliDist;
         };
       }
       // lib.mapAttrs' (name: php: lib.nameValuePair "opcov-${name}" (extension php [])) phpBuilds
@@ -216,6 +233,7 @@
           touch "$out"
         '';
       }
+      // lib.optionalAttrs (hostPlatform.isDarwin && hostPlatform.isAarch64) {cli-dist = cliDist;}
       // lib.mapAttrs' (name: php: lib.nameValuePair "phpt-${name}" (phpt name php)) (phpBuilds // phpVmBuilds);
   };
 }

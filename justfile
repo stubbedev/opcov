@@ -88,6 +88,20 @@ dist extension version libc out:
 changelog version:
     @awk -v heading="## [{{ version }}]" 'index($0, "## ") == 1 { if (found) exit; found = index($0, heading) == 1; next } found && /^\[[^]]+\]: / { exit } found { print } END { if (!found) { print "changelog: CHANGELOG.md has no section " heading > "/dev/stderr"; exit 1 } }' CHANGELOG.md
 
+# Publish the opcov CLI at `binary` into `out` as the release asset for `platform` (`<arch>-<os>-<libc>`, the names opcov/phpunit downloads), after checking that it runs and reports `version`.
+[script]
+dist-cli binary version platform out:
+    case "{{ platform }}" in x86_64-linux-musl | arm64-linux-musl | arm64-darwin-bsdlibc) ;; *) echo "dist-cli: unknown platform '{{ platform }}'" >&2; exit 1 ;; esac
+    reported="$("{{ binary }}" --version)"
+    if [ "$reported" != "opcov {{ version }}" ]; then
+        echo "dist-cli: {{ binary }} reports '$reported', expected 'opcov {{ version }}'" >&2
+        exit 1
+    fi
+    asset="opcov-cli-v{{ version }}-{{ platform }}"
+    mkdir -p "{{ out }}"
+    install -m 0755 "{{ binary }}" "{{ out }}/$asset"
+    (cd "{{ out }}" && sha256sum "$asset" > "$asset.sha256")
+
 # Check the opcov/phpunit package: mago analysis, lint and format, then its unit and integration tests against the built extension.
 [script]
 php-check:

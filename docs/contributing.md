@@ -261,6 +261,7 @@ stable, so any of them can be made a required check.
 | | | `miri` | `nix develop -c just miri` |
 | | | `plan`, `musl` | the musl build: `musl.yml` for every release image |
 | `musl.yml` | called by `ci.yml` and `release.yml` | `build` | for every PHP image of the release matrix, on x86_64 and aarch64: `docker/musl.Dockerfile` in the official Alpine PHP image builds the extension with the flake's nightly, runs the whole `.phpt` suite against the self-test build and packages the release build as the musl archive |
+| | | `cli` | on x86_64 and aarch64: `docker/cli-musl.Dockerfile` builds the statically linked `opcov` command in Alpine with the flake's nightly, packages it with `just dist-cli` and runs it in a clean Debian image; the macOS arm64 binary comes from the flake's `cli-dist` check and the `release` package |
 | `sanitizers.yml` | push to `main`, nightly, manual | `asan-ubsan` | `nix develop .#php85-asan -c just phpt` on x86_64 Linux |
 | | | `debug-valgrind` | on x86_64 Linux, `just phpt` in `php85-debug`, where a `ZEND_DEBUG` assertion or a leak report fails its test, then again under Valgrind (`TEST_PHP_ARGS="-m --show-mem"`), where any leak fails |
 | `fuzz.yml` | nightly, manual | `targets`, `fuzz` | every target listed in `crates/opcov-core/fuzz/Cargo.toml`, 300 s each with `just fuzz`; on failure the crashing inputs are uploaded as `fuzz-artifacts-<target>` |
