@@ -11,8 +11,8 @@ use Opcov\Measure\Outcome;
 
 final class Comparator
 {
-
     private const string ANONYMOUS_CLASS = 'class@anonymous';
+    private const string EVALUATED = "~\\(\\d+\\) : eval\\(\\)'d code #[0-9a-f]{16}$~";
     /** @param \Closure(string): int $lastLine */
     public static function lines(string $label, Coverage $opcov, Coverage $pcov, Driver $xdebugDriver, Coverage $xdebug, \Closure $lastLine): Findings
     {
@@ -23,6 +23,10 @@ final class Comparator
             $opcovLines = $opcov->lines($file);
             $pcovLines = $pcov->lines($file);
             $xdebugLines = $xdebug->lines($file);
+            if ($pcovLines === [] && $xdebugLines === [] && self::evaluated($file)) {
+                $findings->evaluated();
+                continue;
+            }
             if ($pcovLines === [] && $xdebugLines === [] && !in_array(true, $opcovLines, true)) {
                 $findings->unobserved();
                 continue;
@@ -63,6 +67,9 @@ final class Comparator
         foreach ($files as $file) {
             $opcovFunctions = $opcov->decisions($file);
             $xdebugFunctions = $xdebug->decisions($file);
+            if ($xdebugFunctions === [] && self::evaluated($file)) {
+                continue;
+            }
             $functions = array_keys($opcovFunctions + $xdebugFunctions);
             sort($functions, SORT_STRING);
             foreach ($functions as $function) {
@@ -85,6 +92,11 @@ final class Comparator
             }
         }
         return $findings;
+    }
+
+    private static function evaluated(string $file): bool
+    {
+        return preg_match(self::EVALUATED, $file) === 1;
     }
 
     /**

@@ -62,7 +62,10 @@ driver run (default 3600), `--write-docs`.
   abstract classes, readonly classes, static variables, anonymous classes, a
   declarations-only file, heredoc and multi-line expressions.
 - **Corpus** (`tools/measure/corpus.json`): the PHPUnit or Pest suites of
-  Carbon 3.15.1, symfony/string v8.1.10 and spatie/laravel-query-builder 7.3.9
+  Carbon 3.15.1 with upstream's later fix to its timezone tests (commit
+  `e4f5856`; time zone data from 2026 keeps `America/Vancouver` on UTC-7, which
+  the 3.15.1 tests do not expect), symfony/string v8.1.10 and
+  spatie/laravel-query-builder 7.3.9
   (Laravel 12 through Orchestra Testbench, in-memory SQLite), each at a pinned
   commit (a shallow `git fetch` of that commit, so the commit hash pins the
   content) with dependencies installed from the lock stored in
@@ -272,15 +275,16 @@ Verdict: passed. 33 allowlisted, 0 unexplained divergences, 0 stale allowlist en
 
 ### Corpus, PHP 8.5.13
 
-Run once with `tools/measure/parity --suite corpus` on 2026-11-24 against a
-release build of commit c41de9b plus the uncommitted crates/ changes of that
-day (about 25 minutes). Totals over the three projects:
+Run with `tools/measure/parity --suite corpus` on 2026-11-25 against a
+release build of opcov 0.1.4 plus the `get_debug_info()` fix for `eval()`'d
+code (about 25 minutes). Totals over the three projects:
 
 | | corpus |
 |---|---|
 | lines compared | 13,014 |
 | lines where PCOV and Xdebug disagree | 137 |
 | files loaded outside every test (only opcov reports them) | 13 |
+| `eval()`'d code entries (only opcov reports them) | 8 |
 | decisions matched to an Xdebug branch (symfony/string) | 741 |
 | outcome verdicts compared with Xdebug | 1,471 |
 | opcov-only decisions (`??`, `?:`, `?->`) | 65 |

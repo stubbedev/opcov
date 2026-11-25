@@ -21,6 +21,8 @@ final class Findings
 
     private int $unobservedFiles = 0;
 
+    private int $evaluatedEntries = 0;
+
     private int $expectationsChecked = 0;
 
     private int $unobservedFunctions = 0;
@@ -77,6 +79,11 @@ final class Findings
         $this->unobservedFiles++;
     }
 
+    public function evaluated(): void
+    {
+        $this->evaluatedEntries++;
+    }
+
     public function jumpTable(): void
     {
         $this->jumpTables++;
@@ -114,6 +121,7 @@ final class Findings
         $this->anonymousDecisions += $other->anonymousDecisions;
         $this->jumpTables += $other->jumpTables;
         $this->unobservedFiles += $other->unobservedFiles;
+        $this->evaluatedEntries += $other->evaluatedEntries;
         $this->expectationsChecked += $other->expectationsChecked;
         $this->unobservedFunctions += $other->unobservedFunctions;
         $this->shiftedTargets += $other->shiftedTargets;
@@ -151,6 +159,7 @@ final class Findings
             'lines compared' => $this->comparedCount(Aspect::Lines),
             'lines where PCOV and Xdebug disagree' => count($this->disagreements),
             'files loaded outside every test (only opcov reports them)' => $this->unobservedFiles,
+            "eval()'d code entries (only opcov reports them)" => $this->evaluatedEntries,
             'targets compared with Xdebug in line mode only' => $this->outcomesNotCompared,
             'decisions matched to an Xdebug branch' => $this->matchedDecisions,
             '... of which Xdebug starts a target on an earlier statement line' => $this->shiftedTargets,

@@ -118,7 +118,7 @@ in the tables is the one recorded with the earliest sample the report uses.
 |---|---|
 | `branchy` | steady-state cost: one collection around 400k calls of a function full of branches. Line probes are gone after the first call, but four branch sources never see all their outcomes (the fallbacks of two `??` that always find a value, and the `foreach` that never runs zero times), so they stay armed and fire on every call |
 | `tiny-tests` | per-test cost: 20,000 tiny tests over the same class, each with start, stop and the per-test reset |
-| `carbon` | a large unit suite: Carbon 3.15.1, 6,349 tests, `src/Carbon` measured |
+| `carbon` | a large unit suite: Carbon 3.15.1 (the results below) or the corpus pin `e4f5856`, which changes only tests and docblocks, 6,349 tests, `src/Carbon` measured |
 | `laravel-query-builder` | framework-heavy feature tests: spatie/laravel-query-builder 7.3.9 on Laravel 12 through Orchestra Testbench, in-memory SQLite, Pest |
 
 ## Results

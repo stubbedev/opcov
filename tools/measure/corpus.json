@@ -2,8 +2,8 @@
     {
         "name": "carbon",
         "repository": "briannesbitt/Carbon",
-        "version": "3.15.1",
-        "commit": "ce0e5636fae7d1e99856eb70cae4c719a284aa08",
+        "version": "3.15.1+e4f5856",
+        "commit": "e4f58560aa5aeb4bcdeca6d7e43b98448a5a67f7",
         "measure": [
             "src/Carbon"
         ],
