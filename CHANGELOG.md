@@ -11,6 +11,8 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-25
+
 ### Added
 
 - `opcov impact` reads a baseline report and a diff, shows the baseline
