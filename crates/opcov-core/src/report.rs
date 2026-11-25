@@ -9,11 +9,12 @@ mod encode;
 mod error;
 mod model;
 mod scan;
+mod stitch;
 mod streaming;
 
 pub use combine::{
     ConflictSite, EntryConflict, HeaderField, HeaderMismatch, InputId, LoopField, MergeError,
-    OutcomeField, merge,
+    OutcomeField, StaleEntry, merge,
 };
 pub use decode::{RawEntry, ReportReader};
 pub use encode::{ReportWriter, WriteError};
@@ -24,4 +25,5 @@ pub use model::{
     Settings, Sha256, SourcePath, Span, TestIndex, TestTable, VmKind, line_hits, schema_id,
 };
 pub use scan::Found;
+pub use stitch::stitch_streams;
 pub use streaming::{StreamMergeError, merge_streams};

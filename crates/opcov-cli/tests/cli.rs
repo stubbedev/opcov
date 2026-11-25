@@ -25,3 +25,7 @@ mod many;
 #[cfg(test)]
 #[path = "cli/impact.rs"]
 mod impact;
+
+#[cfg(test)]
+#[path = "cli/stitch.rs"]
+mod stitch;

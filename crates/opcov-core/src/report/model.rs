@@ -407,8 +407,14 @@ impl TryFrom<Vec<String>> for TestTable {
     }
 }
 
+pub(super) enum Resolved {
+    To(TestIndex),
+    Dropped,
+    Unknown,
+}
+
 pub(super) trait TestRefs {
-    fn resolve(&self, index: TestIndex) -> Option<TestIndex>;
+    fn resolve(&self, index: TestIndex) -> Resolved;
     fn count(&self) -> usize;
 }
 
@@ -421,8 +427,15 @@ impl LocalTests {
 }
 
 impl TestRefs for LocalTests {
-    fn resolve(&self, index: TestIndex) -> Option<TestIndex> {
-        return (index.position()? < self.0).then_some(index);
+    fn resolve(&self, index: TestIndex) -> Resolved {
+        return if index
+            .position()
+            .is_some_and(|position| return position < self.0)
+        {
+            Resolved::To(index)
+        } else {
+            Resolved::Unknown
+        };
     }
 
     fn count(&self) -> usize {
@@ -476,17 +489,26 @@ impl HitSet {
         refs: &impl TestRefs,
         site: impl FnOnce() -> HitSite,
     ) -> Result<Self, BadTestRef> {
-        for slot in &mut self.0 {
-            let index = *slot;
-            let Some(target) = refs.resolve(index) else {
-                return Err(BadTestRef {
-                    site: site(),
-                    index,
-                });
+        let mut unknown = None;
+        self.0.retain_mut(|slot| {
+            return match refs.resolve(*slot) {
+                Resolved::To(target) => {
+                    *slot = target;
+                    true
+                }
+                Resolved::Dropped => false,
+                Resolved::Unknown => {
+                    unknown.get_or_insert(*slot);
+                    false
+                }
             };
-            *slot = target;
-        }
-        return Ok(self);
+        });
+        return unknown.map_or(Ok(self), |index| {
+            return Err(BadTestRef {
+                site: site(),
+                index,
+            });
+        });
     }
 
     fn check(&self, tests: usize, site: impl FnOnce() -> HitSite) -> Result<(), BadTestRef> {
@@ -1184,6 +1206,22 @@ pub struct FileCoverage {
 }
 
 impl FileCoverage {
+    pub fn hit_sets(&self) -> impl Iterator<Item = &HitSet> {
+        return self
+            .lines
+            .values()
+            .chain(self.functions.values().flat_map(|function| {
+                return function
+                    .outcomes
+                    .0
+                    .iter()
+                    .map(|outcome| return &outcome.hits)
+                    .chain(function.loops.0.iter().flat_map(|looped| {
+                        return looped.zero.iter().chain(std::iter::once(&looped.second));
+                    }));
+            }));
+    }
+
     fn check_tests(&self, tests: usize) -> Result<(), BadTestRef> {
         for (line, hits) in &self.lines {
             hits.check(tests, || return HitSite::Line(*line))?;

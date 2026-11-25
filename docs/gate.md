@@ -143,6 +143,42 @@ passes only when it changed no function at all (comments, whitespace, ignored
 or never-loaded files); otherwise every changed function is uncovered, which
 the last command turns into a failure and `impact`'s text output lists.
 
+### A report of the whole branch
+
+The filtered run's report covers only the selected tests. When a report of
+the whole branch is needed too (coverage totals, an lcov or Clover upload, the
+next baseline), select with `--whole-files` and stitch the run over the
+baseline ([cli.md](cli.md#opcov-stitch)):
+
+```sh
+git diff -U0 "$BASELINE_COMMIT" > branch.diff
+status=0
+filter="$(opcov impact --report baseline.json --diff branch.diff --ignore docs --whole-files --format filter)" || status=$?
+case "$status" in
+  0)
+    if [ -n "$filter" ]; then
+      vendor/bin/opcov-phpunit vendor/bin/phpunit --filter "$filter"
+      opcov stitch --baseline baseline.json --partial build/opcov.json \
+        --diff branch.diff --ignore docs -o branch.json
+    else
+      cp baseline.json branch.json
+    fi
+    ;;
+  1)
+    vendor/bin/opcov-phpunit vendor/bin/phpunit
+    cp build/opcov.json branch.json
+    ;;
+  *) exit "$status" ;;
+esac
+opcov gate --report branch.json --diff branch.diff
+```
+
+The whole-file selection is larger than the function selection: it also
+reruns the tests that ran only the unchanged functions of a changed file. An
+empty filter means no baseline test ran a changed file, so the baseline is
+already the branch's report; it stays valid only if the change touched no
+file the baseline measured, which an empty whole-file selection guarantees.
+
 In GitHub Actions the baseline is the main branch's last report, uploaded as
 an artifact with a file `commit` holding the commit it was built from;
 download it (for example with `actions/download-artifact` and the run id of

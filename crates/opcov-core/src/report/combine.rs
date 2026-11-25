@@ -10,7 +10,7 @@ use serde::Serialize;
 use super::error::ModelError;
 use super::model::{
     FileCoverage, Function, Generator, Header, HitSet, IdSorted, Identified, Loop, LoopId, Outcome,
-    OutcomeId, Report, Settings, SourcePath, TestIndex, TestRefs, TestTable,
+    OutcomeId, Report, Resolved, Settings, SourcePath, TestIndex, TestRefs, TestTable,
 };
 use crate::cfg::FunctionKey;
 
@@ -154,10 +154,17 @@ pub struct EntryConflict {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaleEntry {
+    pub path: SourcePath,
+    pub test: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MergeError {
     NoInputs,
     Header(Box<HeaderMismatch>),
     Conflict(Box<EntryConflict>),
+    Stale(Box<StaleEntry>),
     MergedTests(Box<ModelError>),
     Invalid {
         input: InputId,
@@ -168,7 +175,7 @@ pub enum MergeError {
 impl MergeError {
     #[must_use]
     pub const fn is_refusal(&self) -> bool {
-        return matches!(self, Self::Header(_) | Self::Conflict(_));
+        return matches!(self, Self::Header(_) | Self::Conflict(_) | Self::Stale(_));
     }
 
     #[must_use]
@@ -201,6 +208,14 @@ impl MergeError {
                 name(conflict.first),
                 conflict.right,
                 name(conflict.second)
+            ),
+            Self::Stale(stale) => write!(
+                formatter,
+                "refusing to stitch {}: it changed, but {} ran it in {} and is not rerun in {}",
+                stale.path,
+                stale.test,
+                name(InputId(0)),
+                name(InputId(1))
             ),
             Self::MergedTests(error) => write!(formatter, "merged test table: {error}"),
             Self::Invalid { input, error } => write!(formatter, "{}: {error}", name(*input)),
@@ -245,7 +260,10 @@ fn differ<T: PartialEq + Serialize>(
     return (left != right).then(|| return (field, render(left), render(right)));
 }
 
-fn first_difference(left: &Header, right: &Header) -> Option<(HeaderField, String, String)> {
+pub(super) fn first_difference(
+    left: &Header,
+    right: &Header,
+) -> Option<(HeaderField, String, String)> {
     let Header {
         generator:
             Generator {
@@ -291,11 +309,18 @@ fn first_difference(left: &Header, right: &Header) -> Option<(HeaderField, Strin
         .or_else(|| return differ(HeaderField::Paths, paths, &right.paths));
 }
 
-pub(super) struct Remap(Vec<TestIndex>);
+pub(super) struct Remap(pub(super) Vec<Option<TestIndex>>);
 
 impl TestRefs for Remap {
-    fn resolve(&self, index: TestIndex) -> Option<TestIndex> {
-        return self.0.get(index.position()?).copied();
+    fn resolve(&self, index: TestIndex) -> Resolved {
+        return match index
+            .position()
+            .and_then(|position| return self.0.get(position))
+        {
+            Some(Some(target)) => Resolved::To(*target),
+            Some(None) => Resolved::Dropped,
+            None => Resolved::Unknown,
+        };
     }
 
     fn count(&self) -> usize {
@@ -327,7 +352,7 @@ pub(super) fn plan(headers: &[&Header]) -> Result<MergePlan, MergeError> {
         .iter()
         .map(|header| return header.tests.names().iter().peekable())
         .collect();
-    let mut remaps: Vec<Vec<TestIndex>> = headers
+    let mut remaps: Vec<Vec<Option<TestIndex>>> = headers
         .iter()
         .map(|header| return Vec::with_capacity(header.tests.len()))
         .collect();
@@ -344,7 +369,7 @@ pub(super) fn plan(headers: &[&Header]) -> Result<MergePlan, MergeError> {
         })?;
         for (cursor, remap) in cursors.iter_mut().zip(remaps.iter_mut()) {
             if cursor.next_if_eq(&next).is_some() {
-                remap.push(TestIndex::new(global));
+                remap.push(Some(TestIndex::new(global)));
             }
         }
         names.push(next.clone());
@@ -413,10 +438,23 @@ fn union_maps<K: Ord, V, E>(
     return Ok(left);
 }
 
-struct Clash {
+pub(super) struct Clash {
     site: ConflictSite,
     left: String,
     right: String,
+}
+
+impl Clash {
+    pub(super) fn conflict(self, path: SourcePath, first: InputId, second: InputId) -> MergeError {
+        return MergeError::Conflict(Box::new(EntryConflict {
+            path,
+            site: self.site,
+            first,
+            second,
+            left: self.left,
+            right: self.right,
+        }));
+    }
 }
 
 fn clash_if<T: PartialEq + Serialize>(
@@ -515,7 +553,10 @@ fn union_functions(
     });
 }
 
-fn union_files(left: FileCoverage, right: FileCoverage) -> Result<FileCoverage, Box<Clash>> {
+pub(super) fn union_files(
+    left: FileCoverage,
+    right: FileCoverage,
+) -> Result<FileCoverage, Box<Clash>> {
     clash_if(&left.sha256, &right.sha256, || return ConflictSite::Sha256)?;
     let lines = union_maps(left.lines, right.lines, |_line, kept, other| {
         return Ok::<_, Box<Clash>>(union_hits(kept, other));
@@ -555,16 +596,8 @@ pub(super) fn merge_entries<S: EntrySource>(
             merged = Some(match merged {
                 None => (input, file),
                 Some((first, kept)) => {
-                    let union = union_files(kept, file).map_err(|clash| {
-                        return MergeError::Conflict(Box::new(EntryConflict {
-                            path: path.clone(),
-                            site: clash.site,
-                            first,
-                            second: input,
-                            left: clash.left,
-                            right: clash.right,
-                        }));
-                    })?;
+                    let union = union_files(kept, file)
+                        .map_err(|clash| return clash.conflict(path.clone(), first, input))?;
                     (first, union)
                 }
             });

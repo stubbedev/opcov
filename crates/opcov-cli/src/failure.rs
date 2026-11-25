@@ -3,6 +3,8 @@ use std::io;
 use std::path::Path;
 use std::process::ExitCode;
 
+use opcov_core::report::StreamMergeError;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Verdict {
     Clean,
@@ -44,6 +46,24 @@ impl Failure {
         return Self {
             severity: Severity::Failed,
             message,
+        };
+    }
+
+    pub(crate) const fn refused(message: String) -> Self {
+        return Self {
+            severity: Severity::Refused,
+            message,
+        };
+    }
+
+    pub(crate) fn merge(error: &StreamMergeError, names: &[impl fmt::Display]) -> Self {
+        return Self {
+            severity: if error.is_refusal() {
+                Severity::Refused
+            } else {
+                Severity::Failed
+            },
+            message: error.describe(names).to_string(),
         };
     }
 

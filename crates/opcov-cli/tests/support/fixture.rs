@@ -3,6 +3,7 @@
     reason = "pub(crate) is the intended visibility; the pub this lint suggests is denied by rustc unreachable_pub"
 )]
 
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -86,4 +87,80 @@ pub(crate) fn stdout(output: &Output) -> String {
 
 pub(crate) fn stderr(output: &Output) -> String {
     return String::from_utf8(output.stderr.clone()).unwrap();
+}
+
+fn lines(text: &str) -> Vec<&str> {
+    return text.split_inclusive('\n').collect();
+}
+
+fn diff_line(out: &mut String, sign: char, line: &str) {
+    out.push(sign);
+    if let Some(body) = line.strip_suffix('\n') {
+        out.push_str(body);
+        out.push('\n');
+    } else {
+        out.push_str(line);
+        out.push_str("\n\\ No newline at end of file\n");
+    }
+}
+
+pub(crate) fn unified(path: &str, old: Option<&str>, new: Option<&str>) -> String {
+    let (before, after) = (lines(old.unwrap_or("")), lines(new.unwrap_or("")));
+    let prefix = before
+        .iter()
+        .zip(&after)
+        .take_while(|(left, right)| return left == right)
+        .count();
+    let suffix = before[prefix..]
+        .iter()
+        .rev()
+        .zip(after[prefix..].iter().rev())
+        .take_while(|(left, right)| return left == right)
+        .count();
+    let removed = &before[prefix..before.len().saturating_sub(suffix)];
+    let added = &after[prefix..after.len().saturating_sub(suffix)];
+    let start = |count: usize| {
+        return if count == 0 {
+            prefix
+        } else {
+            prefix.saturating_add(1)
+        };
+    };
+    let (minus, plus) = (
+        old.map_or_else(
+            || return "/dev/null".to_owned(),
+            |_| return format!("a/{path}"),
+        ),
+        new.map_or_else(
+            || return "/dev/null".to_owned(),
+            |_| return format!("b/{path}"),
+        ),
+    );
+    let mut out = format!("diff --git a/{path} b/{path}\n");
+    if old.is_none() {
+        out.push_str("new file mode 100644\n");
+    }
+    if new.is_none() {
+        out.push_str("deleted file mode 100644\n");
+    }
+    writeln!(out, "--- {minus}\n+++ {plus}").unwrap();
+    if removed.is_empty() && added.is_empty() {
+        return out;
+    }
+    writeln!(
+        out,
+        "@@ -{},{} +{},{} @@",
+        start(removed.len()),
+        removed.len(),
+        start(added.len()),
+        added.len()
+    )
+    .unwrap();
+    for line in removed {
+        diff_line(&mut out, '-', line);
+    }
+    for line in added {
+        diff_line(&mut out, '+', line);
+    }
+    return out;
 }

@@ -24,6 +24,7 @@ mod impact;
 mod output;
 mod source;
 mod spool;
+mod stitch;
 mod stream;
 mod view;
 mod xml;
@@ -52,6 +53,10 @@ enum Command {
         about = "Choose the tests a change can affect from a baseline report, and show the baseline coverage of the changed functions"
     )]
     Impact(ImpactArgs),
+    #[command(
+        about = "Lay a run of the tests a change reaches over a baseline report, giving the report of a run of every test"
+    )]
+    Stitch(StitchArgs),
     #[command(
         about = "Check that PHP can collect coverage with opcov, or with --report diagnose a report"
     )]
@@ -181,8 +186,50 @@ struct ImpactArgs {
         help = "File or directory, relative to the base, whose changes cannot affect a test (repeatable)"
     )]
     ignore: Vec<PathBuf>,
+    #[arg(
+        long,
+        help = "Also select every test that ran a changed file, as `opcov stitch` needs"
+    )]
+    whole_files: bool,
     #[arg(long, value_enum, default_value_t = ImpactFormat::Text, help = "Output format: text, json, or a PHPUnit/Pest --filter expression")]
     format: ImpactFormat,
+}
+
+#[derive(Debug, Args)]
+struct StitchArgs {
+    #[arg(
+        long,
+        value_name = "REPORT",
+        help = "Baseline report: a run of every test on the commit the diff starts from"
+    )]
+    baseline: PathBuf,
+    #[arg(
+        long,
+        value_name = "REPORT",
+        help = "Report of the working tree's run of the tests `opcov impact --whole-files` selects"
+    )]
+    partial: PathBuf,
+    #[arg(
+        long,
+        value_name = "DIFF",
+        help = "Unified diff from the baseline's commit to the working tree (`git diff -U0 <commit>`), or `-` for standard input"
+    )]
+    diff: PathBuf,
+    #[command(flatten)]
+    location: Location,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "File or directory, relative to the base, whose changes cannot affect a test (repeatable)"
+    )]
+    ignore: Vec<PathBuf>,
+    #[arg(
+        short = 'o',
+        long = "output",
+        value_name = "OUT",
+        help = "Stitched report to write"
+    )]
+    output: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -216,16 +263,7 @@ fn merge(args: &MergeArgs) -> Result<Verdict, Failure> {
             |path| return File::open(path).map(BufReader::new),
             out,
         )
-        .map_err(|error| {
-            return Failure {
-                severity: if error.is_refusal() {
-                    Severity::Refused
-                } else {
-                    Severity::Failed
-                },
-                message: error.describe(&names).to_string(),
-            };
-        });
+        .map_err(|error| return Failure::merge(&error, &names));
     })?;
     return Ok(Verdict::Clean);
 }
@@ -319,7 +357,12 @@ fn impact_report(args: &ImpactArgs) -> Result<Verdict, Failure> {
     let header = stream::header(&args.report)?;
     let patch = read_patch(&args.diff, args.location.strip)?;
     let base = args.location.base()?;
-    let result = impact::evaluate(&args.report, &header, &patch, &base, &args.ignore)?;
+    let scope = if args.whole_files {
+        impact::Scope::Files
+    } else {
+        impact::Scope::Functions
+    };
+    let result = impact::evaluate(&args.report, &header, &patch, &base, &args.ignore, scope)?;
     match args.format {
         ImpactFormat::Text => emit_result(
             OutputFormat::Text,
@@ -336,6 +379,21 @@ fn impact_report(args: &ImpactArgs) -> Result<Verdict, Failure> {
         ImpactFormat::Filter => return emit_filter(&result),
     }
     return Ok(result.verdict());
+}
+
+fn stitch_report(args: &StitchArgs) -> Result<Verdict, Failure> {
+    let patch = read_patch(&args.diff, args.location.strip)?;
+    let base = args.location.base()?;
+    return stitch::run(
+        &stitch::Inputs {
+            baseline: &args.baseline,
+            partial: &args.partial,
+            output: &args.output,
+            base: &base,
+            ignore: &args.ignore,
+        },
+        &patch,
+    );
 }
 
 fn emit_filter(result: &impact::ImpactResult<'_>) -> Result<Verdict, Failure> {
@@ -416,6 +474,7 @@ fn main() -> ExitCode {
         Command::Convert(args) => convert_report(args),
         Command::Gate(args) => gate_report(args),
         Command::Impact(args) => impact_report(args),
+        Command::Stitch(args) => stitch_report(args),
         Command::Doctor(args) => doctor(args),
     };
     return match result {

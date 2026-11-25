@@ -132,13 +132,31 @@ fn prefetch<R: Read>(
     }
 }
 
-struct StreamSource {
+pub(super) struct StreamSource {
     input: InputId,
     entries: Receiver<Prefetched>,
     head: Option<(SourcePath, FileCoverage)>,
 }
 
 impl StreamSource {
+    pub(super) fn start<'s, 'p: 's, R: Read + Send + 's>(
+        scope: &'s thread::Scope<'s, 'p>,
+        input: InputId,
+        reader: ReportReader<R>,
+        paths: &'p PathBase,
+        remap: &'p Remap,
+    ) -> Result<Self, StreamMergeError> {
+        let (sender, entries) = mpsc::sync_channel(PREFETCH);
+        scope.spawn(move || prefetch(reader, paths, remap, &sender));
+        let mut source = Self {
+            input,
+            entries,
+            head: None,
+        };
+        source.advance()?;
+        return Ok(source);
+    }
+
     fn advance(&mut self) -> Result<(), StreamMergeError> {
         let input = self.input;
         self.head = match self.entries.recv() {
@@ -201,15 +219,13 @@ where
     thread::scope(|scope| {
         let mut sources = Vec::with_capacity(readers.len());
         for ((position, reader), remap) in readers.into_iter().enumerate().zip(&remaps) {
-            let (sender, entries) = mpsc::sync_channel(PREFETCH);
-            scope.spawn(move || prefetch(reader, paths, remap, &sender));
-            let mut source = StreamSource {
-                input: InputId::new(position),
-                entries,
-                head: None,
-            };
-            source.advance()?;
-            sources.push(source);
+            sources.push(StreamSource::start(
+                scope,
+                InputId::new(position),
+                reader,
+                paths,
+                remap,
+            )?);
         }
         return merge_entries(&mut sources, |path, file| {
             return writer.entry(&path, &file).map_err(StreamMergeError::Write);

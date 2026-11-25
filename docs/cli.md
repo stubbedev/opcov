@@ -9,15 +9,16 @@ and merges, converts and checks it. Every subcommand prints `--help`.
 | `opcov convert` | Write a report as lcov, Clover XML, Cobertura XML or HTML. |
 | `opcov gate` | Check the functions a change touches: uncovered lines, unseen outcomes, loops. |
 | `opcov impact` | From a baseline report, show the coverage of the functions a change touches and choose the tests that can reach them. |
+| `opcov stitch` | Lay a run of the tests a change reaches over the baseline report, giving the report a run of every test would give. |
 | `opcov doctor` | Check that a PHP binary can collect coverage with opcov, or with `--report` diagnose a report: outcomes that match no source construct. |
 
 ## Exit codes
 
-| Code | `merge` | `convert` | `gate` | `impact` | `doctor` | `doctor --report` |
-|---|---|---|---|---|---|---|
-| 0 | merged | converted | pass: no findings | the selection bounds the change | PHP loads opcov and the probe self-test passed | every outcome that counts toward verdicts has a source construct |
-| 1 | refused: the inputs do not merge (mismatching generator, settings, paths, file hash or model) | (not used) | findings | run every test: a change the baseline cannot bound | problems found | findings |
-| 2 | could not run | could not run | could not run | could not run, or the baseline is not of the diff's base | could not run | could not run |
+| Code | `merge` | `convert` | `gate` | `impact` | `stitch` | `doctor` | `doctor --report` |
+|---|---|---|---|---|---|---|---|
+| 0 | merged | converted | pass: no findings | the selection bounds the change | stitched | PHP loads opcov and the probe self-test passed | every outcome that counts toward verdicts has a source construct |
+| 1 | refused: the inputs do not merge (mismatching generator, settings, paths, file hash or model) | (not used) | findings | run every test: a change the baseline cannot bound | refused: a change the baseline cannot bound, a selected test the partial run lacks, or reports that do not merge | problems found | findings |
+| 2 | could not run | could not run | could not run | could not run, or the baseline is not of the diff's base | could not run, the baseline is not of the diff's base, or the partial report is not of the working tree | could not run | could not run |
 
 "Could not run" covers usage errors, unreadable or invalid reports, missing or
 unreadable inputs, a source file whose SHA-256 differs from the report's, a
@@ -371,6 +372,7 @@ to the working tree.
 | `--strip <N>` | Leading path components to remove from diff paths, as for `gate` (default 1). |
 | `--base <DIR>` | The directory changed paths are relative to, as for `gate`. |
 | `--ignore <PATH>` | A file or directory, relative to the base, whose changes cannot affect a test, such as `docs` or `README.md`. Repeatable. |
+| `--whole-files` | Also select every test that ran a changed file, the selection [`stitch`](#opcov-stitch) needs. |
 | `--format <text\|json\|filter>` | Output format (default `text`). `filter` prints a PHPUnit/Pest `--filter` expression for the selection. |
 
 ### Why tests can be skipped
@@ -428,7 +430,8 @@ last line is the verdict: `impact: run N test(s) and M test class(es)`, or
 `classes` (test classes to run whole) and `changes`, one entry per changed
 file with `old`, `new` and an `effect` (`functions`, `whole_file`,
 `test_classes`, `new_file`, `never_loaded`, `ignored`, `unbounded`) with its
-details.
+details. With `--whole-files`, a change whose file is in the baseline also has
+`file_tests`, the tests that ran the file, and they are part of `tests`.
 
 `--format filter` prints a regular expression for PHPUnit's and Pest's
 `--filter`, one alternative per class: the selected methods with every data
@@ -437,6 +440,71 @@ and for an unbounded change it prints nothing, writes the text output to
 standard error and exits 1. Tests whose ids are not `Class::method` (`.phpt`
 tests) cannot be selected by `--filter`; when the selection holds one, the
 filter format exits 1 as well.
+
+## `opcov stitch`
+
+```sh
+git diff -U0 "$BASELINE_COMMIT" > branch.diff
+vendor/bin/opcov-phpunit vendor/bin/phpunit --filter "$(opcov impact --report baseline.json --diff branch.diff --whole-files --format filter)"
+opcov stitch --baseline baseline.json --partial build/opcov.json --diff branch.diff -o branch.json
+```
+
+`stitch` writes the report a run of every test on the working tree would
+write, from the baseline and a run of only the tests `impact --whole-files`
+selects. The result serves everything a full report does: `convert`, coverage
+totals, `gate`, and the baseline of the next change.
+
+| Option | Meaning |
+|---|---|
+| `--baseline <REPORT>` | The baseline report: a run of every test on the commit the diff starts from. |
+| `--partial <REPORT>` | The working tree's run of the selected tests. |
+| `--diff <DIFF>`, `--strip <N>`, `--base <DIR>`, `--ignore <PATH>` | As for [`impact`](#opcov-impact). |
+| `-o, --output <OUT>` | The stitched report to write. |
+
+### Why the result is exact
+
+A test that is not rerun never entered a changed function, so on the branch
+it runs what it ran on the base ([Why tests can be skipped](#why-tests-can-be-skipped)):
+its baseline hits are its branch hits. In unchanged files they sit at the same
+lines, outcomes and loops; in a changed file they do not, since lines, spans
+and outcome ids move. `--whole-files` therefore also selects every test that
+ran a changed file, so no test that stays in the baseline has a hit in one.
+
+The stitched report holds:
+
+- **The test table:** the baseline's tests that were not rerun, and the partial
+  run's tests. Rerun tests and the tests of selected classes leave the
+  baseline, so a test the branch removed is gone.
+- **Changed and new files:** the partial run's entry. A changed file that no
+  rerun test loaded has no entry.
+- **Unchanged files:** the baseline's entry without the rerun tests' hits,
+  united with the partial run's entry. An unchanged file keeps its entry when
+  only rerun tests loaded it and they no longer do; it then shows as
+  uncovered.
+
+### What it refuses
+
+`stitch` evaluates the change like `impact --whole-files`, including the
+baseline checks, and refuses rather than guesses:
+
+- **A change the baseline cannot bound** (exit 1). Only a run of every test
+  measures it.
+- **A selected test missing from the partial report** (exit 1). The partial
+  run was not the selection's run.
+- **A baseline test with a hit in a changed file that is not rerun** (exit 1).
+- **An unchanged file with another SHA-256 in the partial report** (exit 1).
+- **Headers that differ** (exit 1): generator, settings or paths.
+- **A baseline that is not of the diff's base** (exit 2).
+- **A partial report whose files differ from the working tree** (exit 2).
+
+Selected test classes are not checked against the partial report, since a
+class the branch deleted has no tests to run. The partial report must
+therefore be the run of the selection's filter, or a superset of it: extra
+tests in the partial report replace their baseline data too.
+
+The result assumes tests do not depend on what earlier tests left behind. A
+test that only ran code memoised by an earlier rerun test, or that loaded a
+file first, keeps the baseline's attribution of that code.
 
 ## `opcov doctor`
 

@@ -11,6 +11,15 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+### Added
+
+- `opcov stitch` lays a run of the tests a change reaches over the baseline
+  report and writes the report a run of every test on the branch would write.
+  `opcov impact --whole-files` selects the tests it needs: also those that ran
+  a changed file. It refuses unbounded changes, a partial run without a
+  selected test, a baseline test left with hits in a changed file, and reports
+  of another tree.
+
 ## [0.1.2] - 2026-11-25
 
 ### Added

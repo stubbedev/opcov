@@ -106,6 +106,14 @@ pub(crate) struct ChangeImpact<'r> {
     new: Option<String>,
     #[serde(flatten)]
     effect: Effect<'r>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_tests: Option<Vec<&'r str>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Scope {
+    Functions,
+    Files,
 }
 
 #[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -121,13 +129,52 @@ pub(crate) struct ImpactResult<'r> {
     tests: Vec<&'r str>,
     classes: Vec<String>,
     changes: Vec<ChangeImpact<'r>>,
+    #[serde(skip)]
+    touched: BTreeSet<SourcePath>,
 }
 
-impl ImpactResult<'_> {
+impl<'r> ImpactResult<'r> {
     pub(crate) const fn verdict(&self) -> Verdict {
         return match self.verdict {
             VerdictName::Bounded => Verdict::Clean,
             VerdictName::Unbounded => Verdict::Findings,
+        };
+    }
+
+    pub(crate) fn tests(&self) -> &[&'r str] {
+        return &self.tests;
+    }
+
+    pub(crate) fn selects(&self, test: &str) -> bool {
+        return self.tests.binary_search(&test).is_ok()
+            || test_class(test).is_some_and(|class| {
+                return self
+                    .classes
+                    .iter()
+                    .any(|selected| return selected.eq_ignore_ascii_case(&class));
+            });
+    }
+
+    pub(crate) const fn touched(&self) -> &BTreeSet<SourcePath> {
+        return &self.touched;
+    }
+
+    pub(crate) fn unbounded(&self) -> impl Iterator<Item = String> + '_ {
+        return self.changes.iter().filter_map(|change| {
+            let Effect::Unbounded { reason } = &change.effect else {
+                return None;
+            };
+            return Some(format!("{}: {reason}", change.path()));
+        });
+    }
+}
+
+impl ChangeImpact<'_> {
+    fn path(&self) -> String {
+        return match (&self.old, &self.new) {
+            (Some(old), Some(new)) if old != new => format!("{old} -> {new}"),
+            (_, Some(path)) | (Some(path), None) => path.clone(),
+            (None, None) => String::new(),
         };
     }
 }
@@ -224,7 +271,8 @@ enum Planned<'p> {
 
 struct Plan<'p> {
     measured: BTreeMap<SourcePath, Measured<'p>>,
-    touched: BTreeSet<SourcePath>,
+    touched: BTreeMap<SourcePath, usize>,
+    scope: Scope,
 }
 
 fn is_php(path: &Path) -> bool {
@@ -344,21 +392,10 @@ impl Context<'_> {
 }
 
 fn file_tests(file: &FileCoverage) -> BTreeSet<TestIndex> {
-    let mut tests = BTreeSet::new();
-    let mut add = |hits: &HitSet| tests.extend(hits.as_slice().iter().copied());
-    file.lines.values().for_each(&mut add);
-    for function in file.functions.values() {
-        for outcome in function.outcomes.as_slice() {
-            add(outcome.hits());
-        }
-        for looped in function.loops.as_slice() {
-            if let Some(zero) = looped.zero() {
-                add(zero);
-            }
-            add(looped.second());
-        }
-    }
-    return tests;
+    return file
+        .hit_sets()
+        .flat_map(|hits| return hits.as_slice().iter().copied())
+        .collect();
 }
 
 fn names<'r>(header: &'r Header, tests: &BTreeSet<TestIndex>) -> Vec<&'r str> {
@@ -453,7 +490,11 @@ fn measured_effect<'r>(
 }
 
 enum Checked<'r> {
-    Measured { index: usize, effect: Effect<'r> },
+    Changed {
+        index: usize,
+        effect: Option<Effect<'r>>,
+        file_tests: Option<Vec<&'r str>>,
+    },
     Fresh,
     Stale(String),
 }
@@ -464,6 +505,9 @@ fn check_entry<'r>(
     path: &SourcePath,
     file: &FileCoverage,
 ) -> Result<Checked<'r>, Failure> {
+    let file_tests = || {
+        return (plan.scope == Scope::Files).then(|| return names(header, &file_tests(file)));
+    };
     if let Some(measured) = plan.measured.get(path) {
         if measured.base_sha != file.sha256 {
             return Ok(Checked::Stale(format!(
@@ -471,13 +515,18 @@ fn check_entry<'r>(
                 measured.base_sha, file.sha256
             )));
         }
-        return Ok(Checked::Measured {
+        return Ok(Checked::Changed {
             index: measured.index,
-            effect: measured_effect(header, measured, file),
+            effect: Some(measured_effect(header, measured, file)),
+            file_tests: file_tests(),
         });
     }
-    if plan.touched.contains(path) {
-        return Ok(Checked::Fresh);
+    if let Some(index) = plan.touched.get(path) {
+        return Ok(Checked::Changed {
+            index: *index,
+            effect: None,
+            file_tests: file_tests(),
+        });
     }
     let disk = header.paths.disk_path(path);
     return match fs::read(&disk) {
@@ -518,6 +567,7 @@ pub(crate) fn evaluate<'r>(
     patch: &crate::changes::Patch,
     base: &Path,
     ignore: &[PathBuf],
+    scope: Scope,
 ) -> Result<ImpactResult<'r>, Failure> {
     let ignore: Vec<PathBuf> = ignore
         .iter()
@@ -537,13 +587,15 @@ pub(crate) fn evaluate<'r>(
     let files = patch.files();
     let mut plan = Plan {
         measured: BTreeMap::new(),
-        touched: BTreeSet::new(),
+        touched: BTreeMap::new(),
+        scope,
     };
     let mut effects: Vec<Option<Effect<'r>>> = Vec::with_capacity(files.len());
     for (index, file) in files.iter().enumerate() {
         let names = || return file.old.iter().chain(file.new.iter());
-        plan.touched
-            .extend(names().filter_map(|path| return resolve(&header.paths, base, path)));
+        for path in names().filter_map(|path| return resolve(&header.paths, base, path)) {
+            plan.touched.entry(path).or_insert(index);
+        }
         if names().any(|path| return ignored(&ignore, base, path)) {
             effects.push(Some(Effect::Ignored));
             continue;
@@ -558,6 +610,7 @@ pub(crate) fn evaluate<'r>(
     }
     let mut stale = Vec::new();
     let mut found = BTreeSet::new();
+    let mut whole: Vec<Option<Vec<&'r str>>> = files.iter().map(|_| return None).collect();
     stream::entries(
         report,
         header,
@@ -568,10 +621,19 @@ pub(crate) fn evaluate<'r>(
         },
         &mut |(path, checked)| {
             match checked {
-                Checked::Measured { index, effect } => {
-                    found.insert(path);
-                    if let Some(slot) = effects.get_mut(index) {
-                        *slot = Some(effect);
+                Checked::Changed {
+                    index,
+                    effect,
+                    file_tests,
+                } => {
+                    if let Some(effect) = effect {
+                        found.insert(path);
+                        if let Some(slot) = effects.get_mut(index) {
+                            *slot = Some(effect);
+                        }
+                    }
+                    if let (Some(tests), Some(slot)) = (file_tests, whole.get_mut(index)) {
+                        slot.get_or_insert_with(Vec::new).extend(tests);
                     }
                 }
                 Checked::Fresh => {}
@@ -592,18 +654,21 @@ pub(crate) fn evaluate<'r>(
             *slot = Some(effect);
         }
     }
-    return aggregate(files, effects);
+    let mut result = aggregate(files, effects, whole)?;
+    result.touched = plan.touched.into_keys().collect();
+    return Ok(result);
 }
 
 fn aggregate<'r>(
     files: &[FilePatch],
     effects: Vec<Option<Effect<'r>>>,
+    whole: Vec<Option<Vec<&'r str>>>,
 ) -> Result<ImpactResult<'r>, Failure> {
     let mut changes = Vec::with_capacity(effects.len());
     let mut tests = BTreeSet::new();
     let mut classes = BTreeSet::new();
     let mut verdict = VerdictName::Bounded;
-    for (file, effect) in files.iter().zip(effects) {
+    for ((file, effect), file_tests) in files.iter().zip(effects).zip(whole) {
         let (old, new) = (display(file.old.as_ref()), display(file.new.as_ref()));
         let effect = effect.ok_or_else(|| {
             return Failure::failed(format!(
@@ -624,7 +689,18 @@ fn aggregate<'r>(
             Effect::NeverLoaded | Effect::Ignored => {}
             Effect::Unbounded { .. } => verdict = VerdictName::Unbounded,
         }
-        changes.push(ChangeImpact { old, new, effect });
+        let file_tests = file_tests.map(|mut named| {
+            named.sort_unstable();
+            named.dedup();
+            tests.extend(named.iter().copied());
+            return named;
+        });
+        changes.push(ChangeImpact {
+            old,
+            new,
+            effect,
+            file_tests,
+        });
     }
     let lowered: BTreeSet<String> = classes
         .iter()
@@ -638,17 +714,25 @@ fn aggregate<'r>(
         tests: tests.into_iter().collect(),
         classes: classes.into_iter().collect(),
         changes,
+        touched: BTreeSet::new(),
     });
 }
 
 fn render_change(out: &mut dyn Write, change: &ChangeImpact<'_>) -> io::Result<()> {
-    let path = match (&change.old, &change.new) {
-        (Some(old), Some(new)) if old != new => format!("{old} -> {new}"),
-        (_, Some(path)) | (Some(path), None) => path.clone(),
-        (None, None) => String::new(),
-    };
-    writeln!(out, "{path}")?;
-    return match &change.effect {
+    writeln!(out, "{}", change.path())?;
+    render_effect(out, &change.effect)?;
+    if let Some(tests) = &change.file_tests {
+        writeln!(
+            out,
+            "  whole file: {} test(s) ran it in the baseline",
+            tests.len()
+        )?;
+    }
+    return Ok(());
+}
+
+fn render_effect(out: &mut dyn Write, effect: &Effect<'_>) -> io::Result<()> {
+    return match effect {
         Effect::Functions { functions } if functions.is_empty() => {
             writeln!(out, "  no function changed: only comments and whitespace")
         }
