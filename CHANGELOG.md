@@ -19,6 +19,9 @@ as the release notes, and refuses to release a version that has no section here.
   model events and console commands. The hooks come from the code itself:
   observers, `static::<event>()` closures, `$dispatchesEvents` and command
   names, so a request names only the changed members.
+  - **Diffs and depth:** `--diff` takes the changed members from a diff,
+    `--depth` follows the call graph level by level, and `--format files`
+    lists the consumers for `opcov gate --files @-`.
   - **Laravel:** the types Laravel resolves at runtime are declared to the
     analyzer: model builders and static forwarding, scopes, dynamic wheres,
     relation properties, facades and root aliases.

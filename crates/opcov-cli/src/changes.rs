@@ -32,6 +32,14 @@ impl LineRange {
         };
     }
 
+    pub(crate) const fn first(self) -> Line {
+        return self.first;
+    }
+
+    pub(crate) const fn last(self) -> Line {
+        return self.last;
+    }
+
     pub(crate) fn lines(self) -> impl Iterator<Item = Line> {
         return (self.first.get()..=self.last.get()).filter_map(Line::new);
     }

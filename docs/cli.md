@@ -244,7 +244,7 @@ opcov gate --report out.json --files app/Foo.php:10-20,31 app/Bar.php
 | `--files <ENTRY>...` | Changed files as `path[:start-end[,start-end...]]`, or `@listfile` with one entry per line; `@-` reads the list from standard input. A bare path means the whole file; `:N` means line `N`. |
 | `--strip <N>` | Leading path components to remove from diff paths, as `patch -p` (default 1, which removes git's `a/` and `b/`). |
 | `--base <DIR>` | The directory changed paths are relative to (default: the current directory). They are resolved lexically against it and then made relative to the report's `paths.root`. |
-| `--format <text\|json>` | Output format (default `text`). |
+| `--format <text\|json\|files>` | Output format (default `text`). `files` prints one `path:first-last` per consumer, for `opcov gate --files @-`. |
 
 Exactly one of `--diff` and `--files` is required.
 
@@ -510,8 +510,9 @@ file first, keeps the baseline's attribution of that code.
 ## `opcov consumers`
 
 ```sh
+git diff -U0 origin/main... | opcov consumers --diff - --depth 2 --path app
 opcov consumers --target 'method App\Actions\Publish::handle' --path app
-opcov consumers --request request.json --format json
+opcov consumers --diff branch.diff --depth 2 --path app --format files | opcov gate --report build/opcov.json --files @-
 ```
 
 `consumers` finds the code that uses changed members of a PHP project, so the
@@ -525,7 +526,10 @@ running PHP.
 | `--target <TARGET>` | A member to find the uses of (repeatable): `method Class::name`, `constant Class::NAME` (enum cases too), `property Class::name`, `function name` or `global-constant NAME`. |
 | `--request <FILE>` | A JSON request, or `-` for standard input (see below). |
 | `--path <PATH>` | Search only this directory or file, relative to the root (repeatable). The default is every source the root `composer.json` autoloads. |
-| `--format <text\|json>` | Output format (default `text`). |
+| `--diff <DIFF>` | A unified diff of the change, relative to the root (`git diff -U0`), or `-` for standard input. The members it changes are targets. |
+| `--strip <N>` | Leading path components to remove from diff paths (default 1, which removes git's `a/` and `b/`). |
+| `--depth <N>` | Call-graph levels to follow (default 1). At depth 2, the code that uses the consumers is found too. |
+| `--format <text\|json\|files>` | Output format (default `text`). `files` prints one `path:first-last` per consumer, for `opcov gate --files @-`. |
 
 ### Which code is indexed
 
@@ -591,11 +595,28 @@ needs to the analyzer, so chains keep their types instead of becoming `mixed`:
 
 `targets` is required. `within` limits the search like `--path`.
 
+### Changed members and depth
+
+A member is changed when a changed line falls inside it, or when lines were
+deleted inside it. Members are methods, functions, class constants, enum
+cases, properties (including promoted constructor parameters) and global
+constants. Members of anonymous classes are not members of their own: their
+lines belong to the enclosing function.
+
+Each use belongs to its consumer: the innermost method or function around
+it, or the line itself for code outside any function. A use in a trait that
+the using class decides (`<target> via <class>`) belongs to that class's
+copy of the trait method, so the next level looks for the callers of
+`<class>::<method>`. Each level searches for the consumers the previous level
+found, until `--depth` levels or no new consumer.
+
 ### Output
 
-The text output lists one use per line, `path:line<TAB>target`, sorted by
-path and line, then a count. `--format json` writes
-`{"uses": [{"path", "line", "target"}]}`.
+The text output lists the changed members and then the consumers, each as
+`path:first-last`, the member, its depth and the targets it uses, then a
+summary. `--format json` writes
+`{"changed": [{"path", "first", "last", "target"}], "consumers": [{"depth", "path", "first", "last", "member", "uses"}], "analysed", "index"}`;
+`member` is null for code outside any function.
 
 ## `opcov doctor`
 
@@ -610,7 +631,7 @@ opcov doctor --report out.json --format json
 |---|---|
 | `--php <BINARY>` | The PHP binary to check (default `php` from `PATH`). Not with `--report`. |
 | `--report <REPORT>` | The opcov report to diagnose instead of checking PHP. |
-| `--format <text\|json>` | Output format (default `text`). |
+| `--format <text\|json\|files>` | Output format (default `text`). `files` prints one `path:first-last` per consumer, for `opcov gate --files @-`. |
 
 ### Environment self-test
 

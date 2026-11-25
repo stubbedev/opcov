@@ -130,3 +130,95 @@ mod consumers {
         );
     }
 }
+
+#[cfg(test)]
+mod tree {
+    use std::path::Path;
+    use std::sync::OnceLock;
+
+    use opcov_php::{Changed, FileChange, Index, Project};
+
+    fn index() -> &'static Index {
+        static INDEX: OnceLock<Index> = OnceLock::new();
+        return INDEX.get_or_init(|| {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/project");
+            return Index::build(&Project::open(&root).unwrap()).unwrap();
+        });
+    }
+
+    fn change(ranges: Vec<(u32, u32)>, deletions: Vec<u32>) -> Vec<FileChange> {
+        return vec![FileChange {
+            path: "app/Actions/Runs.php".to_owned(),
+            changed: Changed::Parts { ranges, deletions },
+        }];
+    }
+
+    fn changed(ranges: Vec<(u32, u32)>, deletions: Vec<u32>) -> Vec<String> {
+        return index()
+            .changed_members(&change(ranges, deletions))
+            .into_iter()
+            .map(|member| {
+                return format!(
+                    "{}:{}-{} {}",
+                    member.path, member.first, member.last, member.target
+                );
+            })
+            .collect();
+    }
+
+    #[test]
+    fn a_change_names_the_members_it_touches() {
+        assert_eq!(
+            changed(vec![(18, 18)], vec![]),
+            ["app/Actions/Runs.php:17-19 method App\\Actions\\Publish::handle"],
+            "a line inside the method"
+        );
+        assert_eq!(
+            changed(vec![], vec![18]),
+            ["app/Actions/Runs.php:17-19 method App\\Actions\\Publish::handle"],
+            "lines deleted inside the method"
+        );
+        assert!(
+            changed(vec![], vec![17]).is_empty(),
+            "lines deleted before the method's first line are outside it"
+        );
+        assert_eq!(
+            changed(vec![(9, 18)], vec![]),
+            [
+                "app/Actions/Runs.php:7-10 method App\\Actions\\Runs::run",
+                "app/Actions/Runs.php:17-19 method App\\Actions\\Publish::handle"
+            ],
+            "a range across two members"
+        );
+    }
+
+    #[test]
+    fn consumers_follow_the_call_graph_through_trait_copies() {
+        let members = index().changed_members(&change(vec![(18, 18)], vec![]));
+        let tree = index().consumers(members, &[], &[], 2);
+        let consumers: Vec<String> = tree
+            .consumers
+            .iter()
+            .map(|consumer| {
+                let uses: Vec<&str> = consumer.uses.iter().map(String::as_str).collect();
+                return format!(
+                    "{} {}:{}-{} {} uses {}",
+                    consumer.depth,
+                    consumer.path,
+                    consumer.first,
+                    consumer.last,
+                    consumer.member.as_deref().unwrap_or("-"),
+                    uses.join(", ")
+                );
+            })
+            .collect();
+        assert_eq!(
+            consumers,
+            [
+                "1 app/Actions/Runs.php:7-10 method App\\Actions\\Publish::run uses method App\\Actions\\Publish::handle via App\\Actions\\Publish",
+                "2 app/Uses/Framework.php:13-22 method App\\Uses\\Framework::run uses method App\\Actions\\Publish::run",
+            ],
+            "the trait's run is Publish's copy, and its caller is the next level"
+        );
+    }
+}

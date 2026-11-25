@@ -263,8 +263,40 @@ struct ConsumersArgs {
         help = "Search only this directory or file, relative to the root (repeatable) [default: every autoloaded project source]"
     )]
     path: Vec<String>,
-    #[arg(long, value_enum, default_value_t = OutputFormat::Text, help = "Output format")]
-    format: OutputFormat,
+    #[arg(
+        long,
+        value_name = "DIFF",
+        help = "Unified diff of the change, relative to the root (`git diff -U0`), or `-` for standard input: its changed members are targets"
+    )]
+    diff: Option<PathBuf>,
+    #[arg(
+        long,
+        value_name = "N",
+        default_value_t = 1,
+        help = "Leading path components to strip from diff paths (1 removes git's `a/` and `b/`)"
+    )]
+    strip: usize,
+    #[arg(
+        long,
+        value_name = "N",
+        default_value_t = 1,
+        help = "Call-graph levels to follow: 1 finds the code that uses the targets, 2 also the code that uses those consumers"
+    )]
+    depth: u32,
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = ConsumersFormat::Text,
+        help = "Output format: text, json, or files (one `path:first-last` per consumer, for `opcov gate --files @-`)"
+    )]
+    format: ConsumersFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ConsumersFormat {
+    Text,
+    Json,
+    Files,
 }
 
 #[derive(Debug, Args)]
@@ -440,14 +472,32 @@ fn consumers_report(args: &ConsumersArgs) -> Result<Verdict, Failure> {
     };
     let json = args.request.as_deref().map(read_input).transpose()?;
     let source = args.request.as_deref().map_or_else(String::new, describe);
-    let request = consumers::request(json.as_deref(), &args.target, &args.path, &source)?;
-    let found = consumers::find(&root, &request)?;
-    emit_result(
-        args.format,
-        &found,
-        consumers::render_text,
-        consumers::render_json,
+    let changes = args
+        .diff
+        .as_deref()
+        .map(|diff| return read_patch(diff, args.strip))
+        .transpose()?
+        .map(|patch| return consumers::changes(&ChangeSet::of_patch(&patch)));
+    let request = consumers::request(
+        json.as_deref(),
+        &args.target,
+        &args.path,
+        changes.is_some(),
+        &source,
     )?;
+    let found = consumers::find(
+        &root,
+        &request,
+        changes.as_deref().unwrap_or_default(),
+        args.depth,
+    )?;
+    write_stdout(|out| {
+        return match args.format {
+            ConsumersFormat::Text => consumers::render_text(out, &found),
+            ConsumersFormat::Json => consumers::render_json(out, &found),
+            ConsumersFormat::Files => consumers::render_files(out, &found),
+        };
+    })?;
     return Ok(Verdict::Clean);
 }
 
