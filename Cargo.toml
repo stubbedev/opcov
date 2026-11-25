@@ -11,6 +11,7 @@ publish = false
 
 [workspace.dependencies]
 opcov-core = { path = "crates/opcov-core" }
+opcov-php = { path = "crates/opcov-php" }
 opcov-sys = { path = "crates/opcov-sys" }
 opcov-syntax = { path = "crates/opcov-syntax" }
 bindgen = { version = "0.73.2", default-features = false, features = [

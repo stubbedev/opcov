@@ -1,0 +1,26 @@
+#![forbid(unsafe_code)]
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "rustc's unreachable_pub, which the workspace denies, requires pub(crate) in private modules"
+)]
+#![expect(
+    clippy::missing_errors_doc,
+    reason = "error conditions are carried by the precise error types, and the source has no comments"
+)]
+
+mod analysis;
+mod consumers;
+mod index;
+mod laravel;
+mod matching;
+mod project;
+mod references;
+mod sites;
+mod syntax;
+mod target;
+mod types;
+
+pub use consumers::Use;
+pub use index::{Index, IndexStats};
+pub use project::{Project, ProjectError};
+pub use target::{Command, Kind, ModelEvent, Request, Target, TargetError};

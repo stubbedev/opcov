@@ -11,6 +11,18 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+### Added
+
+- `opcov consumers` finds the code that uses changed PHP members in process
+  with mago, without running PHP. A use is matched by the receiver's type,
+  including the code the framework calls: queued jobs, event subscribers,
+  model events and console commands.
+  - **Laravel:** the types Laravel resolves at runtime are declared to the
+    analyzer: model builders and static forwarding, scopes, dynamic wheres,
+    relation properties, facades and root aliases.
+  - **Indexing:** only the vendor code the project reaches through Composer's
+    autoload maps is indexed.
+
 ### Fixed
 
 - `opcov\get_debug_info()` keys the functions of `eval()`'d code by the

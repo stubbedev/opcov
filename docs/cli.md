@@ -10,15 +10,16 @@ and merges, converts and checks it. Every subcommand prints `--help`.
 | `opcov gate` | Check the functions a change touches: uncovered lines, unseen outcomes, loops. |
 | `opcov impact` | From a baseline report, show the coverage of the functions a change touches and choose the tests that can reach them. |
 | `opcov stitch` | Lay a run of the tests a change reaches over the baseline report, giving the report a run of every test would give. |
+| `opcov consumers` | Find the code that uses changed PHP members, including the code the framework calls. |
 | `opcov doctor` | Check that a PHP binary can collect coverage with opcov, or with `--report` diagnose a report: outcomes that match no source construct. |
 
 ## Exit codes
 
-| Code | `merge` | `convert` | `gate` | `impact` | `stitch` | `doctor` | `doctor --report` |
-|---|---|---|---|---|---|---|---|
-| 0 | merged | converted | pass: no findings | the selection bounds the change | stitched | PHP loads opcov and the probe self-test passed | every outcome that counts toward verdicts has a source construct |
-| 1 | refused: the inputs do not merge (mismatching generator, settings, paths, file hash or model) | (not used) | findings | run every test: a change the baseline cannot bound | refused: a change the baseline cannot bound, a selected test the partial run lacks, or reports that do not merge | problems found | findings |
-| 2 | could not run | could not run | could not run | could not run, or the baseline is not of the diff's base | could not run, the baseline is not of the diff's base, or the partial report is not of the working tree | could not run | could not run |
+| Code | `merge` | `convert` | `gate` | `impact` | `stitch` | `consumers` | `doctor` | `doctor --report` |
+|---|---|---|---|---|---|---|---|---|
+| 0 | merged | converted | pass: no findings | the selection bounds the change | stitched | searched | PHP loads opcov and the probe self-test passed | every outcome that counts toward verdicts has a source construct |
+| 1 | refused: the inputs do not merge (mismatching generator, settings, paths, file hash or model) | (not used) | findings | run every test: a change the baseline cannot bound | refused: a change the baseline cannot bound, a selected test the partial run lacks, or reports that do not merge | (not used) | problems found | findings |
+| 2 | could not run | could not run | could not run | could not run, or the baseline is not of the diff's base | could not run, the baseline is not of the diff's base, or the partial report is not of the working tree | could not run: no targets, an invalid request, or no Composer autoload maps | could not run | could not run |
 
 "Could not run" covers usage errors, unreadable or invalid reports, missing or
 unreadable inputs, a source file whose SHA-256 differs from the report's, a
@@ -505,6 +506,102 @@ tests in the partial report replace their baseline data too.
 The result assumes tests do not depend on what earlier tests left behind. A
 test that only ran code memoised by an earlier rerun test, or that loaded a
 file first, keeps the baseline's attribution of that code.
+
+## `opcov consumers`
+
+```sh
+opcov consumers --target 'method App\Actions\Publish::handle' --path app
+opcov consumers --request request.json --format json
+```
+
+`consumers` finds the code that uses changed members of a PHP project, so the
+code that calls a change can be checked along with it. It analyses the project
+in process with [mago](https://github.com/carthage-software/mago), without
+running PHP.
+
+| Option | Meaning |
+|---|---|
+| `--root <DIR>` | The project root: the directory with `composer.json` and `vendor/` (default: the current directory). |
+| `--target <TARGET>` | A member to find the uses of (repeatable): `method Class::name`, `constant Class::NAME` (enum cases too), `property Class::name`, `function name` or `global-constant NAME`. |
+| `--request <FILE>` | A JSON request, or `-` for standard input (see below). |
+| `--path <PATH>` | Search only this directory or file, relative to the root (repeatable). The default is every source the root `composer.json` autoloads. |
+| `--format <text\|json>` | Output format (default `text`). |
+
+### Which code is indexed
+
+The project's own sources are the paths in the `autoload` section of the root
+`composer.json`. Vendor code is indexed only where those sources reach it:
+`consumers` follows every class the code and its docblocks name through
+Composer's generated autoload maps (`vendor/composer/autoload_*.php`), so a
+large `vendor/` costs only the parts the application uses. Run
+`composer install` (or `composer dump-autoload`) first; without the maps
+`consumers` cannot run.
+
+### What a use is
+
+- **A member use is matched by the receiver's type.** `$report->render()`
+  reaches `Report::render`. A same-named method of an unrelated class does
+  not, and neither does an override in a subclass.
+- **Supertypes match:** a call through a supertype or interface the target
+  implements matches, since dispatch can land on the target.
+- **Unknown receivers match by name:** a receiver whose type is unknown
+  (`mixed`, `object`) matches. A missed use is worse than an extra one.
+- **Traits are analysed per using class.** A use the using class decides
+  (`(new static())->handle()` in a trait) is reported as
+  `<target> via <class>`; any other use belongs to the trait.
+- **Code the framework calls is used where it is triggered:**
+  - a queued job's entry methods (`queueEntryMethods`, such as `handle` and
+    `failed`) where the job is created or dispatched;
+  - an event subscriber's method where its event is created;
+  - model event handlers by the calls that fire the event
+    (`modelEventTargets`);
+  - console commands where they are run by name or class
+    (`commandTargets`).
+
+### Laravel
+
+Laravel resolves much of its API at runtime. `consumers` declares the facts it
+needs to the analyzer, so chains keep their types instead of becoming `mixed`:
+
+- **Model builders:** a model's builder is the class its `newEloquentBuilder()`
+  returns, or `Builder<Model>`. Static calls on the model forward to that
+  builder and to the query builder, and `query()` returns it.
+- **Scopes:** `scopeX` and `#[Scope]` methods become builder methods.
+- **Dynamic wheres:** `where{Column}()` returns the builder.
+- **Relations:** a relation method with a generic `@return` (`HasMany<Post, $this>`) gives
+  the model a typed property: the related model, or a collection of it.
+- **Relation chains:** calls on a relation reach the related model's builder.
+- **Facades:** a facade resolves to the class its accessor is bound to in a
+  service provider (`bind`, `singleton`, `scoped`, `instance`).
+- **Aliases:** the root aliases in `config/app.php` (`Artisan`, `DB`, …)
+  resolve to their classes.
+
+### Request
+
+```json
+{
+    "targets": ["method App\\Jobs\\SendDigest::handle"],
+    "queueEntryMethods": ["handle", "failed"],
+    "modelEventTargets": [
+        {"target": "method App\\Observers\\PostObserver::created", "model": "App\\Models\\Post", "instance": ["save"], "query": ["create"]}
+    ],
+    "commandTargets": [
+        {"target": "method App\\Console\\Reindex::handle", "class": "App\\Console\\Reindex", "name": "app:reindex"}
+    ],
+    "within": ["app"]
+}
+```
+
+Only `targets` is required. A model event target fires through `instance`
+methods called on the model (`$post->save()`), and through `query` methods
+called statically, on its builder or on a relation to it. A trait as the
+model stands for every class that uses it.
+
+### Output
+
+The text output lists one use per line, `path:line<TAB>target`, sorted by
+path and line, then a count. `--format json` writes
+`{"uses": [{"path", "line", "target"}]}`.
 
 ## `opcov doctor`
 

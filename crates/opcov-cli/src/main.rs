@@ -16,6 +16,7 @@ use opcov_core::report::merge_streams;
 
 mod changes;
 mod checkup;
+mod consumers;
 mod convert;
 mod doctor;
 mod failure;
@@ -57,6 +58,10 @@ enum Command {
         about = "Lay a run of the tests a change reaches over a baseline report, giving the report of a run of every test"
     )]
     Stitch(StitchArgs),
+    #[command(
+        about = "Find the code that uses changed PHP members: methods, functions, constants, properties and the code the framework calls"
+    )]
+    Consumers(ConsumersArgs),
     #[command(
         about = "Check that PHP can collect coverage with opcov, or with --report diagnose a report"
     )]
@@ -233,6 +238,36 @@ struct StitchArgs {
 }
 
 #[derive(Debug, Args)]
+struct ConsumersArgs {
+    #[arg(
+        long,
+        value_name = "DIR",
+        help = "Project root, the directory holding composer.json and vendor/ [default: the current directory]"
+    )]
+    root: Option<PathBuf>,
+    #[arg(
+        long,
+        value_name = "TARGET",
+        help = "A member to find the uses of: `method Class::name`, `constant Class::NAME`, `property Class::name`, `function name` or `global-constant NAME` (repeatable)"
+    )]
+    target: Vec<String>,
+    #[arg(
+        long,
+        value_name = "FILE",
+        help = "JSON request with targets, queueEntryMethods, modelEventTargets, commandTargets and within, or `-` for standard input"
+    )]
+    request: Option<PathBuf>,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Search only this directory or file, relative to the root (repeatable) [default: every autoloaded project source]"
+    )]
+    path: Vec<String>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text, help = "Output format")]
+    format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
 struct DoctorArgs {
     #[arg(
         long,
@@ -396,6 +431,26 @@ fn stitch_report(args: &StitchArgs) -> Result<Verdict, Failure> {
     );
 }
 
+fn consumers_report(args: &ConsumersArgs) -> Result<Verdict, Failure> {
+    let root = match &args.root {
+        Some(root) => root.clone(),
+        None => env::current_dir().map_err(|error| {
+            return Failure::io("resolve", Path::new("the current directory"), &error);
+        })?,
+    };
+    let json = args.request.as_deref().map(read_input).transpose()?;
+    let source = args.request.as_deref().map_or_else(String::new, describe);
+    let request = consumers::request(json.as_deref(), &args.target, &args.path, &source)?;
+    let found = consumers::find(&root, &request)?;
+    emit_result(
+        args.format,
+        &found,
+        consumers::render_text,
+        consumers::render_json,
+    )?;
+    return Ok(Verdict::Clean);
+}
+
 fn emit_filter(result: &impact::ImpactResult<'_>) -> Result<Verdict, Failure> {
     if result.verdict() == Verdict::Findings {
         write_stderr(|out| return impact::render_text(out, result))?;
@@ -475,6 +530,7 @@ fn main() -> ExitCode {
         Command::Gate(args) => gate_report(args),
         Command::Impact(args) => impact_report(args),
         Command::Stitch(args) => stitch_report(args),
+        Command::Consumers(args) => consumers_report(args),
         Command::Doctor(args) => doctor(args),
     };
     return match result {

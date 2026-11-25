@@ -10,6 +10,7 @@ targets = [
 yanked = "deny"
 ignore = [
   { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained, not vulnerable: a compile-time macro crate that mago-syntax 1.61 depends on, with no maintained replacement upstream" },
+  { id = "RUSTSEC-2025-0141", reason = "bincode is unmaintained, not vulnerable: mago-prelude 1.61 uses it only to decode the PHP stub set it embeds at build time, with no maintained replacement upstream" },
 ]
 
 [licenses]
@@ -34,6 +35,10 @@ multiple-versions = "deny"
 wildcards = "deny"
 skip = [
   { crate = "syn@2", reason = "mago-syntax 1.61 reaches syn 2 through strum_macros and tracing-attributes while bindgen and clap use syn 3" },
+  { crate = "syn@1", reason = "mago-reporting 1.61 reaches syn 1 through the build dependencies of serde-sarif (schemafy_lib)" },
+  { crate = "prettyplease@0.2", reason = "mago-reporting 1.61 reaches prettyplease 0.2 through the build dependencies of serde-sarif while bindgen uses 0.3" },
+  { crate = "strum@0.27", reason = "serde-sarif, which mago-reporting 1.61 depends on, uses strum 0.27 while mago-codex uses 0.28" },
+  { crate = "strum_macros@0.27", reason = "serde-sarif, which mago-reporting 1.61 depends on, uses strum_macros 0.27 while mago-codex uses 0.28" },
 ]
 allow-wildcard-paths = true
 
