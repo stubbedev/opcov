@@ -45,6 +45,10 @@ pub(crate) struct FilePatch {
 pub(crate) struct Patch(Vec<FilePatch>);
 
 impl Patch {
+    pub(crate) const fn new(files: Vec<FilePatch>) -> Self {
+        return Self(files);
+    }
+
     pub(crate) fn files(&self) -> &[FilePatch] {
         return &self.0;
     }

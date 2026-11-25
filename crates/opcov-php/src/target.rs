@@ -39,6 +39,11 @@ impl Kind {
         return matches!(self, Self::Function | Self::GlobalConstant);
     }
 
+    #[must_use]
+    pub const fn is_callable(self) -> bool {
+        return matches!(self, Self::Method | Self::Function);
+    }
+
     pub(crate) fn member_key(self, member: &str) -> String {
         return match self {
             Self::Method | Self::Function | Self::GlobalConstant => member.to_ascii_lowercase(),

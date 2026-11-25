@@ -16,6 +16,7 @@ use opcov_core::report::merge_streams;
 use opcov_php::Query;
 
 mod changes;
+mod check;
 mod checkup;
 mod consumers;
 mod convert;
@@ -25,6 +26,7 @@ mod gate;
 mod impact;
 mod output;
 mod serve;
+mod snapshot;
 mod source;
 mod spool;
 mod stitch;
@@ -68,6 +70,10 @@ enum Command {
         about = "Keep the PHP index of a project warm and up to date, so opcov consumers answers in milliseconds"
     )]
     Serve(ServeArgs),
+    #[command(
+        about = "Check a PHP change: run the tests that reach it, keep the report current, and gate the changed code and its consumers"
+    )]
+    Check(CheckArgs),
     #[command(
         about = "Check that PHP can collect coverage with opcov, or with --report diagnose a report"
     )]
@@ -304,6 +310,42 @@ struct ConsumersArgs {
 }
 
 #[derive(Debug, Args)]
+struct CheckArgs {
+    #[arg(
+        long,
+        value_name = "DIR",
+        help = "Project root, the directory holding composer.json and vendor/ [default: the current directory]"
+    )]
+    root: Option<PathBuf>,
+    #[arg(
+        long,
+        value_name = "REPORT",
+        help = "The report the test command writes, kept as the baseline between checks"
+    )]
+    report: PathBuf,
+    #[arg(
+        long,
+        value_name = "N",
+        default_value_t = 2,
+        help = "Call-graph levels of consumers to gate (see opcov consumers --depth)"
+    )]
+    depth: u32,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "A file or directory, relative to the root, whose changes cannot affect a test (repeatable)"
+    )]
+    ignore: Vec<PathBuf>,
+    #[arg(
+        last = true,
+        required = true,
+        value_name = "COMMAND",
+        help = "The test command, run in the root; --filter <expression> is appended to run a selection"
+    )]
+    command: Vec<String>,
+}
+
+#[derive(Debug, Args)]
 struct ServeArgs {
     #[arg(
         long,
@@ -497,6 +539,17 @@ fn project_root(root: Option<&Path>) -> Result<PathBuf, Failure> {
     );
 }
 
+fn check_command(args: &CheckArgs) -> Result<Verdict, Failure> {
+    let root = project_root(args.root.as_deref())?;
+    return check::run(&check::Inputs {
+        root: &root,
+        report: &args.report,
+        depth: args.depth,
+        ignore: &args.ignore,
+        command: &args.command,
+    });
+}
+
 fn serve_command(args: &ServeArgs) -> Result<Verdict, Failure> {
     let root = project_root(args.root.as_deref())?;
     if args.stop {
@@ -637,6 +690,7 @@ fn main() -> ExitCode {
         Command::Stitch(args) => stitch_report(args),
         Command::Consumers(args) => consumers_report(args),
         Command::Serve(args) => serve_command(args),
+        Command::Check(args) => check_command(args),
         Command::Doctor(args) => doctor(args),
     };
     return match result {

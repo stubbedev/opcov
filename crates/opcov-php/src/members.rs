@@ -41,7 +41,7 @@ pub struct Member {
 
 impl Member {
     pub(crate) const fn is_callable(&self) -> bool {
-        return matches!(self.target.kind, Kind::Method | Kind::Function);
+        return self.target.kind.is_callable();
     }
 
     pub(crate) const fn contains(&self, line: u32) -> bool {

@@ -11,7 +11,7 @@ use crate::serve;
 #[derive(Debug, Serialize)]
 pub(crate) struct Found {
     #[serde(flatten)]
-    answer: Answer,
+    pub(crate) answer: Answer,
     served: bool,
 }
 

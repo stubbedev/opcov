@@ -18,6 +18,10 @@ as the release notes, and refuses to release a version that has no section here.
   runs, `opcov consumers` asks it, so a depth-2 search on a large Laravel
   application takes 20–40 ms instead of 5–7 s, with the same results.
   `--no-serve` searches in process.
+- `opcov check` checks a change in one command and without git: it diffs
+  the project's PHP files against its snapshot of the last check, runs the
+  tests that reach the change through the given test command, stitches the
+  run into the report, and gates the changed functions and their consumers.
 
 ### Changed
 
@@ -30,6 +34,7 @@ as the release notes, and refuses to release a version that has no section here.
 
 - `opcov consumers` no longer skips a file the analyzer fails on: its uses
   are matched by name and the file is listed under `untyped`.
+- Reading a project accepts an empty Composer autoload map.
 
 ## [0.2.0] - 2026-11-25
 

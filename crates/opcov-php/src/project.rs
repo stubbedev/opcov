@@ -17,6 +17,8 @@ const FILES_MAP: &str = "autoload_files.php";
 const VENDOR_DIR: &[u8] = b"$vendorDir";
 const BASE_DIR: &[u8] = b"$baseDir";
 const ROOT_MANIFEST: &str = "composer.json";
+const AUTOLOAD: &str = "autoload";
+const AUTOLOAD_DEV: &str = "autoload-dev";
 const SOURCE_EXTENSION: &str = "php";
 
 #[derive(Debug)]
@@ -155,6 +157,7 @@ fn returned_map(
     });
     return match returned {
         Some(Value::Map(entries)) => Ok(entries),
+        Some(Value::List(values)) if values.is_empty() => Ok(Vec::new()),
         Some(Value::List(_) | Value::Text(_)) => Err(ProjectError::Map {
             path: path.to_path_buf(),
             reason: "it does not return a keyed array",
@@ -173,6 +176,7 @@ pub struct Project {
     classes: HashMap<String, PathBuf>,
     always: Vec<PathBuf>,
     scope: Vec<PathBuf>,
+    development: Vec<PathBuf>,
 }
 
 fn lower(text: &str) -> String {
@@ -216,17 +220,20 @@ impl Project {
                 };
             })
             .collect();
-        let scope = Self::autoload_scope(root)?;
+        let manifest = Self::manifest(root)?;
+        let scope = Self::autoload_scope(root, &manifest, AUTOLOAD);
+        let development = Self::autoload_scope(root, &manifest, AUTOLOAD_DEV);
         return Ok(Self {
             root: root.to_path_buf(),
             namespaces,
             classes,
             always,
             scope,
+            development,
         });
     }
 
-    fn autoload_scope(root: &Path) -> Result<Vec<PathBuf>, ProjectError> {
+    fn manifest(root: &Path) -> Result<serde_json::Value, ProjectError> {
         let path = root.join(ROOT_MANIFEST);
         let content = std::fs::read(&path).map_err(|error| {
             return ProjectError::Read {
@@ -234,13 +241,16 @@ impl Project {
                 error,
             };
         })?;
-        let manifest: serde_json::Value = serde_json::from_slice(&content).map_err(|_invalid| {
+        return serde_json::from_slice(&content).map_err(|_invalid| {
             return ProjectError::Map {
                 path: path.clone(),
                 reason: "it is not valid JSON",
             };
-        })?;
-        let autoload = manifest.get("autoload");
+        });
+    }
+
+    fn autoload_scope(root: &Path, manifest: &serde_json::Value, section: &str) -> Vec<PathBuf> {
+        let autoload = manifest.get(section);
         let prefixed = ["psr-4", "psr-0"]
             .into_iter()
             .filter_map(|kind| return autoload?.get(kind)?.as_object())
@@ -266,7 +276,7 @@ impl Project {
             .collect();
         scope.sort();
         scope.dedup();
-        return Ok(scope);
+        return scope;
     }
 
     #[must_use]
@@ -312,14 +322,25 @@ impl Project {
 
     #[must_use]
     pub fn source_files(&self) -> Vec<PathBuf> {
-        let mut files = Vec::new();
-        for entry in &self.scope {
-            collect_sources(entry, &mut files);
-        }
-        files.sort();
-        files.dedup();
-        return files;
+        return files_under(&self.scope);
     }
+
+    #[must_use]
+    pub fn all_files(&self) -> Vec<PathBuf> {
+        let mut entries = self.scope.clone();
+        entries.extend(self.development.iter().cloned());
+        return files_under(&entries);
+    }
+}
+
+fn files_under(entries: &[PathBuf]) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for entry in entries {
+        collect_sources(entry, &mut files);
+    }
+    files.sort();
+    files.dedup();
+    return files;
 }
 
 fn collect_sources(path: &Path, files: &mut Vec<PathBuf>) {

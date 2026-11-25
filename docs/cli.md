@@ -12,15 +12,16 @@ and merges, converts and checks it. Every subcommand prints `--help`.
 | `opcov stitch` | Lay a run of the tests a change reaches over the baseline report, giving the report a run of every test would give. |
 | `opcov consumers` | Find the code that uses changed PHP members, including the code the framework calls. |
 | `opcov serve` | Keep a project's PHP index warm and up to date, so `opcov consumers` answers in milliseconds. |
+| `opcov check` | Check a PHP change in one command: run the tests that reach it, keep the report current, and gate the changed code and its consumers. |
 | `opcov doctor` | Check that a PHP binary can collect coverage with opcov, or with `--report` diagnose a report: outcomes that match no source construct. |
 
 ## Exit codes
 
-| Code | `merge` | `convert` | `gate` | `impact` | `stitch` | `consumers` | `serve` | `doctor` | `doctor --report` |
-|---|---|---|---|---|---|---|---|---|---|
-| 0 | merged | converted | pass: no findings | the selection bounds the change | stitched | searched | stopped | PHP loads opcov and the probe self-test passed | every outcome that counts toward verdicts has a source construct |
-| 1 | refused: the inputs do not merge (mismatching generator, settings, paths, file hash or model) | (not used) | findings | run every test: a change the baseline cannot bound | refused: a change the baseline cannot bound, a selected test the partial run lacks, or reports that do not merge | (not used) | (not used) | problems found | findings |
-| 2 | could not run | could not run | could not run | could not run, or the baseline is not of the diff's base | could not run, the baseline is not of the diff's base, or the partial report is not of the working tree | could not run: no targets, an invalid request, no Composer autoload maps, or an error from `opcov serve` | could not run, or already running for the project | could not run | could not run |
+| Code | `merge` | `convert` | `gate` | `impact` | `stitch` | `consumers` | `serve` | `check` | `doctor` | `doctor --report` |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | merged | converted | pass: no findings | the selection bounds the change | stitched | searched | stopped | pass, or nothing changed | PHP loads opcov and the probe self-test passed | every outcome that counts toward verdicts has a source construct |
+| 1 | refused: the inputs do not merge (mismatching generator, settings, paths, file hash or model) | (not used) | findings | run every test: a change the baseline cannot bound | refused: a change the baseline cannot bound, a selected test the partial run lacks, or reports that do not merge | (not used) | (not used) | findings, a failing test command, or changed functions no test reaches | problems found | findings |
+| 2 | could not run | could not run | could not run | could not run, or the baseline is not of the diff's base | could not run, the baseline is not of the diff's base, or the partial report is not of the working tree | could not run: no targets, an invalid request, no Composer autoload maps, or an error from `opcov serve` | could not run, or already running for the project | could not run, or the test command wrote no report | could not run | could not run |
 
 "Could not run" covers usage errors, unreadable or invalid reports, missing or
 unreadable inputs, a source file whose SHA-256 differs from the report's, a
@@ -662,6 +663,47 @@ named after a digest of the project root, or in `<root>/.opcov/` when
 `XDG_RUNTIME_DIR` is unset. Add `.opcov/` to `.gitignore` in that case. A
 client of another opcov version is refused with a message to restart the
 server.
+
+## `opcov check`
+
+```sh
+opcov check --report build/opcov.json -- vendor/bin/opcov-phpunit vendor/bin/phpunit
+opcov check --report build/opcov.json -- docker compose exec -T php vendor/bin/opcov-phpunit vendor/bin/phpunit
+```
+
+`opcov check` checks the change since the previous check in one command,
+without git:
+
+1. It finds the change by comparing the project's PHP files (the
+   `autoload` and `autoload-dev` sources of `composer.json`) with its
+   snapshot of them, taken when the report was last written.
+2. It finds the changed members and their consumers to `--depth`, asking
+   [`opcov serve`](#opcov-serve) when it runs.
+3. It selects the tests that reach the change from the report, as
+   [`impact --whole-files`](#opcov-impact) does, and runs the test command
+   with `--filter <selection>` appended. When the report cannot bound the
+   change it runs every test; when no test reaches it, it runs none.
+4. It lays the run over the report, as [`stitch`](#opcov-stitch) does, so
+   the report stays the report of a run of every test and is the baseline
+   of the next check.
+5. It gates the changed functions and the consumers' line ranges against
+   the report and prints the verdict.
+
+The first check, or one after the report was written by something else,
+runs every test and takes the snapshot. A check with no change returns at
+once. The test command runs in the root, with its output on standard error,
+and must write the report given with `--report` (the opcov PHPUnit
+extension's `output`). While it runs, the previous report is kept next to
+it as `<report>.base` and put back if the run fails. The snapshot is kept
+next to the report in `<report>.snapshot/`.
+
+| Option | Meaning |
+|---|---|
+| `--report <REPORT>` | The report the test command writes, kept as the baseline between checks. |
+| `--root <DIR>` | The project root (default: the current directory). |
+| `--depth <N>` | Call-graph levels of consumers to gate (default 2). |
+| `--ignore <PATH>` | A file or directory, relative to the root, whose changes cannot affect a test. Repeatable. |
+| `-- <COMMAND>...` | The test command. |
 
 ## `opcov doctor`
 

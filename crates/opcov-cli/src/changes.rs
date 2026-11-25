@@ -7,10 +7,12 @@ use opcov_core::cfg::Line;
 use opcov_core::report::{PathBase, SourcePath};
 
 mod diff;
+mod lines;
 mod list;
 mod revert;
 
 pub(crate) use diff::{Content, FilePatch, Hunk, LineKind, Patch, parse_diff};
+pub(crate) use lines::hunks;
 pub(crate) use list::parse_list;
 pub(crate) use revert::original;
 

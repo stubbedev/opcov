@@ -1384,6 +1384,7 @@ dependencies = [
  "opcov-core",
  "opcov-php",
  "opcov-syntax",
+ "proptest",
  "roxmltree",
  "serde",
  "serde_json",
