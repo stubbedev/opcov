@@ -27,6 +27,10 @@ macro_rules! log {
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const REPLY_TIMEOUT: Duration = Duration::from_mins(15);
 const QUIET: Duration = Duration::from_millis(50);
+const IDLE_CHECKS: u32 = 4;
+const SPAWNED_IDLE: Duration = Duration::from_hours(1);
+const STARTUP: Duration = Duration::from_secs(10);
+const STARTUP_POLL: Duration = Duration::from_millis(20);
 const SOCKET_NAME: &str = "serve.sock";
 const LOCAL_DIRECTORY: &str = ".opcov";
 const RUNTIME_DIRECTORY: &str = "XDG_RUNTIME_DIR";
@@ -306,7 +310,29 @@ fn bind(path: &Path) -> Result<UnixListener, Failure> {
     return UnixListener::bind(path).map_err(|error| return Failure::io("listen on", path, &error));
 }
 
-pub(crate) fn serve(root: &Path) -> Result<(), Failure> {
+fn watchdog(idle: Duration, last: &Arc<Mutex<Instant>>, stopping: &Arc<AtomicBool>, socket: &Path) {
+    let (last, stopping, socket) = (Arc::clone(last), Arc::clone(stopping), socket.to_path_buf());
+    let interval = idle
+        .checked_div(IDLE_CHECKS)
+        .unwrap_or(idle)
+        .clamp(Duration::from_secs(1), Duration::from_mins(1));
+    thread::spawn(move || {
+        loop {
+            thread::sleep(interval);
+            if lock(&last).elapsed() < idle {
+                continue;
+            }
+            log!("stopping after {:.0?} without a query", idle);
+            stopping.store(true, Ordering::SeqCst);
+            if let Err(error) = UnixStream::connect(&socket) {
+                log!("cannot wake the listener to stop: {error}");
+            }
+            return;
+        }
+    });
+}
+
+pub(crate) fn serve(root: &Path, idle: Option<Duration>) -> Result<(), Failure> {
     let socket = socket_path(root)?;
     let listener = bind(&socket)?;
     let started = Instant::now();
@@ -323,10 +349,15 @@ pub(crate) fn serve(root: &Path) -> Result<(), Failure> {
     warm(&shared);
     refresher(Arc::clone(&shared), Arc::clone(&pending), events);
     let stopping = Arc::new(AtomicBool::new(false));
+    let last = Arc::new(Mutex::new(Instant::now()));
+    if let Some(idle) = idle {
+        watchdog(idle, &last, &stopping, &socket);
+    }
     for stream in listener.incoming() {
         if stopping.load(Ordering::SeqCst) {
             break;
         }
+        *lock(&last) = Instant::now();
         let stream = stream.map_err(|error| return Failure::io("accept on", &socket, &error))?;
         let (shared, pending, stopping, socket) = (
             Arc::clone(&shared),
@@ -360,6 +391,41 @@ fn exchange(stream: &mut UnixStream, message: &Message) -> Result<Reply, Failure
     return serde_json::from_str(&line).map_err(|error| {
         return Failure::failed(format!("invalid reply from opcov serve: {error}"));
     });
+}
+
+pub(crate) fn ensure(root: &Path) -> Result<(), Failure> {
+    let socket = socket_path(root)?;
+    if UnixStream::connect(&socket).is_ok() {
+        return Ok(());
+    }
+    let program = std::env::current_exe().map_err(|error| {
+        return Failure::failed(format!(
+            "cannot find the opcov binary to start opcov serve: {error}"
+        ));
+    })?;
+    std::process::Command::new(program)
+        .arg("serve")
+        .arg("--root")
+        .arg(root)
+        .arg("--idle-timeout")
+        .arg(SPAWNED_IDLE.as_secs().to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|error| return Failure::failed(format!("cannot start opcov serve: {error}")))?;
+    let started = Instant::now();
+    while UnixStream::connect(&socket).is_err() {
+        if started.elapsed() > STARTUP {
+            return Err(Failure::failed(format!(
+                "opcov serve did not listen on {} within {:.0?}",
+                socket.display(),
+                STARTUP
+            )));
+        }
+        thread::sleep(STARTUP_POLL);
+    }
+    return Ok(());
 }
 
 pub(crate) fn ask(root: &Path, query: &Query) -> Result<Option<Answer>, Failure> {

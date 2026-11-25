@@ -12,6 +12,7 @@ use crate::consumers::{self, Via};
 use crate::failure::{Failure, Verdict};
 use crate::impact::{self, Filter, Scope};
 use crate::output::write_stdout;
+use crate::serve;
 use crate::snapshot::{self, report_digest};
 use crate::stitch;
 use crate::{gate, stream};
@@ -25,6 +26,7 @@ pub(crate) struct Inputs<'a> {
     pub(crate) depth: u32,
     pub(crate) ignore: &'a [PathBuf],
     pub(crate) command: &'a [String],
+    pub(crate) via: Via,
 }
 
 enum Run {
@@ -261,7 +263,10 @@ pub(crate) fn run(inputs: &Inputs<'_>) -> Result<Verdict, Failure> {
             Verdict::Findings
         });
     }
-    let answer = consumers::find(inputs.root, &query, Via::Serve)?.answer;
+    if inputs.via == Via::Serve {
+        serve::ensure(inputs.root)?;
+    }
+    let answer = consumers::find(inputs.root, &query, inputs.via)?.answer;
     let ran = match plan(inputs, &patch)? {
         Run::Everything(reason) => Some(run_everything(inputs, &reason)?),
         Run::Selected(filter) => Some(run_selected(inputs, &filter, &patch)?),

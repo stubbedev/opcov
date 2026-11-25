@@ -337,6 +337,11 @@ struct CheckArgs {
     )]
     ignore: Vec<PathBuf>,
     #[arg(
+        long,
+        help = "Search for consumers in this process instead of starting or asking opcov serve"
+    )]
+    no_serve: bool,
+    #[arg(
         last = true,
         required = true,
         value_name = "COMMAND",
@@ -355,6 +360,13 @@ struct ServeArgs {
     root: Option<PathBuf>,
     #[arg(long, help = "Stop the opcov serve running for the project")]
     stop: bool,
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        conflicts_with = "stop",
+        help = "Stop after this many seconds without a query [default: run until stopped]"
+    )]
+    idle_timeout: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -547,6 +559,11 @@ fn check_command(args: &CheckArgs) -> Result<Verdict, Failure> {
         depth: args.depth,
         ignore: &args.ignore,
         command: &args.command,
+        via: if args.no_serve {
+            consumers::Via::Process
+        } else {
+            consumers::Via::Serve
+        },
     });
 }
 
@@ -567,7 +584,7 @@ fn serve_command(args: &ServeArgs) -> Result<Verdict, Failure> {
         })?;
         return Ok(Verdict::Clean);
     }
-    serve::serve(&root)?;
+    serve::serve(&root, args.idle_timeout.map(std::time::Duration::from_secs))?;
     return Ok(Verdict::Clean);
 }
 

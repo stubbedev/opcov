@@ -22,6 +22,8 @@ as the release notes, and refuses to release a version that has no section here.
   the project's PHP files against its snapshot of the last check, runs the
   tests that reach the change through the given test command, stitches the
   run into the report, and gates the changed functions and their consumers.
+  It starts `opcov serve` in the background when none runs, and
+  `opcov serve --idle-timeout` stops a server nobody queries.
 
 ### Changed
 

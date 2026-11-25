@@ -646,6 +646,7 @@ results are the same either way.
 |---|---|
 | `--root <DIR>` | The project root (default: the current directory). |
 | `--stop` | Stop the server running for the project. |
+| `--idle-timeout <SECONDS>` | Stop after this many seconds without a query. By default the server runs until stopped. |
 
 **Staying current.** The server watches the autoloaded source directories,
 `composer.json`, `composer.lock`, `config/` and `vendor/composer/`. Each
@@ -677,8 +678,10 @@ without git:
 1. It finds the change by comparing the project's PHP files (the
    `autoload` and `autoload-dev` sources of `composer.json`) with its
    snapshot of them, taken when the report was last written.
-2. It finds the changed members and their consumers to `--depth`, asking
-   [`opcov serve`](#opcov-serve) when it runs.
+2. It finds the changed members and their consumers to `--depth`, through
+   [`opcov serve`](#opcov-serve). When no server runs for the project, the
+   check starts one in the background with a one-hour idle timeout, so the
+   next check finds the index warm.
 3. It selects the tests that reach the change from the report, as
    [`impact --whole-files`](#opcov-impact) does, and runs the test command
    with `--filter <selection>` appended. When the report cannot bound the
@@ -703,6 +706,7 @@ next to the report in `<report>.snapshot/`.
 | `--root <DIR>` | The project root (default: the current directory). |
 | `--depth <N>` | Call-graph levels of consumers to gate (default 2). |
 | `--ignore <PATH>` | A file or directory, relative to the root, whose changes cannot affect a test. Repeatable. |
+| `--no-serve` | Search for consumers in this process instead of starting or asking `opcov serve`. |
 | `-- <COMMAND>...` | The test command. |
 
 ## `opcov doctor`
