@@ -11,6 +11,13 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+### Fixed
+
+- `opcov\get_debug_info()` keys the functions of `eval()`'d code by the
+  entry's reported name, with its `#<digest>` suffix, as `opcov\executable()`
+  and the report do; it left the suffix out of `{main}`, so the two did not
+  match.
+
 ## [0.1.4] - 2026-11-25
 
 ### Fixed

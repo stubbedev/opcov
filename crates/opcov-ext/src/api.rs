@@ -697,7 +697,7 @@ impl Engine {
             .filter_map(|(key, &id)| return Some((key, &self.files.function(id)?.analysis)))
             .map(|(key, analysis)| {
                 return (
-                    key.to_string(),
+                    key.in_file(&record.path).to_string(),
                     serde_json::to_value(analysis).unwrap_or_else(|error| {
                         return Value::String(format!("cannot serialise the analysis: {error}"));
                     }),
@@ -742,7 +742,7 @@ impl Engine {
             .filter_map(|(key, &id)| return Some((key, &self.files.function(id)?.input)))
             .map(|(key, input)| {
                 return (
-                    key.to_string(),
+                    key.in_file(&record.path).to_string(),
                     serde_json::to_value(input).unwrap_or_else(|error| {
                         return Value::String(format!("cannot serialise the CFG input: {error}"));
                     }),
