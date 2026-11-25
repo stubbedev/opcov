@@ -1413,6 +1413,7 @@ dependencies = [
 name = "opcov-php"
 version = "0.1.4"
 dependencies = [
+ "aho-corasick",
  "mago-allocator",
  "mago-analyzer",
  "mago-codex",

@@ -6,24 +6,29 @@ description = "Indexes a PHP project with mago and finds the code that uses chan
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
+build = "build.rs"
 
 [lib]
 doctest = false
 test = false
 
 [dependencies]
+aho-corasick = "1.1.5"
 mago-allocator = "=1.61.0"
 mago-analyzer = "=1.61.0"
 mago-codex = "=1.61.0"
 mago-database = "=1.61.0"
 mago-names = "=1.61.0"
-mago-prelude = { version = "=1.61.0", features = ["build"] }
+mago-prelude = { version = "=1.61.0", features = ["serde"] }
 mago-span = "=1.61.0"
 mago-syntax = "=1.61.0"
 mago-word = "=1.61.0"
 rayon = "1.12.0"
 serde.workspace = true
 serde_json.workspace = true
+
+[build-dependencies]
+mago-prelude = { version = "=1.61.0", features = ["build"] }
 
 [dev-dependencies]
 serde_json.workspace = true

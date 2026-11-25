@@ -23,6 +23,7 @@ const BUS_DISPATCHABLE: &str = "Illuminate\\Foundation\\Bus\\Dispatchable";
 const EVENT_DISPATCHABLE: &str = "Illuminate\\Foundation\\Events\\Dispatchable";
 const SUBSCRIBE: &str = "subscribe";
 const CONSTRUCTOR: &str = "__construct";
+const NEW: &str = "new";
 const VIA: &str = " via ";
 const COMMAND_CALLERS: [(&str, &[&str]); 5] = [
     ("Illuminate\\Support\\Facades\\Artisan", &["call", "queue"]),
@@ -566,6 +567,46 @@ impl<'c> Matcher<'c> {
                 self.member_use(Kind::Property, member, &classes(class))
             }
         };
+    }
+
+    pub(crate) fn needles(&self) -> Vec<String> {
+        let mut needles: Vec<String> = self
+            .members
+            .keys()
+            .chain(self.globals.keys())
+            .map(|(_, member)| return member.rsplit('\\').next().unwrap_or(member).to_owned())
+            .collect();
+        let constructs = self
+            .members
+            .contains_key(&(Kind::Method, CONSTRUCTOR.to_owned()));
+        if constructs || !self.creations.is_empty() {
+            needles.push(NEW.to_owned());
+        }
+        if !self.creations.is_empty() {
+            for used in [BUS_DISPATCHABLE, EVENT_DISPATCHABLE] {
+                let methods = self
+                    .codebase
+                    .get_class_like(used.as_bytes())
+                    .into_iter()
+                    .flat_map(|metadata| return metadata.methods.iter());
+                needles.extend(methods.map(ToString::to_string));
+            }
+        }
+        for entry in &self.model_events {
+            needles.extend(entry.instance.iter().chain(entry.query.iter()).cloned());
+        }
+        if !self.commands.is_empty() {
+            needles.extend(
+                COMMAND_CALLERS
+                    .iter()
+                    .flat_map(|(_, methods)| return methods.iter())
+                    .map(|method| return (*method).to_owned()),
+            );
+        }
+        needles.retain(|needle| return !needle.is_empty());
+        needles.sort();
+        needles.dedup();
+        return needles;
     }
 
     pub(crate) fn trait_users(&self, used: &str) -> &[String] {

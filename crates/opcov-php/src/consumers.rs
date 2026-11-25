@@ -1,3 +1,5 @@
+use aho_corasick::AhoCorasick;
+use mago_database::file::File;
 use mago_syntax::walker::Walker;
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
@@ -44,19 +46,37 @@ fn copies<'m>(
         .collect();
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Search {
+    pub uses: Vec<Use>,
+    pub analysed: usize,
+}
+
 impl Index {
     #[must_use]
-    pub fn uses(&self, request: &Request) -> Vec<Use> {
+    pub fn uses(&self, request: &Request) -> Search {
         let matcher = Matcher::new(&self.metadata, &self.forwards, request);
+        let mentions = AhoCorasick::builder()
+            .ascii_case_insensitive(true)
+            .build(matcher.needles())
+            .ok();
         let context = Context {
             metadata: &self.metadata,
             registry: &self.registry,
             settings: &self.settings,
         };
-        let mut found: Vec<Use> = self
+        let candidates: Vec<&File> = self
             .sources
             .par_iter()
-            .filter(|file| return request.searches(&String::from_utf8_lossy(file.name.as_ref())))
+            .filter(|file| {
+                return request.searches(&String::from_utf8_lossy(file.name.as_ref()))
+                    && mentions
+                        .as_ref()
+                        .is_none_or(|mentions| return mentions.is_match(file.contents.as_ref()));
+            })
+            .collect();
+        let mut found: Vec<Use> = candidates
+            .par_iter()
             .flat_map_iter(|file| {
                 let path = String::from_utf8_lossy(file.name.as_ref()).into_owned();
                 let source = file.contents.as_ref();
@@ -87,6 +107,9 @@ impl Index {
             .collect();
         found.sort();
         found.dedup();
-        return found;
+        return Search {
+            uses: found,
+            analysed: candidates.len(),
+        };
     }
 }

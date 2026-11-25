@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use mago_allocator::LocalArena;
@@ -12,13 +12,51 @@ use mago_database::file::File;
 use mago_names::resolver::NameResolver;
 use mago_prelude::Prelude;
 use mago_syntax::parser::parse_file;
+use std::sync::Mutex;
+
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::laravel;
 use crate::project::Project;
-use crate::references::referenced_classes;
+use crate::references::{Reach, referenced_classes};
 
-#[derive(Debug, Clone, Copy, Default)]
+const PRELUDE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/prelude.bin"));
+
+#[derive(Debug)]
+pub enum IndexError {
+    Prelude(String),
+    Read {
+        path: PathBuf,
+        error: std::io::Error,
+    },
+}
+
+impl std::fmt::Display for IndexError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        return match self {
+            Self::Read { path, error } => {
+                write!(formatter, "cannot read {}: {error}", path.display())
+            }
+            Self::Prelude(error) => write!(
+                formatter,
+                "cannot load the PHP prelude built into opcov: {error}"
+            ),
+        };
+    }
+}
+
+impl std::error::Error for IndexError {}
+
+impl IndexError {
+    fn path(&self) -> Option<&Path> {
+        return match self {
+            Self::Read { path, .. } => Some(path),
+            Self::Prelude(_) => None,
+        };
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
 pub struct IndexStats {
     pub scanned: usize,
     pub sources: usize,
@@ -46,14 +84,19 @@ impl std::fmt::Debug for Index {
     }
 }
 
-pub(crate) fn load(root: &Path, path: &Path) -> Option<File> {
-    let content = std::fs::read(path).ok()?;
+pub(crate) fn load(root: &Path, path: &Path) -> Result<File, IndexError> {
+    let content = std::fs::read(path).map_err(|error| {
+        return IndexError::Read {
+            path: path.to_path_buf(),
+            error,
+        };
+    })?;
     let name = path
         .strip_prefix(root)
         .unwrap_or(path)
         .to_string_lossy()
         .into_owned();
-    return Some(File::ephemeral(
+    return Ok(File::ephemeral(
         Cow::Owned(name.into_bytes()),
         Cow::Owned(content),
     ));
@@ -64,11 +107,56 @@ struct Scanned {
     references: BTreeSet<String>,
 }
 
-fn scan(file: &File, settings: &Settings) -> Scanned {
+fn claim<T: Eq + std::hash::Hash>(seen: &Mutex<HashSet<T>>, item: T) -> bool {
+    return seen
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(item);
+}
+
+struct Walk<'a> {
+    project: &'a Project,
+    root: &'a Path,
+    settings: &'a Settings,
+    seen: &'a Mutex<HashSet<PathBuf>>,
+    looked_up: &'a Mutex<HashSet<String>>,
+    scanned: &'a Mutex<Vec<(Vec<u8>, CodebaseMetadata)>>,
+    failures: &'a Mutex<Vec<IndexError>>,
+}
+
+impl Walk<'_> {
+    fn visit<'scope>(&'scope self, scope: &rayon::Scope<'scope>, file: &File, reach: Reach) {
+        let Scanned {
+            metadata,
+            references,
+        } = scan(file, self.settings, reach);
+        self.scanned
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((file.name.to_vec(), metadata));
+        let unseen = references
+            .into_iter()
+            .filter(|class| return claim(self.looked_up, class.to_ascii_lowercase()));
+        for path in unseen.filter_map(|class| return self.project.class_file(&class)) {
+            if claim(self.seen, path.clone()) {
+                scope.spawn(move |scope| match load(self.root, &path) {
+                    Ok(file) => self.visit(scope, &file, Reach::Declarations),
+                    Err(error) => self
+                        .failures
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(error),
+                });
+            }
+        }
+    }
+}
+
+fn scan(file: &File, settings: &Settings, reach: Reach) -> Scanned {
     let arena = LocalArena::new();
     let program = parse_file(&arena, file);
     let names = NameResolver::new(&arena).resolve(program);
-    let references = referenced_classes(file.contents.as_ref(), program, &names);
+    let references = referenced_classes(file.contents.as_ref(), program, &names, reach);
     let metadata = scan_program(&arena, file, program, &names, settings.version);
     return Scanned {
         metadata,
@@ -77,61 +165,70 @@ fn scan(file: &File, settings: &Settings) -> Scanned {
 }
 
 impl Index {
-    #[must_use]
-    pub fn build(project: &Project) -> Self {
+    pub fn build(project: &Project) -> Result<Self, IndexError> {
         let settings = Settings::default();
         let root = project.root().to_path_buf();
         let sources: Vec<File> = project
             .source_files()
             .par_iter()
-            .filter_map(|path| return load(&root, path))
-            .collect();
-        let mut seen: BTreeSet<PathBuf> = project.source_files().into_iter().collect();
-        let mut extra: Vec<File> = project
+            .map(|path| return load(&root, path))
+            .collect::<Result<_, _>>()?;
+        let seen: Mutex<HashSet<PathBuf>> =
+            Mutex::new(project.source_files().into_iter().collect());
+        let looked_up: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
+        let extra: Vec<File> = project
             .always()
             .iter()
-            .filter(|path| return seen.insert((*path).clone()))
-            .filter_map(|path| return load(&root, path))
-            .collect();
-        extra.push(laravel::aliases_stub(&root));
+            .filter(|path| return claim(&seen, (*path).clone()))
+            .map(|path| return load(&root, path))
+            .chain(std::iter::once(Ok(laravel::aliases_stub(&root))))
+            .collect::<Result<_, _>>()?;
+        let failures: Mutex<Vec<IndexError>> = Mutex::new(Vec::new());
+        let scanned: Mutex<Vec<(Vec<u8>, CodebaseMetadata)>> = Mutex::new(Vec::new());
+        let walk = Walk {
+            project,
+            root: &root,
+            settings: &settings,
+            seen: &seen,
+            looked_up: &looked_up,
+            scanned: &scanned,
+            failures: &failures,
+        };
+        rayon::scope(|scope| {
+            for file in &sources {
+                scope.spawn(|scope| walk.visit(scope, file, Reach::Everything));
+            }
+            for file in &extra {
+                scope.spawn(|scope| walk.visit(scope, file, Reach::Declarations));
+            }
+        });
+        if let Some(failure) = failures
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .into_iter()
+            .min_by(|left, right| return left.path().cmp(&right.path()))
+        {
+            return Err(failure);
+        }
+        let mut parts = scanned
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        parts.sort_by(|left, right| return left.0.cmp(&right.0));
+        let scanned = parts.len();
         let Prelude {
             mut metadata,
             mut symbol_references,
             ..
-        } = Prelude::build();
-        let mut results: Vec<Scanned> = sources
-            .par_iter()
-            .chain(extra.par_iter())
-            .map(|file| return scan(file, &settings))
-            .collect();
-        let mut scanned = 0_usize;
-        while !results.is_empty() {
-            scanned = scanned.saturating_add(results.len());
-            let mut next = Vec::new();
-            for result in results {
-                metadata.extend(result.metadata);
-                next.extend(
-                    result
-                        .references
-                        .iter()
-                        .filter_map(|class| return project.class_file(class))
-                        .filter(|path| return seen.insert(path.clone())),
-                );
-            }
-            let wave: Vec<File> = next
-                .par_iter()
-                .filter_map(|path| return load(&root, path))
-                .collect();
-            results = wave
-                .par_iter()
-                .map(|file| return scan(file, &settings))
-                .collect();
+        } = Prelude::decode(PRELUDE)
+            .map_err(|error| return IndexError::Prelude(error.to_string()))?;
+        for (_, part) in parts {
+            metadata.extend(part);
         }
         populate_codebase(
             &mut metadata,
             &mut symbol_references,
             mago_word::WordSet::default(),
-            std::collections::HashSet::default(),
+            HashSet::default(),
         );
         let mut registry = PluginRegistry::with_library_providers();
         let facts = laravel::apply(&mut metadata, &registry, &settings, &sources);
@@ -143,7 +240,7 @@ impl Index {
             models: facts.models,
             facades: facts.facades,
         };
-        return Self {
+        return Ok(Self {
             metadata,
             registry,
             settings,
@@ -151,7 +248,7 @@ impl Index {
             forwards,
             root,
             stats,
-        };
+        });
     }
 
     pub const fn stats(&self) -> IndexStats {

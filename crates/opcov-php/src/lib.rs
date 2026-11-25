@@ -20,7 +20,7 @@ mod syntax;
 mod target;
 mod types;
 
-pub use consumers::Use;
-pub use index::{Index, IndexStats};
+pub use consumers::{Search, Use};
+pub use index::{Index, IndexError, IndexStats};
 pub use project::{Project, ProjectError};
 pub use target::{Command, Kind, ModelEvent, Request, Target, TargetError};

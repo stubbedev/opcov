@@ -1,14 +1,16 @@
 use std::io::{self, Write};
 use std::path::Path;
 
-use opcov_php::{Index, Project, Request, Target, Use};
+use opcov_php::{Index, IndexStats, Project, Request, Search, Target};
 use serde::Serialize;
 
 use crate::failure::Failure;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct Found {
-    uses: Vec<Use>,
+    #[serde(flatten)]
+    search: Search,
+    index: IndexStats,
 }
 
 pub(crate) fn request(
@@ -40,17 +42,28 @@ pub(crate) fn request(
 
 pub(crate) fn find(root: &Path, request: &Request) -> Result<Found, Failure> {
     let project = Project::open(root).map_err(|error| return Failure::failed(error.to_string()))?;
-    let index = Index::build(&project);
+    let index =
+        Index::build(&project).map_err(|error| return Failure::failed(error.to_string()))?;
     return Ok(Found {
-        uses: index.uses(request),
+        search: index.uses(request),
+        index: index.stats(),
     });
 }
 
 pub(crate) fn render_text(out: &mut dyn Write, found: &Found) -> io::Result<()> {
-    for found in &found.uses {
+    for found in &found.search.uses {
         writeln!(out, "{}:{}\t{}", found.path, found.line, found.target)?;
     }
-    return writeln!(out, "consumers: {} use(s)", found.uses.len());
+    return writeln!(
+        out,
+        "consumers: {} use(s) in {} of {} project file(s) that mention a target; {} file(s) indexed, {} model(s), {} facade(s)",
+        found.search.uses.len(),
+        found.search.analysed,
+        found.index.sources,
+        found.index.scanned,
+        found.index.models,
+        found.index.facades
+    );
 }
 
 pub(crate) fn render_json(out: &mut dyn Write, found: &Found) -> io::Result<()> {

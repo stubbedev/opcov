@@ -9,7 +9,7 @@ mod consumers {
         static INDEX: OnceLock<Index> = OnceLock::new();
         return INDEX.get_or_init(|| {
             let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/project");
-            return Index::build(&Project::open(&root).unwrap());
+            return Index::build(&Project::open(&root).unwrap()).unwrap();
         });
     }
 
@@ -17,6 +17,7 @@ mod consumers {
         let request: Request = serde_json::from_str(request).unwrap();
         return index()
             .uses(&request)
+            .uses
             .into_iter()
             .map(|found| return format!("{}:{} {}", found.path, found.line, found.target))
             .collect();

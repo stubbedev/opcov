@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -169,8 +169,8 @@ fn returned_map(
 #[derive(Debug, Clone)]
 pub struct Project {
     root: PathBuf,
-    namespaces: Vec<(String, Vec<PathBuf>)>,
-    classes: BTreeMap<String, PathBuf>,
+    namespaces: HashMap<String, Vec<PathBuf>>,
+    classes: HashMap<String, PathBuf>,
     always: Vec<PathBuf>,
     scope: Vec<PathBuf>,
 }
@@ -184,7 +184,7 @@ impl Project {
         let composer = root.join(COMPOSER_DIR);
         let vendor = root.join("vendor").to_string_lossy().into_owned();
         let base = root.to_string_lossy().into_owned();
-        let mut namespaces: Vec<(String, Vec<PathBuf>)> =
+        let namespaces: HashMap<String, Vec<PathBuf>> =
             returned_map(&composer.join(PSR4_MAP), &vendor, &base)?
                 .into_iter()
                 .map(|(prefix, value)| {
@@ -195,16 +195,9 @@ impl Project {
                         Value::Text(directory) => vec![PathBuf::from(directory)],
                         Value::Map(_) => Vec::new(),
                     };
-                    return (prefix, directories);
+                    return (lower(&prefix), directories);
                 })
                 .collect();
-        namespaces.sort_by(|left, right| {
-            return right
-                .0
-                .len()
-                .cmp(&left.0.len())
-                .then_with(|| return left.0.cmp(&right.0));
-        });
         let classes = returned_map(&composer.join(CLASS_MAP), &vendor, &base)?
             .into_iter()
             .filter_map(|(class, value)| {
@@ -294,22 +287,27 @@ impl Project {
     #[must_use]
     pub fn class_file(&self, class: &str) -> Option<PathBuf> {
         let class = class.trim_start_matches('\\');
-        if let Some(path) = self.classes.get(&lower(class)) {
+        let lowered = lower(class);
+        if let Some(path) = self.classes.get(&lowered) {
             return Some(path.clone());
         }
-        return self.namespaces.iter().find_map(|(prefix, directories)| {
-            let rest = class.get(prefix.len()..).filter(|_| {
-                return class.len() > prefix.len()
-                    && class
-                        .get(..prefix.len())
-                        .is_some_and(|head| return head.eq_ignore_ascii_case(prefix));
-            })?;
-            let relative = format!("{}.{SOURCE_EXTENSION}", rest.replace('\\', "/"));
-            return directories
-                .iter()
-                .map(|directory| return directory.join(&relative))
-                .find(|candidate| return candidate.is_file());
-        });
+        let boundaries = lowered
+            .match_indices('\\')
+            .map(|(index, _)| return index)
+            .rev();
+        return boundaries
+            .filter_map(|boundary| {
+                let prefix = lowered.get(..=boundary)?;
+                let rest = class.get(boundary.checked_add(1)?..)?;
+                return Some((self.namespaces.get(prefix)?, rest));
+            })
+            .find_map(|(directories, rest)| {
+                let relative = format!("{}.{SOURCE_EXTENSION}", rest.replace('\\', "/"));
+                return directories
+                    .iter()
+                    .map(|directory| return directory.join(&relative))
+                    .find(|candidate| return candidate.is_file());
+            });
     }
 
     #[must_use]
