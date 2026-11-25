@@ -11,6 +11,8 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-25
+
 ### Added
 
 - `opcov consumers` finds the code that uses changed PHP members in process
@@ -156,7 +158,8 @@ changed-code gate's coverage step is about 314x faster than Xdebug path
 coverage. On a 4.97M-line corpus, compiling with every file selected takes
 about 1.6x plain compilation (`docs/scale.md`).
 
-[Unreleased]: https://github.com/stubbedev/opcov/compare/v0.1.4...main
+[Unreleased]: https://github.com/stubbedev/opcov/compare/v0.2.0...main
+[0.2.0]: https://github.com/stubbedev/opcov/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/stubbedev/opcov/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/stubbedev/opcov/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/stubbedev/opcov/compare/v0.1.1...v0.1.2
