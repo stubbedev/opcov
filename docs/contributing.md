@@ -249,8 +249,15 @@ need it.
 ### CI
 
 Every workflow is in `.github/workflows/`; `.github/actions/setup-nix`
-installs Nix and restores the job's Nix store from the Actions cache, and
-`.github/actions/plan` evaluates the workspace version, the flake's nightly as
+installs Nix and restores the Nix store of the runner's platform from the
+Actions cache. The three platforms share one store each, keyed by
+`flake.lock`, `Cargo.lock` and `nix/`, and only `flake-check` writes it, with
+`.github/actions/save-nix`: on a push to `main` whose key has no cache yet, it
+deletes the platform's old store and saves its own, collected down to 8 GiB on
+Linux and 6 GiB on macOS. Three stores of at most about 2.8 GB compressed stay
+under the repository's 10 GB cache quota, so GitHub never evicts one; pull
+requests, tags and every other job only restore. `.github/actions/plan`
+evaluates the workspace version, the flake's nightly as
 a rustup toolchain name and the release image matrix. The job names are
 stable, so any of them can be made a required check.
 
