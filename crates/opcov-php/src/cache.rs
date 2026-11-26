@@ -6,6 +6,7 @@ use mago_database::file::FileId;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
+use crate::canonical;
 use crate::index::Scanned;
 use crate::references::Reach;
 
@@ -178,14 +179,8 @@ impl ScanCache {
 }
 
 pub(crate) fn encode_scanned(scanned: &Scanned) -> Result<Vec<u8>, CacheError> {
-    let (value, words) = mago_word::table::encode(|| {
-        return bincode::serde::encode_to_vec(scanned, standard());
-    });
-    let value = value.map_err(|error| return CacheError::Encode(error.to_string()))?;
-    let mut bytes = bincode::serde::encode_to_vec(&words, standard())
-        .map_err(|error| return CacheError::Encode(error.to_string()))?;
-    bytes.extend(value);
-    return Ok(bytes);
+    return canonical::encode(scanned)
+        .map_err(|error| return CacheError::Encode(error.to_string()));
 }
 
 pub(crate) fn decode_scanned(bytes: &[u8]) -> Option<Scanned> {

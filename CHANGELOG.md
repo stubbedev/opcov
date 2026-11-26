@@ -19,7 +19,9 @@ as the release notes, and refuses to release a version that has no section here.
   its content is the same, a vendor file while `composer.lock` is the same.
   On an 8,880-file Laravel application, a second search on one core executes
   26 G instructions instead of 46 G, with the same results. A cache from
-  another opcov build is ignored and a corrupt one is rebuilt.
+  another opcov build is ignored and a corrupt one is rebuilt. The cache's
+  bytes depend only on the tree and the opcov build, so two cold runs write
+  identical files that can be compared or stored by hash.
 
 ## [0.3.1] - 2026-11-26
 

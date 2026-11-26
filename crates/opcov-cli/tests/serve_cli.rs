@@ -245,9 +245,9 @@ mod serve_cli {
             cold
         );
         let replaced = fs::read(&cache).unwrap();
-        assert_ne!(
-            replaced, b"not an index cache",
-            "the corrupt cache is replaced"
+        assert!(
+            replaced == written,
+            "a cache rebuilt in another process has the same bytes"
         );
         assert_eq!(consumers(&runtime, &root, &["--no-serve"]), cold);
         assert_eq!(

@@ -10,6 +10,7 @@
 
 mod analysis;
 mod cache;
+mod canonical;
 mod consumers;
 mod facts;
 mod hierarchy;

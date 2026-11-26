@@ -189,6 +189,14 @@ mod live {
     }
 
     #[test]
+    fn two_cold_builds_of_the_same_tree_encode_the_same_cache() {
+        let root = project("cache-stable");
+        let first = cached(&root, ScanCache::new(BUILD)).cache.encode().unwrap();
+        let second = cached(&root, ScanCache::new(BUILD)).cache.encode().unwrap();
+        assert!(first == second, "the cache bytes depend only on the tree");
+    }
+
+    #[test]
     fn a_build_after_an_edit_parses_only_the_edited_file() {
         let root = project("cache-edit");
         let cold = cached(&root, ScanCache::new(BUILD));
