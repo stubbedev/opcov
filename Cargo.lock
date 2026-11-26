@@ -1377,7 +1377,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "opcov-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "clap",
  "notify",
@@ -1393,7 +1393,7 @@ dependencies = [
 
 [[package]]
 name = "opcov-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "jsonschema",
  "proptest",
@@ -1404,7 +1404,7 @@ dependencies = [
 
 [[package]]
 name = "opcov-ext"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "foldhash",
  "opcov-core",
@@ -1414,7 +1414,7 @@ dependencies = [
 
 [[package]]
 name = "opcov-php"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aho-corasick",
  "mago-allocator",
@@ -1433,7 +1433,7 @@ dependencies = [
 
 [[package]]
 name = "opcov-syntax"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "mago-allocator",
  "mago-database",
@@ -1447,7 +1447,7 @@ dependencies = [
 
 [[package]]
 name = "opcov-sys"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bindgen",
  "cc",

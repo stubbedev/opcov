@@ -11,6 +11,17 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-26
+
+### Fixed
+
+- `opcov serve` no longer rebuilds its index in a loop while nothing
+  changes. It queued every file watcher event, including the opens and reads
+  of a rebuild, so reading `composer.json` or `vendor/composer/` triggered
+  the next rebuild. Reads and metadata changes are now ignored, and a
+  Composer file or `config/app.php` rebuilds the index only when its content
+  differs from the one indexed.
+
 ## [0.3.0] - 2026-11-26
 
 ### Added
@@ -187,7 +198,8 @@ changed-code gate's coverage step is about 314x faster than Xdebug path
 coverage. On a 4.97M-line corpus, compiling with every file selected takes
 about 1.6x plain compilation (`docs/scale.md`).
 
-[Unreleased]: https://github.com/stubbedev/opcov/compare/v0.3.0...main
+[Unreleased]: https://github.com/stubbedev/opcov/compare/v0.3.1...main
+[0.3.1]: https://github.com/stubbedev/opcov/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/stubbedev/opcov/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/stubbedev/opcov/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/stubbedev/opcov/compare/v0.1.3...v0.1.4
