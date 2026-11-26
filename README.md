@@ -18,6 +18,9 @@ attribution, as a PHP extension written in Rust.
 - **Loops** that never ran zero times and loops that never ran two or more
   times in one activation.
 - **Which tests** hit each line, outcome and loop finding.
+- **What a change reaches**: the code that uses the changed members, found
+  in process with mago, including the code a framework calls (queued jobs,
+  event subscribers, model events, console commands).
 
 opcov never rewrites source. It builds the engine's control-flow graph of
 every selected function and puts fire-once probes on the opcodes that start a
@@ -117,6 +120,36 @@ branch. The PHPUnit 13.3
 coverage driver, `.cov` conversion and `opcov merge`/`doctor` are in
 [phpunit.md](docs/phpunit.md) and [cli.md](docs/cli.md).
 
+## Check every change
+
+`opcov check` checks the change since the last check in one command,
+without git, which makes it fit an editor or agent hook:
+
+```sh
+opcov check --report build/opcov.json -- vendor/bin/opcov-phpunit vendor/bin/phpunit
+```
+
+It diffs the project's PHP files against its snapshot of the last check,
+finds the changed members and the code that uses them, runs only the tests
+that reach the change, stitches that run into the report so it stays the
+report of the whole suite, and gates the changed functions and their
+consumers. A check with no change returns at once.
+
+The consumer search runs in [`opcov serve`](docs/cli.md#opcov-serve), a
+warm index of the project that follows edits; `opcov check` starts it when
+none runs. On a large Laravel application a depth-2 search answers in
+20–40 ms instead of 5–7 s, and a body edit is applied in about 22 ms.
+`opcov consumers` runs the search on its own:
+
+```sh
+git diff -U0 | opcov consumers --diff - --depth 2
+opcov consumers --target 'method App\Actions\Publish::handle'
+```
+
+Laravel's runtime types (model builders and static forwarding, scopes,
+relations, facades, aliases) are declared to the analyzer, so chained calls
+stay typed. See [cli.md](docs/cli.md#opcov-check).
+
 ## Comparison
 
 | | opcov | PCOV | Xdebug | [turbocov](https://github.com/shipmonk-rnd/turbocov) |
@@ -126,6 +159,7 @@ coverage driver, `.cov` conversion and `opcov merge`/`doctor` are in
 | Both sides of `??`, `?:`, `?->` | yes | no | no | no |
 | Loops run zero / two or more times | yes | no | no | no |
 | Own report with per-test attribution | yes | no (via php-code-coverage) | no (via php-code-coverage) | no |
+| Tests a change reaches, consumers of changed code | yes | no | no | no |
 | Carbon suite overhead (instructions) | 1.48x | 2.38x | 22.09x lines; branch timed out | 1.02x |
 
 opcov builds on turbocov's probe mechanism. Every difference from Xdebug and
@@ -138,7 +172,7 @@ PCOV is listed in [branch-semantics.md](docs/branch-semantics.md).
 - [install.md](docs/install.md): every install channel and platform requirement
 - [configuration.md](docs/configuration.md): INI settings and the `\opcov\` API
 - [phpunit.md](docs/phpunit.md): PHPUnit, Pest, paratest and the 13.3 driver
-- [cli.md](docs/cli.md): `opcov merge`, `convert`, `gate`, `doctor`
+- [cli.md](docs/cli.md): `opcov merge`, `convert`, `gate`, `impact`, `stitch`, `consumers`, `serve`, `check`, `doctor`
 - [gate.md](docs/gate.md): gating changed code in CI
 - [troubleshooting.md](docs/troubleshooting.md): every refusal message and its fix
 - [support.md](docs/support.md): versioning and supported PHP versions
