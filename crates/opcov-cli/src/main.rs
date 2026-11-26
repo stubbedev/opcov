@@ -41,6 +41,9 @@ use convert::{Format, convert};
 use failure::{Failure, Severity, Verdict};
 use output::{write_atomically, write_stderr, write_stdout};
 
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Debug, Parser)]
 #[command(name = "opcov", version, about)]
 struct Cli {

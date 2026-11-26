@@ -24,6 +24,12 @@ as the release notes, and refuses to release a version that has no section here.
   bytes depend only on the tree and the opcov build, so two cold runs write
   identical files that can be compared or stored by hash.
 
+### Changed
+
+- The opcov CLI allocates memory with mimalloc. The released static Linux
+  build used musl's allocator, which made a search on an 8,880-file Laravel
+  application take 9.7 s instead of 3.5 s.
+
 ## [0.3.1] - 2026-11-26
 
 ### Fixed
