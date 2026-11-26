@@ -11,6 +11,8 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-26
+
 ### Added
 
 - `opcov serve` keeps a project's PHP index warm and follows edits: a body
@@ -185,7 +187,8 @@ changed-code gate's coverage step is about 314x faster than Xdebug path
 coverage. On a 4.97M-line corpus, compiling with every file selected takes
 about 1.6x plain compilation (`docs/scale.md`).
 
-[Unreleased]: https://github.com/stubbedev/opcov/compare/v0.2.0...main
+[Unreleased]: https://github.com/stubbedev/opcov/compare/v0.3.0...main
+[0.3.0]: https://github.com/stubbedev/opcov/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/stubbedev/opcov/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/stubbedev/opcov/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/stubbedev/opcov/compare/v0.1.2...v0.1.3
