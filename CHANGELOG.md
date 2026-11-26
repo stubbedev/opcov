@@ -11,6 +11,8 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-26
+
 ### Added
 
 - `opcov consumers` and `opcov serve` keep a cache of the project's index
@@ -19,12 +21,11 @@ as the release notes, and refuses to release a version that has no section here.
   its content is the same, a vendor file while `composer.lock` is the same.
   On an 8,880-file Laravel application, a second search executes 22 G
   instructions instead of the first one's 44 G, with the same results, and
-  leaves the cache file untouched. A cache from
-  another opcov build is ignored and a corrupt one is rebuilt. The cache's
-  bytes depend only on the tree and the opcov build, so two cold runs write
-  identical files that can be compared or stored by hash.
-  Each entry is LZ4-compressed: the application's cache takes 40 MB
-  instead of 98 MB.
+  leaves the cache file untouched. Each entry is LZ4-compressed, so that
+  cache takes 40 MB instead of 98 MB. Its bytes depend only on the tree and
+  the opcov build, so two cold runs write identical files that can be
+  compared or stored by hash. A cache from another opcov build is ignored and
+  a corrupt one is rebuilt.
 
 ### Changed
 
