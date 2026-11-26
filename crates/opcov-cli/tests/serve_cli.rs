@@ -157,8 +157,10 @@ mod serve_cli {
     }
 
     #[test]
-    fn reading_or_touching_files_neither_rebuilds_nor_updates_the_index() {
-        let (root, runtime) = workspace("reads");
+    fn reading_or_touching_files_through_a_linked_root_neither_rebuilds_nor_updates_the_index() {
+        let (project, runtime) = workspace("reads");
+        let root = project.with_file_name("linked");
+        std::os::unix::fs::symlink(&project, &root).unwrap();
         let log = runtime.parent().unwrap().join("serve.log");
         let mut running = start(
             &runtime,

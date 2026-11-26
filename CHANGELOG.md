@@ -21,6 +21,9 @@ as the release notes, and refuses to release a version that has no section here.
   the next rebuild. Reads and metadata changes are now ignored, and a
   Composer file or `config/app.php` rebuilds the index only when its content
   differs from the one indexed.
+- `opcov serve` resolves the project root to its real path, so file events
+  for a root reached through a symbolic link (on macOS, the temporary
+  directory) match the indexed sources instead of rebuilding the index.
 
 ## [0.3.0] - 2026-11-26
 

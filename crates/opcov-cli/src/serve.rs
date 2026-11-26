@@ -414,10 +414,12 @@ fn watchdog(idle: Duration, last: &Arc<Mutex<Instant>>, stopping: &Arc<AtomicBoo
 }
 
 pub(crate) fn serve(root: &Path, idle: Option<Duration>) -> Result<(), Failure> {
-    let socket = socket_path(root)?;
+    let root =
+        fs::canonicalize(root).map_err(|error| return Failure::io("resolve", root, &error))?;
+    let socket = socket_path(&root)?;
     let listener = bind(&socket)?;
     let started = Instant::now();
-    let live = build(root)?;
+    let live = build(&root)?;
     log!(
         "indexed {} file(s) in {:.1?}, listening on {}",
         live.index.stats().scanned,
