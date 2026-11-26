@@ -202,4 +202,59 @@ mod serve_cli {
         assert!(running.0.wait().unwrap().success());
         fs::remove_dir_all(&runtime).unwrap();
     }
+
+    #[test]
+    fn a_search_in_process_reuses_its_index_cache_and_rebuilds_a_corrupt_one() {
+        let (root, runtime) = workspace("cache");
+        let cache = root.join(".opcov/index.cache");
+        let cold = consumers(&runtime, &root, &["--no-serve"]);
+        let written = fs::read(&cache).unwrap();
+        assert_eq!(
+            consumers(&runtime, &root, &["--no-serve"]),
+            cold,
+            "a search from the cache answers like one without it"
+        );
+        assert_eq!(
+            fs::read(&cache).unwrap(),
+            written,
+            "a search from the cache keeps it as it was"
+        );
+
+        fs::write(&cache, b"not an index cache").unwrap();
+        let rebuilt = opcov(
+            &runtime,
+            &[
+                "consumers",
+                "--root",
+                root.to_str().unwrap(),
+                "--target",
+                REQUEST,
+                "--format",
+                "json",
+                "--no-serve",
+            ],
+        );
+        assert!(rebuilt.status.success());
+        assert!(
+            String::from_utf8_lossy(&rebuilt.stderr).contains("rebuilding the index cache"),
+            "{}",
+            String::from_utf8_lossy(&rebuilt.stderr)
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&rebuilt.stdout).unwrap(),
+            cold
+        );
+        let replaced = fs::read(&cache).unwrap();
+        assert_ne!(
+            replaced, b"not an index cache",
+            "the corrupt cache is replaced"
+        );
+        assert_eq!(consumers(&runtime, &root, &["--no-serve"]), cold);
+        assert_eq!(
+            fs::read(&cache).unwrap(),
+            replaced,
+            "the replaced cache is read back"
+        );
+        fs::remove_dir_all(&runtime).unwrap();
+    }
 }

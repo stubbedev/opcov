@@ -9,6 +9,7 @@
 )]
 
 mod analysis;
+mod cache;
 mod consumers;
 mod facts;
 mod hierarchy;
@@ -25,8 +26,9 @@ mod target;
 mod tree;
 mod types;
 
+pub use cache::{CacheError, ScanCache};
 pub use consumers::{Search, Untyped, Use};
-pub use index::{Index, IndexError, IndexStats};
+pub use index::{Build, Index, IndexError, IndexStats};
 pub use live::Refresh;
 pub use members::Member;
 pub use project::{Project, ProjectError};

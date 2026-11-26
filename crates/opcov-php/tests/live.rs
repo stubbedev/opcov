@@ -3,7 +3,9 @@ mod live {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use opcov_php::{Index, Project, Refresh, Request};
+    use opcov_php::{Build, CacheError, Index, Project, Refresh, Request, ScanCache};
+
+    const BUILD: &[u8] = b"test build";
 
     const REQUESTS: [&str; 6] = [
         r#"{"targets": ["method App\\Services\\Report::render", "method App\\Services\\Report::__construct", "constant App\\Services\\Report::LIMIT", "property App\\Services\\Report::title"]}"#,
@@ -155,5 +157,98 @@ mod live {
             index.refresh(&project, &[path.as_path()]).unwrap(),
             Refresh::Rebuild("app/Uses/Receivers.php was deleted".to_owned())
         );
+    }
+
+    fn cached(root: &Path, previous: ScanCache) -> Build {
+        return Index::build_cached(&Project::open(root).unwrap(), previous).unwrap();
+    }
+
+    fn reloaded(cache: &ScanCache) -> ScanCache {
+        return ScanCache::decode(BUILD, &cache.encode().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_build_from_an_unchanged_cache_parses_nothing_and_answers_like_a_fresh_build() {
+        let root = project("cache-warm");
+        let cold = cached(&root, ScanCache::new(BUILD));
+        assert_eq!(
+            cold.parsed,
+            cold.index.stats().scanned,
+            "a cold build parses every file"
+        );
+        assert_eq!(results(&cold.index), results(&fresh(&root)));
+        let warm = cached(&root, reloaded(&cold.cache));
+        assert_eq!(warm.parsed, 0, "a warm build parses no file");
+        assert_eq!(warm.index.stats(), fresh(&root).stats());
+        assert_eq!(results(&warm.index), results(&fresh(&root)));
+        assert_eq!(
+            warm.cache.encode().unwrap(),
+            cold.cache.encode().unwrap(),
+            "a warm build keeps the cache as it was"
+        );
+    }
+
+    #[test]
+    fn a_build_after_an_edit_parses_only_the_edited_file() {
+        let root = project("cache-edit");
+        let cold = cached(&root, ScanCache::new(BUILD));
+        edit(
+            &root,
+            "app/Models/Comment.php",
+            "    public function approve(): void",
+            "    public function approve(int $times = 1): void",
+        );
+        let warm = cached(&root, reloaded(&cold.cache));
+        assert_eq!(warm.parsed, 1);
+        assert_eq!(results(&warm.index), results(&fresh(&root)));
+    }
+
+    #[test]
+    fn vendor_scans_are_reused_while_composer_lock_is_unchanged() {
+        let root = project("cache-vendor");
+        fs::write(root.join("composer.lock"), "{\"packages\": []}\n").unwrap();
+        let cold = cached(&root, ScanCache::new(BUILD));
+        let warm = cached(&root, reloaded(&cold.cache));
+        assert_eq!(warm.parsed, 0);
+        fs::write(
+            root.join("composer.lock"),
+            "{\"packages\": [], \"content-hash\": \"1\"}\n",
+        )
+        .unwrap();
+        let relocked = cached(&root, reloaded(&warm.cache));
+        let generated_aliases = 1;
+        let vendored = cold.parsed - cold.index.stats().sources - generated_aliases;
+        assert!(vendored > 0, "the fixture reaches vendor files");
+        assert_eq!(
+            relocked.parsed, vendored,
+            "a new composer.lock parses the vendor files again, and only them"
+        );
+        assert_eq!(results(&relocked.index), results(&fresh(&root)));
+    }
+
+    #[test]
+    fn a_corrupt_or_foreign_cache_is_refused() {
+        let root = project("cache-corrupt");
+        let bytes = cached(&root, ScanCache::new(BUILD)).cache.encode().unwrap();
+        let mut flipped = bytes.clone();
+        let last = flipped.last_mut().unwrap();
+        *last ^= 1;
+        for (name, corrupt) in [
+            ("a flipped byte", flipped),
+            ("a truncated file", bytes[..bytes.len() / 2].to_vec()),
+            ("another file", b"not a cache".to_vec()),
+        ] {
+            assert!(
+                matches!(
+                    ScanCache::decode(BUILD, &corrupt),
+                    Err(CacheError::Corrupt(_))
+                ),
+                "{name} is corrupt"
+            );
+        }
+        assert!(matches!(
+            ScanCache::decode(b"another build", &bytes),
+            Err(CacheError::Stale)
+        ));
     }
 }

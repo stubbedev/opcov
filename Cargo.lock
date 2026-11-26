@@ -1417,6 +1417,7 @@ name = "opcov-php"
 version = "0.3.1"
 dependencies = [
  "aho-corasick",
+ "bincode",
  "mago-allocator",
  "mago-analyzer",
  "mago-codex",
@@ -1429,6 +1430,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

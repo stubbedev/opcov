@@ -8,7 +8,9 @@ use mago_syntax::cst::{
 };
 use mago_syntax::walker::Walker;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub(crate) enum Reach {
     Everything,
     Declarations,

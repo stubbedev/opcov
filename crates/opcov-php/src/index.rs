@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use mago_allocator::LocalArena;
@@ -20,6 +20,9 @@ use std::sync::{Mutex, OnceLock};
 
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
+use crate::cache::{
+    CacheError, Digest, Key, ScanCache, Stamp, decode_scanned, digest, encode_scanned,
+};
 use crate::consumers::Untyped;
 use crate::facts::FileFacts;
 use crate::hierarchy::{TraitUsers, trait_users};
@@ -37,6 +40,10 @@ pub enum IndexError {
         path: PathBuf,
         error: std::io::Error,
     },
+    Cache {
+        name: String,
+        error: CacheError,
+    },
 }
 
 impl std::fmt::Display for IndexError {
@@ -49,6 +56,9 @@ impl std::fmt::Display for IndexError {
                 formatter,
                 "cannot load the PHP prelude built into opcov: {error}"
             ),
+            Self::Cache { name, error } => {
+                write!(formatter, "cannot cache the scan of {name}: {error}")
+            }
         };
     }
 }
@@ -59,7 +69,7 @@ impl IndexError {
     fn path(&self) -> Option<&Path> {
         return match self {
             Self::Read { path, .. } => Some(path),
-            Self::Prelude(_) => None,
+            Self::Prelude(_) | Self::Cache { .. } => None,
         };
     }
 }
@@ -145,6 +155,14 @@ impl std::fmt::Debug for Index {
     }
 }
 
+fn logical_name(root: &Path, path: &Path) -> String {
+    return path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned();
+}
+
 pub(crate) fn load(root: &Path, path: &Path) -> Result<File, IndexError> {
     let content = std::fs::read(path).map_err(|error| {
         return IndexError::Read {
@@ -152,17 +170,13 @@ pub(crate) fn load(root: &Path, path: &Path) -> Result<File, IndexError> {
             error,
         };
     })?;
-    let name = path
-        .strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .into_owned();
     return Ok(File::ephemeral(
-        Cow::Owned(name.into_bytes()),
+        Cow::Owned(logical_name(root, path).into_bytes()),
         Cow::Owned(content),
     ));
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct Scanned {
     pub(crate) metadata: CodebaseMetadata,
     pub(crate) references: BTreeSet<String>,
@@ -176,10 +190,90 @@ fn claim<T: Eq + std::hash::Hash>(seen: &Mutex<HashSet<T>>, item: T) -> bool {
         .insert(item);
 }
 
+#[derive(Debug)]
+pub struct Build {
+    pub index: Index,
+    pub cache: ScanCache,
+    pub parsed: usize,
+}
+
+struct Caching {
+    previous: Mutex<BTreeMap<Key, Vec<u8>>>,
+    vendor: bool,
+}
+
+impl Caching {
+    fn new(previous: ScanCache, lock: Option<Digest>) -> Self {
+        let vendor_valid = lock.is_some() && previous.vendor == lock;
+        let entries = previous
+            .entries
+            .into_iter()
+            .filter(|(key, _)| return vendor_valid || key.stamp != Stamp::Vendor)
+            .collect();
+        return Self {
+            previous: Mutex::new(entries),
+            vendor: lock.is_some(),
+        };
+    }
+
+    fn reuse(&self, key: &Key) -> Option<Obtained> {
+        let bytes = self
+            .previous
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(key)?;
+        let scanned = decode_scanned(&bytes)?;
+        return Some(Obtained {
+            scanned,
+            fresh: Fresh::Reused,
+            entry: Some((key.clone(), bytes)),
+        });
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fresh {
+    Parsed,
+    Reused,
+}
+
+struct Obtained {
+    scanned: Scanned,
+    fresh: Fresh,
+    entry: Option<(Key, Vec<u8>)>,
+}
+
+impl Obtained {
+    fn encoded(key: Key, scanned: Scanned) -> Result<Self, IndexError> {
+        let bytes = encode_scanned(&scanned).map_err(|error| {
+            return IndexError::Cache {
+                name: key.name.clone(),
+                error,
+            };
+        })?;
+        return Ok(Self {
+            scanned,
+            fresh: Fresh::Parsed,
+            entry: Some((key, bytes)),
+        });
+    }
+}
+
+enum Visit {
+    Source(File),
+    Loaded(File),
+    Path(PathBuf),
+}
+
+fn file_name(file: &File) -> String {
+    return String::from_utf8_lossy(file.name.as_ref()).into_owned();
+}
+
 struct Walk<'a> {
     project: &'a Project,
     root: &'a Path,
     settings: &'a Settings,
+    caching: Option<&'a Caching>,
     seen: &'a Mutex<HashSet<PathBuf>>,
     looked_up: &'a Mutex<HashSet<String>>,
     scanned: &'a Mutex<Vec<Part>>,
@@ -187,40 +281,98 @@ struct Walk<'a> {
 }
 
 impl Walk<'_> {
-    fn visit<'scope>(&'scope self, scope: &rayon::Scope<'scope>, file: File, reach: Reach) {
-        let Scanned {
-            metadata,
-            references,
-            hooks,
-        } = scan(&file, self.settings, reach);
+    fn obtain_file(&self, file: &File, reach: Reach) -> Result<Obtained, IndexError> {
+        let Some(caching) = self.caching else {
+            return Ok(Obtained {
+                scanned: scan(file, self.settings, reach),
+                fresh: Fresh::Parsed,
+                entry: None,
+            });
+        };
+        let key = Key {
+            name: file_name(file),
+            reach,
+            stamp: Stamp::Content(digest(file.contents.as_ref())),
+        };
+        if let Some(obtained) = caching.reuse(&key) {
+            return Ok(obtained);
+        }
+        return Obtained::encoded(key, scan(file, self.settings, reach));
+    }
+
+    fn obtain_path(&self, path: &Path) -> Result<Obtained, IndexError> {
+        let reach = Reach::Declarations;
+        if let Some(caching) = self.caching
+            && caching.vendor
+            && self.project.is_vendored(path)
+        {
+            let key = Key {
+                name: logical_name(self.root, path),
+                reach,
+                stamp: Stamp::Vendor,
+            };
+            if let Some(obtained) = caching.reuse(&key) {
+                return Ok(obtained);
+            }
+            let file = load(self.root, path)?;
+            return Obtained::encoded(key, scan(&file, self.settings, reach));
+        }
+        return self.obtain_file(&load(self.root, path)?, reach);
+    }
+
+    fn visit<'scope>(&'scope self, scope: &rayon::Scope<'scope>, visit: Visit) {
+        let obtained = match &visit {
+            Visit::Source(file) => self.obtain_file(file, Reach::Everything),
+            Visit::Loaded(file) => self.obtain_file(file, Reach::Declarations),
+            Visit::Path(path) => self.obtain_path(path),
+        };
+        let Obtained {
+            scanned:
+                Scanned {
+                    metadata,
+                    references,
+                    hooks,
+                },
+            fresh,
+            entry,
+        } = match obtained {
+            Ok(obtained) => obtained,
+            Err(error) => {
+                self.failures
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(error);
+                return;
+            }
+        };
         let unseen: Vec<String> = references
             .iter()
             .filter(|class| return claim(self.looked_up, class.to_ascii_lowercase()))
             .cloned()
             .collect();
+        let (name, origin) = match visit {
+            Visit::Source(file) => (file.name.to_vec(), Origin::Source(file, references)),
+            Visit::Loaded(file) => (file.name.to_vec(), Origin::Declarations),
+            Visit::Path(path) => (
+                logical_name(self.root, &path).into_bytes(),
+                Origin::Declarations,
+            ),
+        };
         self.scanned
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(Part {
-                name: file.name.to_vec(),
+                name,
                 metadata,
                 hooks,
-                origin: match reach {
-                    Reach::Everything => Origin::Source(file, references),
-                    Reach::Declarations => Origin::Declarations,
-                },
+                origin,
+                fresh,
+                entry,
             });
         let unseen = unseen.into_iter();
         for path in unseen.filter_map(|class| return self.project.class_file(&class)) {
             if claim(self.seen, path.clone()) {
-                scope.spawn(move |scope| match load(self.root, &path) {
-                    Ok(file) => self.visit(scope, file, Reach::Declarations),
-                    Err(error) => self
-                        .failures
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .push(error),
-                });
+                scope.spawn(move |scope| self.visit(scope, Visit::Path(path)));
             }
         }
     }
@@ -256,29 +408,36 @@ struct Part {
     metadata: CodebaseMetadata,
     hooks: Hooks,
     origin: Origin,
+    fresh: Fresh,
+    entry: Option<(Key, Vec<u8>)>,
 }
 
 fn scan_reachable(
     project: &Project,
-    root: &Path,
     settings: &Settings,
-    sources: Vec<File>,
+    caching: Option<&Caching>,
 ) -> Result<Vec<Part>, IndexError> {
+    let root = project.root();
+    let sources: Vec<File> = project
+        .source_files()
+        .par_iter()
+        .map(|path| return load(root, path))
+        .collect::<Result<_, _>>()?;
     let seen: Mutex<HashSet<PathBuf>> = Mutex::new(project.source_files().into_iter().collect());
     let looked_up: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
-    let extra: Vec<File> = project
+    let always: Vec<PathBuf> = project
         .always()
         .iter()
         .filter(|path| return claim(&seen, (*path).clone()))
-        .map(|path| return load(root, path))
-        .chain(std::iter::once(Ok(laravel::aliases_stub(root))))
-        .collect::<Result<_, _>>()?;
+        .cloned()
+        .collect();
     let failures: Mutex<Vec<IndexError>> = Mutex::new(Vec::new());
     let scanned: Mutex<Vec<Part>> = Mutex::new(Vec::new());
     let walk = Walk {
         project,
         root,
         settings,
+        caching,
         seen: &seen,
         looked_up: &looked_up,
         scanned: &scanned,
@@ -286,11 +445,12 @@ fn scan_reachable(
     };
     rayon::scope(|scope| {
         for file in sources {
-            scope.spawn(|scope| walk.visit(scope, file, Reach::Everything));
+            scope.spawn(|scope| walk.visit(scope, Visit::Source(file)));
         }
-        for file in extra {
-            scope.spawn(|scope| walk.visit(scope, file, Reach::Declarations));
+        for path in always {
+            scope.spawn(|scope| walk.visit(scope, Visit::Path(path)));
         }
+        scope.spawn(|scope| walk.visit(scope, Visit::Loaded(laravel::aliases_stub(root))));
     });
     if let Some(failure) = failures
         .into_inner()
@@ -315,16 +475,51 @@ pub(crate) fn merged_hooks(sources: &[Source]) -> Hooks {
     return hooks;
 }
 
+fn lock_digest(project: &Project) -> Result<Option<Digest>, IndexError> {
+    let path = project.lock_file();
+    return match std::fs::read(&path) {
+        Ok(bytes) => Ok(Some(digest(&bytes))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(IndexError::Read { path, error }),
+    };
+}
+
 impl Index {
     pub fn build(project: &Project) -> Result<Self, IndexError> {
         let settings = Settings::default();
+        let parts = scan_reachable(project, &settings, None)?;
+        return Self::assemble(project, settings, parts);
+    }
+
+    pub fn build_cached(project: &Project, previous: ScanCache) -> Result<Build, IndexError> {
+        let settings = Settings::default();
+        let lock = lock_digest(project)?;
+        let mut cache = previous.emptied(lock);
+        let caching = Caching::new(previous, lock);
+        let mut parts = scan_reachable(project, &settings, Some(&caching))?;
+        let mut parsed = 0_usize;
+        for part in &mut parts {
+            if part.fresh == Fresh::Parsed {
+                parsed = parsed.saturating_add(1);
+            }
+            if let Some((key, bytes)) = part.entry.take() {
+                cache.entries.insert(key, bytes);
+            }
+        }
+        let index = Self::assemble(project, settings, parts)?;
+        return Ok(Build {
+            index,
+            cache,
+            parsed,
+        });
+    }
+
+    fn assemble(
+        project: &Project,
+        settings: Settings,
+        parts: Vec<Part>,
+    ) -> Result<Self, IndexError> {
         let root = project.root().to_path_buf();
-        let sources: Vec<File> = project
-            .source_files()
-            .par_iter()
-            .map(|path| return load(&root, path))
-            .collect::<Result<_, _>>()?;
-        let parts = scan_reachable(project, &root, &settings, sources)?;
         let scanned = parts.len();
         let Prelude {
             mut metadata,

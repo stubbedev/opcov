@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,6 +17,7 @@ use sha2::{Digest, Sha256};
 
 use crate::failure::Failure;
 use crate::output::write_stderr;
+use crate::{index, local};
 
 macro_rules! log {
     ($($argument:tt)*) => {
@@ -33,14 +33,12 @@ const SPAWNED_IDLE: Duration = Duration::from_hours(1);
 const STARTUP: Duration = Duration::from_secs(10);
 const STARTUP_POLL: Duration = Duration::from_millis(20);
 const SOCKET_NAME: &str = "serve.sock";
-const LOCAL_DIRECTORY: &str = ".opcov";
 const RUNTIME_DIRECTORY: &str = "XDG_RUNTIME_DIR";
 #[cfg(target_os = "macos")]
 const MAX_SOCKET_PATH: usize = 103;
 #[cfg(not(target_os = "macos"))]
 const MAX_SOCKET_PATH: usize = 107;
 const DIGEST_BYTES: usize = 8;
-const PRIVATE: u32 = 0o700;
 const REBUILD_FILES: [&str; 3] = ["composer.json", "composer.lock", "config/app.php"];
 const AUTOLOAD_DIRECTORY: &str = "vendor/composer";
 const SOURCE_EXTENSION: &str = "php";
@@ -77,7 +75,7 @@ pub(crate) fn socket_path(root: &Path) -> Result<PathBuf, Failure> {
     let path = std::env::var_os(RUNTIME_DIRECTORY)
         .filter(|directory| return !directory.is_empty())
         .map_or_else(
-            || return root.join(LOCAL_DIRECTORY).join(SOCKET_NAME),
+            || return local::path(&root, SOCKET_NAME),
             |directory| {
                 let digest = Sha256::digest(root.as_os_str().as_encoded_bytes());
                 let name: String = digest
@@ -151,8 +149,7 @@ fn inputs(root: &Path) -> Result<BTreeMap<PathBuf, Fingerprint>, Failure> {
 fn build(root: &Path) -> Result<Live, Failure> {
     let inputs = inputs(root)?;
     let project = Project::open(root).map_err(|error| return Failure::failed(error.to_string()))?;
-    let index =
-        Index::build(&project).map_err(|error| return Failure::failed(error.to_string()))?;
+    let index = index::build(&project)?;
     return Ok(Live {
         project,
         index,
@@ -384,13 +381,7 @@ fn bind(path: &Path) -> Result<UnixListener, Failure> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(Failure::io("remove the stale socket", path, &error)),
     }
-    if let Some(parent) = path.parent() {
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(PRIVATE)
-            .create(parent)
-            .map_err(|error| return Failure::io("create", parent, &error))?;
-    }
+    local::create_parent(path)?;
     return UnixListener::bind(path).map_err(|error| return Failure::io("listen on", path, &error));
 }
 

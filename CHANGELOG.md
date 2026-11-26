@@ -11,6 +11,16 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+### Added
+
+- `opcov consumers` and `opcov serve` keep a cache of the project's index
+  in `.opcov/index.cache`, so a search without a running server parses only
+  the files that changed since the last one: a project file is reused while
+  its content is the same, a vendor file while `composer.lock` is the same.
+  On an 8,880-file Laravel application, a second search on one core executes
+  26 G instructions instead of 46 G, with the same results. A cache from
+  another opcov build is ignored and a corrupt one is rebuilt.
+
 ## [0.3.1] - 2026-11-26
 
 ### Fixed

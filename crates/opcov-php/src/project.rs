@@ -17,6 +17,8 @@ const FILES_MAP: &str = "autoload_files.php";
 const VENDOR_DIR: &[u8] = b"$vendorDir";
 const BASE_DIR: &[u8] = b"$baseDir";
 const ROOT_MANIFEST: &str = "composer.json";
+const LOCK_FILE: &str = "composer.lock";
+const VENDOR: &str = "vendor";
 const AUTOLOAD: &str = "autoload";
 const AUTOLOAD_DEV: &str = "autoload-dev";
 const SOURCE_EXTENSION: &str = "php";
@@ -172,6 +174,7 @@ fn returned_map(
 #[derive(Debug, Clone)]
 pub struct Project {
     root: PathBuf,
+    vendor: PathBuf,
     namespaces: HashMap<String, Vec<PathBuf>>,
     classes: HashMap<String, PathBuf>,
     always: Vec<PathBuf>,
@@ -186,7 +189,8 @@ fn lower(text: &str) -> String {
 impl Project {
     pub fn open(root: &Path) -> Result<Self, ProjectError> {
         let composer = root.join(COMPOSER_DIR);
-        let vendor = root.join("vendor").to_string_lossy().into_owned();
+        let vendor_dir = root.join(VENDOR);
+        let vendor = vendor_dir.to_string_lossy().into_owned();
         let base = root.to_string_lossy().into_owned();
         let namespaces: HashMap<String, Vec<PathBuf>> =
             returned_map(&composer.join(PSR4_MAP), &vendor, &base)?
@@ -225,6 +229,7 @@ impl Project {
         let development = Self::autoload_scope(root, &manifest, AUTOLOAD_DEV);
         return Ok(Self {
             root: root.to_path_buf(),
+            vendor: vendor_dir,
             namespaces,
             classes,
             always,
@@ -282,6 +287,14 @@ impl Project {
     #[must_use]
     pub fn root(&self) -> &Path {
         return &self.root;
+    }
+
+    pub(crate) fn is_vendored(&self, path: &Path) -> bool {
+        return path.starts_with(&self.vendor);
+    }
+
+    pub(crate) fn lock_file(&self) -> PathBuf {
+        return self.root.join(LOCK_FILE);
     }
 
     #[must_use]

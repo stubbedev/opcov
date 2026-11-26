@@ -544,6 +544,18 @@ large `vendor/` costs only the parts the application uses. Run
 `composer install` (or `composer dump-autoload`) first; without the maps
 `consumers` cannot run.
 
+### The index cache
+
+A search in process keeps what it learned from each file in
+`<root>/.opcov/index.cache`, and the next search parses only the files that
+changed: a project file is reused while its content is the same, a vendor
+file while `composer.lock` is the same. A cache written by another opcov
+build is ignored, and a corrupt one is rebuilt with a note on standard
+error; either way the results are the same as without a cache. The cache is
+written to a temporary file and renamed into place, so concurrent searches
+never read a partial one. `opcov serve` uses it too, when it starts and when
+it rebuilds its index. Add `.opcov/` to `.gitignore`.
+
 ### What a use is
 
 - **A member use is matched by the receiver's type.** `$report->render()`
@@ -662,7 +674,7 @@ rebuild with its duration on standard error.
 
 **The socket.** The server listens on a Unix socket in `$XDG_RUNTIME_DIR`,
 named after a digest of the project root, or in `<root>/.opcov/` when
-`XDG_RUNTIME_DIR` is unset. Add `.opcov/` to `.gitignore` in that case. A
+`XDG_RUNTIME_DIR` is unset. A
 client of another opcov version is refused with a message to restart the
 server.
 

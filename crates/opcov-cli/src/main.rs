@@ -24,6 +24,8 @@ mod doctor;
 mod failure;
 mod gate;
 mod impact;
+mod index;
+mod local;
 mod output;
 mod serve;
 mod snapshot;

@@ -1,12 +1,12 @@
 use std::io::{self, Write};
 use std::path::Path;
 
-use opcov_php::{Answer, Changed, FileChange, Index, Project, Query, Request, Target};
+use opcov_php::{Answer, Changed, FileChange, Project, Query, Request, Target};
 use serde::Serialize;
 
 use crate::changes::{Change, ChangeSet, FileChange as Lines};
 use crate::failure::Failure;
-use crate::serve;
+use crate::{index, serve};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct Found {
@@ -87,8 +87,7 @@ pub(crate) fn find(root: &Path, query: &Query, via: Via) -> Result<Found, Failur
         });
     }
     let project = Project::open(root).map_err(|error| return Failure::failed(error.to_string()))?;
-    let index =
-        Index::build(&project).map_err(|error| return Failure::failed(error.to_string()))?;
+    let index = index::build(&project)?;
     return Ok(Found {
         answer: index.answer(query),
         served: false,

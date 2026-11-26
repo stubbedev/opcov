@@ -89,7 +89,7 @@ fn calls_of(event: &str) -> Option<&'static [Calls]> {
         .map(|(_, calls)| return *calls);
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Hooks {
     observers: BTreeSet<(String, String)>,
     closures: BTreeMap<(String, String), BTreeSet<String>>,
