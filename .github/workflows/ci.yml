@@ -19,17 +19,15 @@ jobs:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest]
     runs-on: ${{ matrix.runner }}
-    permissions:
-      actions: write
-      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-nix
+        with:
+          xilo-token: ${{ secrets.XILO_TOKEN }}
       - name: Run every check
         run: nix flake check -L --keep-going
-      - uses: ./.github/actions/save-nix
 
   php-package:
     runs-on: ubuntu-24.04
@@ -38,6 +36,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-nix
+        with:
+          xilo-token: ${{ secrets.XILO_TOKEN }}
       - name: Check the opcov/phpunit package
         run: nix develop -c just php-check
 
@@ -49,6 +49,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-nix
+        with:
+          xilo-token: ${{ secrets.XILO_TOKEN }}
       - name: Run opcov-core's tests under Miri
         run: nix develop -c just miri
 
@@ -62,6 +64,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-nix
+        with:
+          xilo-token: ${{ secrets.XILO_TOKEN }}
       - uses: ./.github/actions/plan
         id: plan
 
@@ -83,6 +87,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-nix
+        with:
+          xilo-token: ${{ secrets.XILO_TOKEN }}
       - name: Compare opcov with Xdebug and PCOV on the fixtures
         env:
           OPCOV_MEASURE_PHP: ${{ matrix.php }}

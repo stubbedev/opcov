@@ -249,14 +249,14 @@ need it.
 ### CI
 
 Every workflow is in `.github/workflows/`; `.github/actions/setup-nix`
-installs Nix and restores the Nix store of the runner's platform from the
-Actions cache. The three platforms share one store each, keyed by
-`flake.lock`, `Cargo.lock` and `nix/`, and only `flake-check` writes it, with
-`.github/actions/save-nix`: on a push to `main` whose key has no cache yet, it
-deletes the platform's old store and saves its own, collected down to 8 GiB on
-Linux and 6 GiB on macOS. Three stores of at most about 2.8 GB compressed stay
-under the repository's 10 GB cache quota, so GitHub never evicts one; pull
-requests, tags and every other job only restore. `.github/actions/plan`
+installs Nix with the xilo binary cache `stubbedev/main` at xilos.dev as a
+substituter. With the `XILO_TOKEN` secret, every job pushes each store path it
+builds there, so a PHP build such as the ZTS, debug or sanitizer builds that
+cache.nixos.org lacks is compiled once per platform and substituted by every
+later job; a run without secrets, such as a Dependabot pull request, only
+pulls. The flake's `nixConfig` names the same cache, so a local
+`nix develop` substitutes from it too once you accept the flake's
+configuration. `.github/actions/plan`
 evaluates the workspace version, the flake's nightly as
 a rustup toolchain name and the release image matrix. The job names are
 stable, so any of them can be made a required check.

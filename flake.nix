@@ -1,6 +1,11 @@
 {
   description = "opcov";
 
+  nixConfig = {
+    extra-substituters = ["https://xilos.dev/c/stubbedev/main"];
+    extra-trusted-public-keys = ["xilos.dev/stubbedev/main-1:397R6S49v/FSvP+mZ3HlKrVN1KXhgzHIEIHxA/UuG6Y="];
+  };
+
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     crane.url = "github:ipetkov/crane";

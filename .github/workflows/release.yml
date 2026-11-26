@@ -27,6 +27,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-nix
+        with:
+          xilo-token: ${{ secrets.XILO_TOKEN }}
       - uses: ./.github/actions/plan
         id: plan
       - name: Check the tag against Cargo.toml and CHANGELOG.md
@@ -52,6 +54,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-nix
+        with:
+          xilo-token: ${{ secrets.XILO_TOKEN }}
       - name: Build, test and package the extension for every PHP build
         run: |
           nix build -L .#release
@@ -174,6 +178,8 @@ jobs:
             dist/*.tgz
             dist/opcov-cli-*
       - uses: ./.github/actions/setup-nix
+        with:
+          xilo-token: ${{ secrets.XILO_TOKEN }}
       - name: Write the release notes
         env:
           VERSION: ${{ needs.plan.outputs.version }}

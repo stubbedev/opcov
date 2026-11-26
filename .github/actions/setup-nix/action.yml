@@ -1,27 +1,18 @@
 name: "setup-nix"
-description: "Install Nix and restore the Nix store that every job on this runner platform shares from the Actions cache; only save-nix writes that cache"
+description: "Install Nix with the xilo binary cache at xilos.dev as a substituter, and push every store path the job builds to it when given a token"
+
+inputs:
+  xilo-token:
+    description: "Push token for the stubbedev/main cache; empty when the run has no secrets, such as a Dependabot pull request, which then only pulls"
+    required: true
 
 runs:
   using: "composite"
   steps:
     - uses: cachix/install-nix-action@bb0495a1086c46893eee56f32fd192dfe4a15bb9 # v32.0.0
-    - name: Name this platform's Nix store cache
-      shell: bash
-      env:
-        PREFIX: nix-${{ runner.os }}-${{ runner.arch }}-
-        INPUTS: ${{ hashFiles('flake.lock', 'Cargo.lock', 'nix/**') }}
-      run: |
-        {
-          echo "NIX_STORE_CACHE_PREFIX=$PREFIX"
-          echo "NIX_STORE_CACHE_KEY=$PREFIX$INPUTS"
-        } >> "$GITHUB_ENV"
-    - uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7
-      id: restore
+    - uses: stubbedev/xilo@e23c96316500d2e4b668f20313ef3c76e103b5d9 # v2.0.2
       with:
-        primary-key: ${{ env.NIX_STORE_CACHE_KEY }}
-        restore-prefixes-first-match: ${{ env.NIX_STORE_CACHE_PREFIX }}
-    - name: Remember whether the cache already holds this store
-      shell: bash
-      env:
-        HIT: ${{ steps.restore.outputs.hit-primary-key }}
-      run: echo "NIX_STORE_CACHE_HIT=$HIT" >> "$GITHUB_ENV"
+        url: https://xilos.dev
+        cache: stubbedev/main
+        token: ${{ inputs.xilo-token }}
+        version: v2.0.2

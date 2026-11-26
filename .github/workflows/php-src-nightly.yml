@@ -28,6 +28,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-nix
+        with:
+          xilo-token: ${{ secrets.XILO_TOKEN }}
       - name: Build php-src master and run the .phpt suite against it
         env:
           THREAD_SAFETY: ${{ matrix.thread-safety }}

@@ -67,6 +67,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-nix
+        with:
+          xilo-token: ${{ secrets.XILO_TOKEN }}
       - name: Analyze and lint opcov/phpunit with mago
         working-directory: php/phpunit
         run: |
@@ -93,6 +95,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-nix
+        with:
+          xilo-token: ${{ secrets.XILO_TOKEN }}
       - name: Audit the locked Composer dependencies
         run: |
           for dir in php/phpunit php/phpunit/tests/fixture/phpunit12 php/phpunit/tests/fixture/phpunit13 php/phpunit/tests/fixture/pest4 php/phpunit/tests/fixture/pest5; do
@@ -110,6 +114,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-nix
+        with:
+          xilo-token: ${{ secrets.XILO_TOKEN }}
       - name: Check advisories
         run: nix develop --command just deny advisories
 

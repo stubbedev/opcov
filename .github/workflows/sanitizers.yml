@@ -27,6 +27,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-nix
+        with:
+          xilo-token: ${{ secrets.XILO_TOKEN }}
       - name: Run the .phpt suite with an AddressSanitizer build of the extension in an ASan and UBSan debug PHP 8.5
         run: nix develop .#php85-asan -c just phpt
 
@@ -38,6 +40,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-nix
+        with:
+          xilo-token: ${{ secrets.XILO_TOKEN }}
       - name: Run the .phpt suite in a debug PHP 8.5, where ZEND_DEBUG assertions and leak reports fail a test
         run: nix develop .#php85-debug -c just phpt
       - name: Run the .phpt suite under Valgrind's memcheck, where any leak fails a test
