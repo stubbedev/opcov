@@ -10,7 +10,7 @@ use crate::index::Scanned;
 use crate::references::Reach;
 
 const MAGIC: &[u8] = b"opcov scan cache 1\n";
-const FORMAT: &[u8] = b"opcov scan cache format 2";
+const FORMAT: &[u8] = b"opcov scan cache format 3";
 const DIGEST_BYTES: usize = 32;
 const FILE_ID_PROBE: &[u8] = b"opcov";
 
@@ -178,11 +178,14 @@ impl ScanCache {
 }
 
 pub(crate) fn encode_scanned(scanned: &Scanned) -> Result<Vec<u8>, CacheError> {
-    return canonical::encode(scanned)
-        .map_err(|error| return CacheError::Encode(error.to_string()));
+    let encoded =
+        canonical::encode(scanned).map_err(|error| return CacheError::Encode(error.to_string()))?;
+    return Ok(lz4_flex::block::compress_prepend_size(&encoded));
 }
 
-pub(crate) fn decode_scanned(bytes: &[u8]) -> Option<Scanned> {
+pub(crate) fn decode_scanned(compressed: &[u8]) -> Option<Scanned> {
+    let bytes = lz4_flex::block::decompress_size_prepended(compressed).ok()?;
+    let bytes = bytes.as_slice();
     let (words, read): (Vec<mago_word::Word>, usize) =
         bincode::serde::decode_from_slice(bytes, standard()).ok()?;
     let rest = bytes.get(read..)?;
