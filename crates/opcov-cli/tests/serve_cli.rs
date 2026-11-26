@@ -39,7 +39,10 @@ mod serve_cli {
             fs::remove_dir_all(&base).unwrap();
         }
         let root = base.join("project");
-        let runtime = base.join("run");
+        let runtime = std::env::temp_dir().join(format!("opcov-{name}-{}", std::process::id()));
+        if runtime.exists() {
+            fs::remove_dir_all(&runtime).unwrap();
+        }
         fs::create_dir_all(&runtime).unwrap();
         let fixture =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../opcov-php/tests/fixtures/project");
@@ -84,7 +87,7 @@ mod serve_cli {
     }
 
     fn start(runtime: &Path, root: &Path, log: Stdio) -> Server {
-        let server = Command::new(BINARY)
+        let mut server = Command::new(BINARY)
             .env("XDG_RUNTIME_DIR", runtime)
             .args(["serve", "--root", root.to_str().unwrap()])
             .stdout(Stdio::null())
@@ -94,6 +97,9 @@ mod serve_cli {
         let started = Instant::now();
         while fs::read_dir(runtime).unwrap().next().is_none() {
             assert!(started.elapsed() < STARTUP, "opcov serve did not listen");
+            if let Some(status) = server.try_wait().unwrap() {
+                panic!("opcov serve exited before it listened: {status}");
+            }
             std::thread::sleep(POLL);
         }
         return Server(server);
@@ -143,6 +149,7 @@ mod serve_cli {
             false,
             "without a server the search runs in process"
         );
+        fs::remove_dir_all(&runtime).unwrap();
     }
 
     fn wait_for(log: &Path, text: &str) {
@@ -161,7 +168,7 @@ mod serve_cli {
         let (project, runtime) = workspace("reads");
         let root = project.with_file_name("linked");
         std::os::unix::fs::symlink(&project, &root).unwrap();
-        let log = runtime.parent().unwrap().join("serve.log");
+        let log = project.with_file_name("serve.log");
         let mut running = start(
             &runtime,
             &root,
@@ -193,5 +200,6 @@ mod serve_cli {
             &["serve", "--root", root.to_str().unwrap(), "--stop"],
         );
         assert!(running.0.wait().unwrap().success());
+        fs::remove_dir_all(&runtime).unwrap();
     }
 }

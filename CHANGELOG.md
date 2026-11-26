@@ -24,6 +24,8 @@ as the release notes, and refuses to release a version that has no section here.
 - `opcov serve` resolves the project root to its real path, so file events
   for a root reached through a symbolic link (on macOS, the temporary
   directory) match the indexed sources instead of rebuilding the index.
+- `opcov serve` accepts socket paths up to the platform's limit (103 bytes
+  on macOS, 107 on Linux) instead of refusing any over 100.
 
 ## [0.3.0] - 2026-11-26
 
