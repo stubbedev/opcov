@@ -4,21 +4,20 @@ use std::fmt;
 use bincode::config::standard;
 use mago_database::file::FileId;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 
 use crate::canonical;
 use crate::index::Scanned;
 use crate::references::Reach;
 
 const MAGIC: &[u8] = b"opcov scan cache 1\n";
-const FORMAT: &[u8] = b"opcov scan cache format 1";
+const FORMAT: &[u8] = b"opcov scan cache format 2";
 const DIGEST_BYTES: usize = 32;
 const FILE_ID_PROBE: &[u8] = b"opcov";
 
 pub(crate) type Digest = [u8; DIGEST_BYTES];
 
 pub(crate) fn digest(bytes: &[u8]) -> Digest {
-    return Sha256::digest(bytes).into();
+    return *blake3::hash(bytes).as_bytes();
 }
 
 #[derive(Debug)]
@@ -76,11 +75,11 @@ impl fmt::Debug for ScanCache {
 }
 
 fn identity(build: &[u8]) -> Digest {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(FORMAT);
-    hasher.update(FileId::new(FILE_ID_PROBE).as_u64().to_le_bytes());
+    hasher.update(&FileId::new(FILE_ID_PROBE).as_u64().to_le_bytes());
     hasher.update(build);
-    return hasher.finalize().into();
+    return *hasher.finalize().as_bytes();
 }
 
 fn corrupt(reason: impl fmt::Display) -> CacheError {

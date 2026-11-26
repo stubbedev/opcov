@@ -209,16 +209,18 @@ mod serve_cli {
         let cache = root.join(".opcov/index.cache");
         let cold = consumers(&runtime, &root, &["--no-serve"]);
         let written = fs::read(&cache).unwrap();
+        let modified = fs::metadata(&cache).unwrap().modified().unwrap();
         assert_eq!(
             consumers(&runtime, &root, &["--no-serve"]),
             cold,
             "a search from the cache answers like one without it"
         );
         assert_eq!(
-            fs::read(&cache).unwrap(),
-            written,
-            "a search from the cache keeps it as it was"
+            fs::metadata(&cache).unwrap().modified().unwrap(),
+            modified,
+            "a search from an unchanged cache does not rewrite it"
         );
+        assert_eq!(fs::read(&cache).unwrap(), written);
 
         fs::write(&cache, b"not an index cache").unwrap();
         let rebuilt = opcov(

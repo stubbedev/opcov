@@ -64,15 +64,19 @@ pub(crate) fn build(project: &Project) -> Result<Index, Failure> {
     let path = local::path(project.root(), CACHE_NAME);
     let build = build_identity()?;
     let read = read(&path)?;
-    let Build { index, cache, .. } =
-        Index::build_cached(project, previous(&path, &build, read.as_deref())?)
-            .map_err(|error| return Failure::failed(error.to_string()))?;
+    let Build {
+        index,
+        cache,
+        changed,
+        ..
+    } = Index::build_cached(project, previous(&path, &build, read.as_deref())?)
+        .map_err(|error| return Failure::failed(error.to_string()))?;
+    if !changed {
+        return Ok(index);
+    }
     let bytes = cache
         .encode()
         .map_err(|error| return Failure::failed(error.to_string()))?;
-    if read.as_ref() == Some(&bytes) {
-        return Ok(index);
-    }
     local::create_parent(&path)?;
     write_atomically(&path, |mut out| {
         out.write_all(&bytes)

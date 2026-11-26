@@ -177,8 +177,10 @@ mod live {
             "a cold build parses every file"
         );
         assert_eq!(results(&cold.index), results(&fresh(&root)));
+        assert!(cold.changed, "a cold build fills the cache");
         let warm = cached(&root, reloaded(&cold.cache));
         assert_eq!(warm.parsed, 0, "a warm build parses no file");
+        assert!(!warm.changed, "a warm build leaves the cache unchanged");
         assert_eq!(warm.index.stats(), fresh(&root).stats());
         assert_eq!(results(&warm.index), results(&fresh(&root)));
         assert_eq!(
@@ -208,7 +210,20 @@ mod live {
         );
         let warm = cached(&root, reloaded(&cold.cache));
         assert_eq!(warm.parsed, 1);
+        assert!(warm.changed);
         assert_eq!(results(&warm.index), results(&fresh(&root)));
+    }
+
+    #[test]
+    fn a_build_after_a_deletion_parses_nothing_and_drops_the_file_from_the_cache() {
+        let root = project("cache-delete");
+        let cold = cached(&root, ScanCache::new(BUILD));
+        fs::remove_file(root.join("app/Uses/Receivers.php")).unwrap();
+        let warm = cached(&root, reloaded(&cold.cache));
+        assert_eq!(warm.parsed, 0);
+        assert!(warm.changed, "the deleted file's scan leaves the cache");
+        assert_eq!(results(&warm.index), results(&fresh(&root)));
+        assert!(!cached(&root, reloaded(&warm.cache)).changed);
     }
 
     #[test]

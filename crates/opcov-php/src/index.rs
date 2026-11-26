@@ -195,6 +195,7 @@ pub struct Build {
     pub index: Index,
     pub cache: ScanCache,
     pub parsed: usize,
+    pub changed: bool,
 }
 
 struct Caching {
@@ -495,6 +496,7 @@ impl Index {
         let settings = Settings::default();
         let lock = lock_digest(project)?;
         let mut cache = previous.emptied(lock);
+        let (previous_entries, previous_vendor) = (previous.entries.len(), previous.vendor);
         let caching = Caching::new(previous, lock);
         let mut parts = scan_reachable(project, &settings, Some(&caching))?;
         let mut parsed = 0_usize;
@@ -507,10 +509,14 @@ impl Index {
             }
         }
         let index = Self::assemble(project, settings, parts)?;
+        let changed = parsed > 0
+            || cache.entries.len() != previous_entries
+            || cache.vendor != previous_vendor;
         return Ok(Build {
             index,
             cache,
             parsed,
+            changed,
         });
     }
 
