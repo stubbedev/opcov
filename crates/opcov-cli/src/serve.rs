@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::DirBuilderExt;
@@ -10,7 +10,8 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use notify::event::ModifyKind;
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use opcov_php::{Answer, Index, Project, Query, Refresh};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -56,9 +57,12 @@ enum Reply {
     Error { error: String },
 }
 
+type Fingerprint = Option<[u8; 32]>;
+
 struct Live {
     project: Project,
     index: Index,
+    inputs: BTreeMap<PathBuf, Fingerprint>,
 }
 
 type Shared = Arc<RwLock<Live>>;
@@ -102,11 +106,68 @@ fn write(shared: &Shared) -> std::sync::RwLockWriteGuard<'_, Live> {
     return shared.write().unwrap_or_else(PoisonError::into_inner);
 }
 
+fn digest(path: &Path) -> Result<Fingerprint, Failure> {
+    return match fs::read(path) {
+        Ok(bytes) => Ok(Some(Sha256::digest(bytes).into())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(Failure::io("read", path, &error)),
+    };
+}
+
+fn is_input(root: &Path, path: &Path) -> bool {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    return REBUILD_FILES
+        .iter()
+        .any(|file| return relative == Path::new(file))
+        || relative.starts_with(AUTOLOAD_DIRECTORY);
+}
+
+fn inputs(root: &Path) -> Result<BTreeMap<PathBuf, Fingerprint>, Failure> {
+    let mut found = BTreeMap::new();
+    for file in REBUILD_FILES {
+        let path = root.join(file);
+        found.insert(path.clone(), digest(&path)?);
+    }
+    let autoload = root.join(AUTOLOAD_DIRECTORY);
+    let entries = match fs::read_dir(&autoload) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(found),
+        Err(error) => return Err(Failure::io("list", &autoload, &error)),
+    };
+    for entry in entries {
+        let path = entry
+            .map_err(|error| return Failure::io("list", &autoload, &error))?
+            .path();
+        if !path.is_dir() {
+            found.insert(path.clone(), digest(&path)?);
+        }
+    }
+    return Ok(found);
+}
+
 fn build(root: &Path) -> Result<Live, Failure> {
+    let inputs = inputs(root)?;
     let project = Project::open(root).map_err(|error| return Failure::failed(error.to_string()))?;
     let index =
         Index::build(&project).map_err(|error| return Failure::failed(error.to_string()))?;
-    return Ok(Live { project, index });
+    return Ok(Live {
+        project,
+        index,
+        inputs,
+    });
+}
+
+fn changed_input(live: &Live, paths: &BTreeSet<PathBuf>) -> Result<Option<String>, Failure> {
+    for path in paths
+        .iter()
+        .filter(|path| return is_input(live.project.root(), path))
+    {
+        if live.inputs.get(path).copied().flatten() != digest(path)? {
+            let relative = path.strip_prefix(live.project.root()).unwrap_or(path);
+            return Ok(Some(format!("{} changed", relative.display())));
+        }
+    }
+    return Ok(None);
 }
 
 fn warm(shared: &Shared) {
@@ -119,14 +180,10 @@ fn warm(shared: &Shared) {
 }
 
 fn relevant(root: &Path, path: &Path) -> bool {
-    let relative = path.strip_prefix(root).unwrap_or(path);
     return path
         .extension()
         .is_some_and(|extension| return extension == SOURCE_EXTENSION)
-        || REBUILD_FILES
-            .iter()
-            .any(|file| return relative == Path::new(file))
-        || relative.starts_with(AUTOLOAD_DIRECTORY);
+        || is_input(root, path);
 }
 
 fn sync(shared: &Shared, pending: &Pending, extra: Vec<PathBuf>) -> Result<(), Failure> {
@@ -137,11 +194,20 @@ fn sync(shared: &Shared, pending: &Pending, extra: Vec<PathBuf>) -> Result<(), F
     if paths.is_empty() {
         return Ok(());
     }
-    let changed: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
     let started = Instant::now();
     let mut live = write(shared);
-    let refresh = {
-        let Live { project, index } = &mut *live;
+    let refresh = if let Some(reason) = changed_input(&live, &paths)? {
+        Refresh::Rebuild(reason)
+    } else {
+        let changed: Vec<&Path> = paths
+            .iter()
+            .filter(|path| return !is_input(&root, path))
+            .map(PathBuf::as_path)
+            .collect();
+        if changed.is_empty() {
+            return Ok(());
+        }
+        let Live { project, index, .. } = &mut *live;
         index
             .refresh(project, &changed)
             .map_err(|error| return Failure::failed(error.to_string()))?
@@ -161,6 +227,13 @@ fn sync(shared: &Shared, pending: &Pending, extra: Vec<PathBuf>) -> Result<(), F
     return Ok(());
 }
 
+const fn changes_content(kind: EventKind) -> bool {
+    return !matches!(
+        kind,
+        EventKind::Access(_) | EventKind::Modify(ModifyKind::Metadata(_))
+    );
+}
+
 fn watch(
     project: &Project,
     pending: &Pending,
@@ -168,11 +241,19 @@ fn watch(
     let (sender, receiver) = mpsc::channel();
     let queue = Arc::clone(pending);
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        if let Ok(event) = event {
-            lock(&queue).extend(event.paths);
-            if sender.send(()).is_err() {
+        let event = match event {
+            Ok(event) => event,
+            Err(error) => {
+                log!("the file watcher failed: {error}");
                 return;
             }
+        };
+        if !changes_content(event.kind) {
+            return;
+        }
+        lock(&queue).extend(event.paths);
+        if sender.send(()).is_err() {
+            log!("the refresher stopped; changes are no longer applied");
         }
     })
     .map_err(|error| return Failure::failed(format!("cannot watch the project: {error}")))?;

@@ -656,7 +656,8 @@ updates the index in place: the file's declarations are replaced and only
 its own facts are recomputed. A change to a declaration, a new or deleted
 file, a file whose body feeds the framework facts (facades, service
 providers, Eloquent builders and relations), a Composer change or an
-`config/app.php` change rebuilds the index. The server logs each update and
+`config/app.php` change rebuilds the index. Opening or reading a file, or
+touching it without changing its content, changes nothing. The server logs each update and
 rebuild with its duration on standard error.
 
 **The socket.** The server listens on a Unix socket in `$XDG_RUNTIME_DIR`,

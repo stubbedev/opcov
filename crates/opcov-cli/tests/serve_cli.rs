@@ -33,8 +33,8 @@ mod serve_cli {
         }
     }
 
-    fn workspace() -> (PathBuf, PathBuf) {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("serve");
+    fn workspace(name: &str) -> (PathBuf, PathBuf) {
+        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("serve-{name}"));
         if base.exists() {
             fs::remove_dir_all(&base).unwrap();
         }
@@ -83,12 +83,12 @@ mod serve_cli {
         return value;
     }
 
-    fn start(runtime: &Path, root: &Path) -> Server {
+    fn start(runtime: &Path, root: &Path, log: Stdio) -> Server {
         let server = Command::new(BINARY)
             .env("XDG_RUNTIME_DIR", runtime)
             .args(["serve", "--root", root.to_str().unwrap()])
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(log)
             .spawn()
             .unwrap();
         let started = Instant::now();
@@ -101,8 +101,8 @@ mod serve_cli {
 
     #[test]
     fn a_running_server_answers_like_a_search_in_process_and_follows_edits() {
-        let (root, runtime) = workspace();
-        let mut running = start(&runtime, &root);
+        let (root, runtime) = workspace("edits");
+        let mut running = start(&runtime, &root, Stdio::null());
         let served = consumers(&runtime, &root, &[]);
         assert_eq!(served["served"], true, "the server answers");
         assert_eq!(
@@ -143,5 +143,53 @@ mod serve_cli {
             false,
             "without a server the search runs in process"
         );
+    }
+
+    fn wait_for(log: &Path, text: &str) {
+        let started = Instant::now();
+        while !fs::read_to_string(log).unwrap_or_default().contains(text) {
+            assert!(
+                started.elapsed() < STARTUP,
+                "opcov serve never logged {text}"
+            );
+            std::thread::sleep(POLL);
+        }
+    }
+
+    #[test]
+    fn reading_or_touching_files_neither_rebuilds_nor_updates_the_index() {
+        let (root, runtime) = workspace("reads");
+        let log = runtime.parent().unwrap().join("serve.log");
+        let mut running = start(
+            &runtime,
+            &root,
+            Stdio::from(fs::File::create(&log).unwrap()),
+        );
+        wait_for(&log, "analysed");
+        for path in [
+            "composer.json",
+            "vendor/composer/autoload_psr4.php",
+            "app/Uses/Receivers.php",
+        ] {
+            fs::read(root.join(path)).unwrap();
+        }
+        fs::File::options()
+            .write(true)
+            .open(root.join("composer.json"))
+            .unwrap()
+            .set_modified(std::time::SystemTime::now())
+            .unwrap();
+        assert_eq!(consumers(&runtime, &root, &[])["served"], true);
+        std::thread::sleep(Duration::from_secs(1));
+        let logged = fs::read_to_string(&log).unwrap();
+        assert!(
+            !logged.contains("rebuilt") && !logged.contains("updated"),
+            "{logged}"
+        );
+        opcov(
+            &runtime,
+            &["serve", "--root", root.to_str().unwrap(), "--stop"],
+        );
+        assert!(running.0.wait().unwrap().success());
     }
 }
