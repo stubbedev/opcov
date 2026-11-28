@@ -1,4 +1,5 @@
-use std::collections::{BTreeSet, HashSet};
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::{Arc, OnceLock};
 
 use aho_corasick::{AhoCorasick, MatchKind};
@@ -10,13 +11,14 @@ use mago_syntax::walker::Walker;
 use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 use crate::analysis::{Context, with_analysis};
-use crate::facts::{FileFacts, Resolved, Resolver};
+use crate::facts::{FileFacts, Reference, Resolved, Resolver, TraitCopy};
 use crate::hierarchy::Hierarchy;
 use crate::index::{Index, Source};
 use crate::matching::Matcher;
 use crate::members::Lines;
-use crate::sites::{Collector, Located, Sites};
+use crate::sites::{Collector, Sites};
 use crate::target::{Request, Resolution};
+use crate::types::USING_CLASS;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub struct Use {
@@ -81,21 +83,25 @@ impl Mentions {
 }
 
 impl Index {
-    fn copies<'s>(&'s self, located: &'s Located) -> Vec<(Option<&'s str>, Option<&'s str>)> {
-        let class = located.class.as_deref();
-        let Some(used) = class.filter(|_| return located.in_trait) else {
-            return vec![(class, None)];
-        };
+    fn copies_for(&self, used: &str) -> Vec<TraitCopy> {
         let users = self
             .trait_users
             .get(&used.to_ascii_lowercase())
             .map_or(&[][..], Vec::as_slice);
-        if users.is_empty() {
-            return vec![(Some(used), None)];
-        }
         return users
             .iter()
-            .map(|user| return (Some(user.as_str()), Some(user.as_str())))
+            .map(|user| {
+                let parent = self
+                    .metadata
+                    .get_class_like(user.as_bytes())
+                    .and_then(|class| return class.direct_parent_class)
+                    .and_then(|parent| return self.metadata.get_class_like(parent.as_bytes()))
+                    .map(|parent| return parent.original_name.to_string());
+                return TraitCopy {
+                    user: user.clone(),
+                    parent,
+                };
+            })
             .collect();
     }
 
@@ -105,7 +111,7 @@ impl Index {
         program: &Program<'_>,
         names: &ResolvedNames<'_>,
         artifacts: Option<&AnalysisArtifacts>,
-    ) -> Vec<Resolved> {
+    ) -> (Vec<Resolved>, Vec<Vec<TraitCopy>>) {
         let hierarchy = Hierarchy(&self.metadata);
         let mut sites = Sites::default();
         Collector {
@@ -115,24 +121,41 @@ impl Index {
         .walk_program(program, &mut sites);
         let lines = Lines::of(source);
         let mut resolved = Vec::new();
+        let mut copies: Vec<Vec<TraitCopy>> = Vec::new();
+        let mut slots: BTreeMap<String, Option<usize>> = BTreeMap::new();
         for located in &sites.found {
             let line = lines.line(located.offset);
-            for (this, using) in self.copies(located) {
-                let context = Resolver {
-                    hierarchy,
-                    artifacts,
-                    this,
-                };
-                if let Some(reference) = context.resolve(&located.site) {
-                    resolved.push(Resolved {
-                        line,
-                        using: using.map(str::to_owned),
-                        reference,
-                    });
-                }
+            let class = located.class.as_deref();
+            let used = class.filter(|_| return located.in_trait);
+            let slot = used.and_then(|used| {
+                return *slots.entry(used.to_owned()).or_insert_with(|| {
+                    let users = self.copies_for(used);
+                    if users.is_empty() {
+                        return None;
+                    }
+                    copies.push(users);
+                    return Some(copies.len().saturating_sub(1));
+                });
+            });
+            let this = if slot.is_some() {
+                Some(USING_CLASS)
+            } else {
+                class
+            };
+            let context = Resolver {
+                hierarchy,
+                artifacts,
+                this,
+            };
+            if let Some(reference) = context.resolve(&located.site) {
+                resolved.push(Resolved {
+                    line,
+                    copies: slot,
+                    reference,
+                });
             }
         }
-        return resolved;
+        return (resolved, copies);
     }
 
     fn analyse(&self, file: &File) -> FileFacts {
@@ -144,14 +167,15 @@ impl Index {
         let source = file.contents.as_ref();
         return with_analysis(&context, file, |program, names, analysed| {
             return match analysed {
-                Ok(artifacts) => FileFacts::new(
-                    self.resolve_sites(source, program, names, Some(artifacts)),
-                    None,
-                ),
-                Err(error) => FileFacts::new(
-                    self.resolve_sites(source, program, names, None),
-                    Some(error.to_string()),
-                ),
+                Ok(artifacts) => {
+                    let (resolved, copies) =
+                        self.resolve_sites(source, program, names, Some(artifacts));
+                    FileFacts::new(resolved, copies, None)
+                }
+                Err(error) => {
+                    let (resolved, copies) = self.resolve_sites(source, program, names, None);
+                    FileFacts::new(resolved, copies, Some(error.to_string()))
+                }
             };
         });
     }
@@ -228,17 +252,35 @@ impl Index {
             .par_iter()
             .flat_map_iter(|(source, facts)| {
                 return facts.named(&needles).flat_map(move |entry| {
-                    return matcher
-                        .matches(&entry.reference)
-                        .into_iter()
-                        .map(move |found| {
+                    let copies: Vec<(Option<&str>, Cow<'_, Reference>)> =
+                        facts.copies_of(entry).map_or_else(
+                            || return vec![(None, Cow::Borrowed(&entry.reference))],
+                            |copies| {
+                                return copies
+                                    .iter()
+                                    .map(|copy| {
+                                        return (
+                                            Some(copy.user.as_str()),
+                                            Cow::Owned(
+                                                entry
+                                                    .reference
+                                                    .for_copy(&copy.user, copy.parent.as_deref()),
+                                            ),
+                                        );
+                                    })
+                                    .collect();
+                            },
+                        );
+                    return copies.into_iter().flat_map(move |(using, reference)| {
+                        return matcher.matches(&reference).into_iter().map(move |found| {
                             return Use {
-                                target: matcher.attributed(found.target, entry.using.as_deref()),
+                                target: matcher.attributed(found.target, using),
                                 path: source.path.clone(),
                                 line: entry.line,
                                 resolution: found.resolution,
                             };
                         });
+                    });
                 });
             })
             .collect();

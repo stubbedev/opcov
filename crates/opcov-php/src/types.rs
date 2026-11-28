@@ -18,7 +18,36 @@ pub(crate) enum Classes {
     Open(Vec<String>),
 }
 
+pub(crate) const USING_CLASS: &str = "\0using";
+pub(crate) const USING_PARENT: &str = "\0parent";
+
 impl Classes {
+    pub(crate) fn for_copy(&self, user: &str, parent: Option<&str>) -> Self {
+        let classes = self.known();
+        if !classes
+            .iter()
+            .any(|class| return class == USING_CLASS || class == USING_PARENT)
+        {
+            return self.clone();
+        }
+        let mut substituted = Vec::with_capacity(classes.len());
+        for class in classes {
+            if class == USING_CLASS {
+                substituted.push(user.to_owned());
+            } else if class == USING_PARENT {
+                let Some(parent) = parent else {
+                    return Self::unknown();
+                };
+                substituted.push(parent.to_owned());
+            } else {
+                substituted.push(class.clone());
+            }
+        }
+        substituted.sort();
+        substituted.dedup();
+        return self.with(substituted);
+    }
+
     pub(crate) const fn unknown() -> Self {
         return Self::Open(Vec::new());
     }

@@ -16,7 +16,7 @@ use mago_syntax::cst::{
 };
 use mago_syntax::parser::parse_file;
 use mago_syntax::walker::Walker;
-use mago_word::ascii_lowercase_word;
+use mago_word::{Word, ascii_lowercase_word};
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::consumers::Mentions;
@@ -555,6 +555,26 @@ impl Diff<'_> {
         self.names.extend(retyped);
     }
 
+    fn property_types(&mut self) {
+        fn typed<'i>(index: &'i Index, (class, property): &(Word, Word)) -> Option<&'i TUnion> {
+            return index
+                .metadata
+                .class_likes
+                .get(class)
+                .and_then(|class_like| return class_like.properties.get(property))
+                .and_then(|metadata| return metadata.type_metadata.as_ref())
+                .map(|metadata| return &metadata.type_union);
+        }
+        let retyped: Vec<String> = self
+            .base
+            .inferred
+            .union(&self.head.inferred)
+            .filter(|key| return typed(self.base, key) != typed(self.head, key))
+            .map(|(_, property)| return variable(property.as_bytes()))
+            .collect();
+        self.names.extend(retyped);
+    }
+
     fn referenced_unchanged(&self, absent: &BTreeSet<String>, changed: &BTreeSet<&str>) -> bool {
         return self.head.sources.par_iter().any(|source| {
             return !changed.contains(source.path.as_str())
@@ -735,6 +755,7 @@ fn unaffected(base: &Index, head: &Index, diff: &[&str]) -> Option<Vec<Option<us
     };
     found.names.extend(suspects.absent.0.iter().cloned());
     found.constants();
+    found.property_types();
     found.traits();
     found.classes(&before, &after, &suspects)?;
     found.functions(&before, &after, &suspects);
@@ -767,7 +788,7 @@ fn declared_type(constant: &ConstantMetadata) -> Option<&TUnion> {
         .map(|declared| return &declared.type_union);
 }
 
-fn declares_in(metadata: &CodebaseMetadata, files: &BTreeSet<FileId>) -> bool {
+pub(crate) fn declares_in(metadata: &CodebaseMetadata, files: &BTreeSet<FileId>) -> bool {
     if files.is_empty() {
         return false;
     }

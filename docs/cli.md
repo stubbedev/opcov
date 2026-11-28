@@ -580,7 +580,16 @@ it rebuilds its index. Add `.opcov/` to `.gitignore`.
 - **Traits are analysed per using class.** A use the using class decides
   (`(new static())->handle()` in a trait) is reported as
   `<target> via <class>`; any other use belongs to the trait. `parent::` in
-  a trait is the parent of each using class.
+  a trait is the parent of each using class. A member the trait calls on
+  `$this`, `self::` or `static::` but only its using classes declare
+  (`$this->columns()`) has the type those classes declare for it.
+- **An untyped property has the types written to it** when every write is
+  visible: a private property is written only by its class and the traits
+  it uses, a protected one also by its subclasses. When each write assigns a
+  typed parameter, `new Foo` or `null`, the property is the union of those
+  types and `null`. Any other write (an untyped value, `.=`, `[] =`, a
+  reference, a dynamic `$this->$name =`, or passing it to a by-reference
+  parameter) leaves it untyped.
 - **Code the framework calls is used where it is triggered.** `consumers`
   reads the hooks from the code itself:
   - a queued job's `handle` and `failed` where the job is created or
@@ -601,7 +610,9 @@ needs to the analyzer, so chains keep their types instead of becoming `mixed`:
 
 - **Model builders:** a model's builder is the class its `newEloquentBuilder()`
   returns, or `Builder<Model>`. Static calls on the model forward to that
-  builder and to the query builder, and `query()` returns it.
+  builder and to the query builder, and `query()` returns it. A forwarded
+  method's parameters are bound to the model too, so the closure in
+  `Post::chunk(100, function ($posts) {…})` gets a collection of `Post`.
 - **Scopes:** `scopeX` and `#[Scope]` methods become builder methods.
 - **Dynamic wheres:** `where{Column}()` returns the builder.
 - **Relations:** a relation method with a generic `@return` (`HasMany<Post, $this>`) gives
@@ -672,18 +683,22 @@ moved, disappeared or started to land elsewhere shows on the side it is on.
 |---|---|
 | `--root <DIR>` | The project root, checked out at the head of the change (default: the current directory). |
 | `--diff <DIFF>` | A unified diff from the base to the working tree, relative to the root, or `-` for standard input. Any context size works, `-U0` too. |
+| `--base <REVISION>` | Instead of `--diff`: the git revision the change merges into. The change is git's diff from their merge base to `--head`. |
+| `--head <REVISION>` | With `--base`: the git revision to describe instead of the working tree. Its PHP sources are read from git, without a checkout. |
 | `--strip <N>` | Leading path components to remove from diff paths (default 1, which removes git's `a/` and `b/`). |
 | `--path <PATH>` | Search only this directory or file, relative to the root (repeatable), on both sides. The default is every source the root `composer.json` autoloads. |
 | `--depth <N>` | Call-graph levels of consumers to follow (default 2). |
 | `--routes <JSON>` | Laravel's route table at the head, as `php artisan route:list --json` writes it. Each route is listed on the method it runs. |
-| `--tests` | Also index the `autoload-dev` sources, so the tests that use changed code are nodes. The head index then reads the cache without writing it. On an 8,881-file Laravel application with 3,543 test files, a 59-file change takes 12 s and 8 GB instead of 4 s and 2.9 GB; `--report` names the tests that reached each member without indexing them. |
+| `--tests` | Also index the `autoload-dev` sources, so the tests that use changed code are nodes. The head index then reads the cache without writing it. On an 8,881-file Laravel application with 3,543 test files, a 59-file change takes 6.6 s and 4.4 GB instead of 4 s and 2.9 GB; `--report` names the tests that reached each member without indexing them. |
 | `--report <REPORT>` | A baseline opcov report of the base. Each member at the base gets its coverage and the tests that reached it. |
 | `--format <FORMAT>` | `json` (default), the whole graph, or `markdown`, a summary for a pull request comment. |
+| `--link-template <URL>` | With `--base`: link each member in the markdown to its lines. `{commit}`, `{path}`, `{first}` and `{last}` are filled in with the merge base for a member found only at the base and the head commit otherwise, e.g. `https://github.com/OWNER/REPO/blob/{commit}/{path}#L{first}-L{last}`. |
+| `--no-serve` | Describe the change in this process even when `opcov serve` runs for the project. |
 
 ### The base side
 
 `graph` needs no second checkout. It rebuilds the base version of every
-changed PHP file by applying the diff in reverse to the working tree, and
+changed PHP file by applying the diff in reverse to the head, and
 indexes the project a second time with those versions in place: a file the
 branch deleted is back, a file it created or renamed away is gone. The
 working tree must be the head of the diff; a file that does not match the
@@ -693,11 +708,24 @@ the autoload maps, `vendor/` and `config/` are read from the working tree for
 both sides, so a class the base autoloads only through a classmap entry the
 branch removed is not found on the base side.
 
+With `--head`, the head is that revision: every PHP file that differs between
+the working tree and it takes its content from git, and a PHP file it does
+not have, untracked ones included, is absent. One `git cat-file --batch`
+reads them all. The rest of the project, `vendor/` and the autoload maps
+included, comes from the working tree as for `--diff`.
+
 The head index is cached in `<root>/.opcov/index.cache` like a search by
 `consumers`, and the base index reuses that cache for every unchanged file
-without writing to it. `graph` runs in process and does not ask
-`opcov serve`. Both indexes are built at the same time, so both are held at
-once.
+without writing to it. With `--head` or `--tests` the head index reads the
+cache without writing it. Both indexes are built at the same time, so both
+are held at once.
+
+When `opcov serve` runs for the project, `graph` asks it, unless `--tests`,
+`--head` or `--no-serve` is given: the server builds only the base index and
+describes the change against its warm head index, with the analyses its
+earlier answers left. On an 8,881-file Laravel application a 59-file change
+takes 2.0 s that way instead of 3.0 s, with the same output. `graph` never
+starts a server.
 
 A file the change cannot affect is analysed once, for both sides. That is a
 file whose contents are the same on both sides, that does not hold a trait
@@ -856,6 +884,68 @@ changed members as a table ranked by entry points, proven callers and
 callers (with coverage columns when `--report` is given), the entry points
 the change reaches, and the unchanged callers folded by namespace. A list
 longer than 50 items says how many more there are.
+
+### In CI
+
+This GitHub Actions workflow posts the markdown summary on each pull request
+and updates the same comment on every push. It needs the full history for
+the merge base, reads the head from git, and links every member to its
+lines. The route table step needs the application to boot; drop `--routes`
+when it cannot. A baseline report of the base branch, from the job that
+measures coverage, adds `--report`.
+
+```yaml
+name: Change review
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  graph:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: composer install --no-interaction --no-progress
+      - name: Install opcov
+        run: |
+          version=0.6.0
+          base="https://github.com/stubbedev/opcov/releases/download/v${version}"
+          asset="opcov-cli-v${version}-x86_64-linux-musl"
+          curl -fsSLO "${base}/${asset}"
+          curl -fsSLO "${base}/SHA256SUMS"
+          grep " ${asset}\$" SHA256SUMS | sha256sum -c -
+          install -m 0755 "${asset}" /usr/local/bin/opcov
+      - run: php artisan route:list --json > "$RUNNER_TEMP/routes.json"
+      - name: Describe the change
+        env:
+          BASE: origin/${{ github.base_ref }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          opcov graph --base "$BASE" --head "$HEAD" \
+            --routes "$RUNNER_TEMP/routes.json" \
+            --format markdown \
+            --link-template "https://github.com/${GITHUB_REPOSITORY}/blob/{commit}/{path}#L{first}-L{last}" \
+            > "$RUNNER_TEMP/review.md"
+      - name: Post or update the comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          marker='<!-- opcov graph -->'
+          body="$(printf '%s\n\n' "$marker"; cat "$RUNNER_TEMP/review.md")"
+          id="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+            --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" | head -n 1)"
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" -f body="$body"
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -f body="$body"
+          fi
+```
+
+`--format json` writes the whole graph instead, for a tool that renders it;
+upload it as an artifact with the summary.
 
 ## `opcov serve`
 

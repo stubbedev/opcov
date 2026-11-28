@@ -372,3 +372,111 @@ fn the_markdown_format_summarises_the_graph_for_a_pull_request() {
         "the members are ranked by entry points, then proven and all callers; no report leaves out the coverage columns"
     );
 }
+
+fn git(root: &Path, arguments: &[&str]) {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "-c",
+            "user.name=opcov",
+            "-c",
+            "user.email=opcov@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(arguments)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {arguments:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn graph_with(root: &Path, arguments: &[&str]) -> Vec<u8> {
+    let mut all = vec!["graph", "--root", root.to_str().unwrap(), "--no-serve"];
+    all.extend_from_slice(arguments);
+    let output = run(&all);
+    assert!(output.status.success(), "{}", stderr(&output));
+    return output.stdout;
+}
+
+#[test]
+#[expect(
+    clippy::literal_string_with_formatting_args,
+    reason = "the link template's placeholders look like format arguments but opcov fills them in"
+)]
+fn revisions_are_read_from_git_without_a_checkout() {
+    let root = php_project("graph-revisions");
+    git(&root, &["init", "-q", "-b", "main"]);
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-q", "-m", "base"]);
+    git(&root, &["checkout", "-q", "-b", "feature"]);
+    fs::remove_file(branch(&root)).unwrap();
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-q", "-m", "feature"]);
+    let diffed = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["diff", "main", "feature"])
+        .output()
+        .unwrap();
+    assert!(diffed.status.success());
+    let patch = root.parent().unwrap().join("graph-revisions.diff");
+    fs::write(&patch, &diffed.stdout).unwrap();
+    let reference = graph_with(&root, &["--diff", patch.to_str().unwrap()]);
+    assert_eq!(
+        String::from_utf8(graph_with(&root, &["--base", "main"])).unwrap(),
+        String::from_utf8(reference.clone()).unwrap(),
+        "--base alone diffs the merge base against the working tree"
+    );
+    git(&root, &["checkout", "-q", "main"]);
+    fs::write(
+        root.join("app/Services/Noise.php"),
+        "<?php\n\nnamespace App\\Services;\n\nfinal class Noise\n{\n}\n",
+    )
+    .unwrap();
+    let receivers = fs::read_to_string(root.join(RECEIVERS)).unwrap();
+    fs::write(root.join(RECEIVERS), format!("{receivers}\n")).unwrap();
+    assert_eq!(
+        String::from_utf8(graph_with(&root, &["--base", "main", "--head", "feature"])).unwrap(),
+        String::from_utf8(reference).unwrap(),
+        "the head comes from git, not from the working tree checked out at main with an untracked file and an edit"
+    );
+    let commit = |revision: &str| {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["rev-parse", revision])
+            .output()
+            .unwrap();
+        return String::from_utf8(output.stdout).unwrap().trim().to_owned();
+    };
+    let markdown = String::from_utf8(graph_with(
+        &root,
+        &[
+            "--base",
+            "main",
+            "--head",
+            "feature",
+            "--format",
+            "markdown",
+            "--link-template",
+            "https://example.invalid/blob/{commit}/{path}#L{first}-L{last}",
+        ],
+    ))
+    .unwrap();
+    let (main, feature) = (commit("main"), commit("feature"));
+    for expected in [
+        format!(
+            "[`method App\\Services\\Report::summary`](https://example.invalid/blob/{feature}/app/Services/Report.php#L23-L26)"
+        ),
+        format!(
+            "[`method App\\Uses\\Lookalike::run`](https://example.invalid/blob/{main}/app/Uses/Lookalike.php#L9-L14)"
+        ),
+    ] {
+        assert!(markdown.contains(&expected), "{expected} in {markdown}");
+    }
+}

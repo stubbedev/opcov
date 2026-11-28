@@ -3,7 +3,7 @@ use std::path::Path;
 
 use mago_codex::populator::populate_codebase_after_body_edit;
 use mago_codex::symbol::SymbolIdentifier;
-use mago_database::file::File;
+use mago_database::file::{File, FileId};
 use mago_word::{WordSet, empty_word};
 
 use crate::index::{
@@ -12,6 +12,7 @@ use crate::index::{
 use crate::laravel;
 use crate::project::Project;
 use crate::references::Reach;
+use crate::unaffected::declares_in;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refresh {
@@ -26,12 +27,27 @@ enum Edit {
 }
 
 impl Index {
+    fn reads(&self, project: &Project, relative: &str) -> bool {
+        let absolute = project.root().join(relative);
+        return project
+            .scope()
+            .iter()
+            .any(|directory| return absolute.starts_with(directory))
+            || declares_in(
+                &self.metadata,
+                &BTreeSet::from([FileId::new(relative.as_bytes())]),
+            );
+    }
+
     fn classify(
         &self,
         project: &Project,
         relative: &str,
     ) -> Result<Result<Edit, String>, IndexError> {
         let Some(position) = self.positions.get(relative).copied() else {
+            if !self.reads(project, relative) {
+                return Ok(Ok(Edit::Same));
+            }
             return Ok(Err(format!("{relative} is not an indexed project source")));
         };
         let Some(source) = self.sources.get(position) else {

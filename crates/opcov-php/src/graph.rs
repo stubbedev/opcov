@@ -17,6 +17,7 @@ mod markdown;
 mod review;
 
 use entries::{EntryPoint, RouteTable};
+pub use markdown::Links;
 use review::{Impact, Risks};
 pub use review::{NodeCoverage, Ratio};
 
@@ -181,6 +182,17 @@ impl Side {
                 };
             });
             frontier.search(&member.target, &id);
+        }
+        if let Some(lines) = index.line_count(&change.path) {
+            let callables: Vec<&Member> = members
+                .iter()
+                .filter(|member| return member.is_callable())
+                .collect();
+            let outside = change.outside(&callables, lines);
+            if !outside.is_empty() {
+                self.hunks
+                    .insert(NodeId::Script(change.path.clone()), outside);
+            }
         }
         self.files.insert(change.path.clone(), members);
     }

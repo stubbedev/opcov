@@ -11,7 +11,9 @@ use mago_word::{ascii_lowercase_word, word};
 
 use crate::hierarchy::Hierarchy;
 use crate::sites::{ClassReference, FirstArgument, Receiver, Site};
-use crate::types::{Classes, Dispatch, Reading, classes_of, literal_strings};
+use crate::types::{
+    Classes, Dispatch, Reading, USING_CLASS, USING_PARENT, classes_of, literal_strings,
+};
 
 const BUILDER: &str = "Illuminate\\Database\\Eloquent\\Builder";
 const RELATION: &str = "Illuminate\\Database\\Eloquent\\Relations\\Relation";
@@ -76,31 +78,103 @@ impl Reference {
     }
 }
 
+impl Reference {
+    pub(crate) fn for_copy(&self, user: &str, parent: Option<&str>) -> Self {
+        let copy = |classes: &Classes| return classes.for_copy(user, parent);
+        return match self {
+            Self::Function { .. } | Self::Constant { .. } => self.clone(),
+            Self::Method {
+                member,
+                receivers,
+                query,
+                names,
+            } => Self::Method {
+                member: member.clone(),
+                receivers: copy(receivers),
+                query: copy(query),
+                names: names.clone(),
+            },
+            Self::Static {
+                member,
+                receivers,
+                dispatch,
+                names,
+            } => Self::Static {
+                member: member.clone(),
+                receivers: copy(receivers),
+                dispatch: *dispatch,
+                names: names.clone(),
+            },
+            Self::New { classes, dispatch } => Self::New {
+                classes: copy(classes),
+                dispatch: *dispatch,
+            },
+            Self::ClassConstant {
+                member,
+                classes,
+                dispatch,
+            } => Self::ClassConstant {
+                member: member.clone(),
+                classes: copy(classes),
+                dispatch: *dispatch,
+            },
+            Self::Property {
+                member,
+                receivers,
+                dispatch,
+            } => Self::Property {
+                member: member.clone(),
+                receivers: copy(receivers),
+                dispatch: *dispatch,
+            },
+        };
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TraitCopy {
+    pub(crate) user: String,
+    pub(crate) parent: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Resolved {
     pub(crate) line: u32,
-    pub(crate) using: Option<String>,
+    pub(crate) copies: Option<usize>,
     pub(crate) reference: Reference,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct FileFacts {
     pub(crate) resolved: Vec<Resolved>,
+    pub(crate) copies: Vec<Vec<TraitCopy>>,
     pub(crate) names: BTreeSet<String>,
     pub(crate) untyped: Option<String>,
 }
 
 impl FileFacts {
-    pub(crate) fn new(resolved: Vec<Resolved>, untyped: Option<String>) -> Self {
+    pub(crate) fn new(
+        resolved: Vec<Resolved>,
+        copies: Vec<Vec<TraitCopy>>,
+        untyped: Option<String>,
+    ) -> Self {
         let names = resolved
             .iter()
             .flat_map(|entry| return entry.reference.lookup_names())
             .collect();
         return Self {
             resolved,
+            copies,
             names,
             untyped,
         };
+    }
+
+    pub(crate) fn copies_of(&self, entry: &Resolved) -> Option<&[TraitCopy]> {
+        return entry
+            .copies
+            .and_then(|index| return self.copies.get(index))
+            .map(Vec::as_slice);
     }
 
     pub(crate) fn mentions(&self, needles: &BTreeSet<String>) -> bool {
@@ -154,6 +228,9 @@ impl Resolver<'_> {
     }
 
     fn users_parent(&self) -> Classes {
+        if self.this == Some(USING_CLASS) {
+            return Classes::Known(vec![USING_PARENT.to_owned()]);
+        }
         let codebase = self.hierarchy.codebase();
         let parent = self
             .this

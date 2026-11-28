@@ -159,6 +159,44 @@ mod live {
         );
     }
 
+    #[test]
+    fn a_php_file_the_index_never_reads_leaves_it_alone_and_one_it_could_read_asks_for_a_rebuild() {
+        let root = project("unread");
+        let project = Project::open(&root).unwrap();
+        let mut index = Index::build(&project).unwrap();
+        let write = |relative: &str, source: &str| {
+            let path = root.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, source).unwrap();
+            return path;
+        };
+        let translation = write(
+            "lang/en/messages.php",
+            "<?php\n\nreturn ['hello' => 'Hello'];\n",
+        );
+        let source = write(
+            "app/Fresh.php",
+            "<?php\n\nnamespace App;\n\nfinal class Fresh\n{\n}\n",
+        );
+        let vendor = root.join("vendor/laravel/framework/src/Illuminate/Console/Command.php");
+        let console = fs::read_to_string(&vendor).unwrap();
+        fs::write(&vendor, format!("{console}\n")).unwrap();
+        assert_eq!(
+            [&translation, &source, &vendor].map(|path| {
+                return index.refresh(&project, &[path.as_path()]).unwrap();
+            }),
+            [
+                Refresh::Unchanged,
+                Refresh::Rebuild("app/Fresh.php is not an indexed project source".to_owned()),
+                Refresh::Rebuild(
+                    "vendor/laravel/framework/src/Illuminate/Console/Command.php is not an indexed project source"
+                        .to_owned()
+                ),
+            ],
+            "a translation outside the autoload scope declares nothing the index read; a new source and a scanned vendor file may"
+        );
+    }
+
     fn cached(root: &Path, previous: ScanCache) -> Build {
         return Index::build_cached(&Project::open(root).unwrap(), previous).unwrap();
     }

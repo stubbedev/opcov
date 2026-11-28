@@ -4,6 +4,7 @@
     reason = "rustc's unreachable_pub, which the workspace denies, requires pub(crate) in private modules"
 )]
 
+use std::collections::BTreeMap;
 use std::env;
 use std::fmt;
 use std::fs::{self, File};
@@ -330,9 +331,24 @@ struct GraphArgs {
     #[arg(
         long,
         value_name = "DIFF",
+        required_unless_present = "base",
+        conflicts_with = "base",
         help = "Unified diff from the base to the working tree, relative to the root (`git diff $(git merge-base origin/main HEAD)`), or `-` for standard input"
     )]
-    diff: PathBuf,
+    diff: Option<PathBuf>,
+    #[arg(
+        long,
+        value_name = "REVISION",
+        help = "Git revision the change merges into, instead of --diff: the change is git's diff from the merge base to --head"
+    )]
+    base: Option<String>,
+    #[arg(
+        long,
+        value_name = "REVISION",
+        requires = "base",
+        help = "Git revision to describe instead of the working tree, read from git without a checkout [default: the working tree]"
+    )]
+    head: Option<String>,
     #[arg(
         long,
         value_name = "N",
@@ -377,6 +393,18 @@ struct GraphArgs {
         help = "Output format: json, the whole graph for review tools, or markdown, a summary of its risks, changed members, entry points and namespaces for a pull request comment"
     )]
     format: GraphFormat,
+    #[arg(
+        long,
+        help = "Describe the change in this process even when opcov serve runs for the project"
+    )]
+    no_serve: bool,
+    #[arg(
+        long,
+        value_name = "URL",
+        requires = "base",
+        help = "Link each member in the markdown to its lines: {commit}, {path}, {first} and {last} are filled in, e.g. https://github.com/OWNER/REPO/blob/{commit}/{path}#L{first}-L{last}"
+    )]
+    link_template: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -702,23 +730,67 @@ fn consumers_report(args: &ConsumersArgs) -> Result<Verdict, Failure> {
     return Ok(Verdict::Clean);
 }
 
+fn absolute(path: Option<&Path>) -> Result<Option<PathBuf>, Failure> {
+    return path
+        .map(|path| {
+            return std::path::absolute(path)
+                .map_err(|error| return Failure::io("resolve", path, &error));
+        })
+        .transpose();
+}
+
 fn graph_report(args: &GraphArgs) -> Result<Verdict, Failure> {
     let root = project_root(args.root.as_deref())?;
-    let patch = read_patch(&args.diff, args.strip)?;
-    let options = graph::Options {
-        routes: graph::routes(args.routes.as_deref())?,
-        report: args.report.as_deref(),
-        within: &args.path,
+    let (source, diff, strip, head, links) = match (&args.diff, &args.base) {
+        (Some(diff), _) => (
+            describe(diff),
+            read_input(diff)?,
+            args.strip,
+            BTreeMap::new(),
+            None,
+        ),
+        (None, Some(base)) => {
+            let revisions = graph::revisions(&root, base, args.head.as_deref())?;
+            let links = args.link_template.clone().map(|template| {
+                return opcov_php::Links {
+                    template,
+                    base: revisions.base_commit.clone(),
+                    head: revisions.head_commit.clone(),
+                };
+            });
+            (revisions.source, revisions.diff, 1, revisions.head, links)
+        }
+        (None, None) => {
+            return Err(Failure::failed(
+                "graph needs --diff or --base to know the change".to_owned(),
+            ));
+        }
+    };
+    let request = graph::Request {
+        source,
+        diff,
+        strip,
+        within: args.path.clone(),
         depth: args.depth,
         tests: args.tests,
+        routes: absolute(args.routes.as_deref())?,
+        report: absolute(args.report.as_deref())?,
+        format: match args.format {
+            GraphFormat::Json => graph::Format::Json,
+            GraphFormat::Markdown => graph::Format::Markdown,
+        },
+        links,
     };
-    let graph = graph::build(&root, &patch, &options)?;
-    write_stdout(|out| {
-        return match args.format {
-            GraphFormat::Json => graph::render_json(out, &graph),
-            GraphFormat::Markdown => graph.render_markdown(out),
-        };
-    })?;
+    let served = if args.no_serve || args.tests || args.head.is_some() {
+        None
+    } else {
+        serve::graph(&root, &request)?
+    };
+    let rendered = match served {
+        Some(rendered) => rendered,
+        None => graph::build(&root, &request, &head)?,
+    };
+    write_stdout(|out| return out.write_all(rendered.as_bytes()))?;
     return Ok(Verdict::Clean);
 }
 

@@ -232,6 +232,17 @@ mod graph {
             "render changed its body line on both sides; renderer is gone at the head and the override is new there; \
              the head's deletion after line 23 lies past render's last line"
         );
+        let script = graph()["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| return node["id"] == "script app/routes.php")
+            .unwrap();
+        assert_eq!(
+            script["changed"].to_string(),
+            r#"{"base":{"ranges":[[1,5]],"removed_before":[]},"head":null}"#,
+            "routes.php holds no function, so all of its changed lines are the script's"
+        );
     }
 
     #[test]
@@ -789,7 +800,9 @@ mod graph {
         {"domain": null, "method": "GET|HEAD", "uri": "ping", "name": "ping.show", "action": "App\\Http\\Controllers\\PingController@show", "middleware": ["web"]},
         {"domain": null, "method": "POST", "uri": "invoked", "name": null, "action": "App\\Http\\Controllers\\Invoked", "middleware": []},
         {"domain": null, "method": "DELETE", "uri": "gone", "name": null, "action": "App\\Http\\Controllers\\PingController@gone", "middleware": []},
-        {"domain": null, "method": "GET|HEAD", "uri": "up", "name": null, "action": "Closure", "middleware": []}
+        {"domain": null, "method": "GET|HEAD", "uri": "up", "name": null, "action": "Closure", "middleware": []},
+        {"domain": null, "method": "POST", "uri": "login", "name": null, "action": "Laravel\\Fortify\\Http\\Controllers\\AuthenticatedSessionController@store", "middleware": []},
+        {"domain": null, "method": "GET|HEAD", "uri": "deleted", "name": null, "action": "App\\Http\\Controllers\\DeletedController@index", "middleware": []}
     ]"#;
 
     #[test]
@@ -815,7 +828,9 @@ mod graph {
         let index =
             || return Index::build(&Project::open(&root).unwrap().with_development()).unwrap();
         let (base, head) = (index(), index());
-        let routes = Routes::parse(ROUTE_TABLE.as_bytes()).unwrap();
+        let routes = Routes::parse(ROUTE_TABLE.as_bytes())
+            .unwrap()
+            .located(&Project::open(&root).unwrap().with_development());
         let graph = serde_json::to_value(
             Graph::walk(
                 Revision {
@@ -868,8 +883,9 @@ mod graph {
         );
         assert_eq!(
             graph["risks"]["broken_routes"].to_string(),
-            r#"[{"route":{"methods":["DELETE"],"uri":"gone","name":null,"domain":null},"action":"App\\Http\\Controllers\\PingController@gone"}]"#,
-            "PingController has no gone method at the head"
+            r#"[{"route":{"methods":["DELETE"],"uri":"gone","name":null,"domain":null},"action":"App\\Http\\Controllers\\PingController@gone"},{"route":{"methods":["GET","HEAD"],"uri":"deleted","name":null,"domain":null},"action":"App\\Http\\Controllers\\DeletedController@index"}]"#,
+            "PingController has no gone method and the autoload maps put the missing DeletedController in app/; \
+             the Fortify controller is vendor code the index never read, so nothing says it is gone"
         );
     }
 
@@ -908,7 +924,7 @@ mod graph {
         )
         .unwrap();
         let mut rendered = Vec::new();
-        graph.render_markdown(&mut rendered).unwrap();
+        graph.render_markdown(&mut rendered, None).unwrap();
         assert_eq!(
             String::from_utf8(rendered).unwrap(),
             r"## Change review
@@ -951,6 +967,85 @@ The unchanged members and scripts that use the change, per namespace, with how m
 
 ",
             "each risk is its own list, the changed members are a table, and the one unchanged caller folds into its namespace"
+        );
+    }
+
+    const HOLDER: &str = "app/Inferred/Holder.php";
+
+    fn holder(accepted: &str) -> String {
+        return format!(
+            "<?php\n\nnamespace App\\Inferred;\n\nclass Holder\n{{\n    protected $repo;\n\n    public function setRepo({accepted} $repo): void\n    {{\n        $this->repo = $repo;\n    }}\n}}\n"
+        );
+    }
+
+    #[test]
+    fn a_file_reading_a_property_whose_inferred_type_changed_is_analysed_on_each_side() {
+        let repository = |class: &str| {
+            return format!(
+                "<?php\n\nnamespace App\\Inferred;\n\nclass {class}\n{{\n    public function fetch(): int\n    {{\n        return 1;\n    }}\n}}\n"
+            );
+        };
+        let changes = [
+            whole(HOLDER),
+            whole("app/Inferred/Repo.php"),
+            whole("app/Inferred/OtherRepo.php"),
+        ];
+        let (shared, with, without) = shared_and_independent(&Sides {
+            name: "graph-share-inferred",
+            head: &[
+                ("app/Inferred/Repo.php", repository("Repo")),
+                ("app/Inferred/OtherRepo.php", repository("OtherRepo")),
+                (HOLDER, holder("OtherRepo")),
+                (
+                    "app/Inferred/Reader.php",
+                    "<?php\n\nnamespace App\\Inferred;\n\nfinal class Reader extends Holder\n{\n    public function read(): int\n    {\n        return $this->repo->fetch();\n    }\n}\n".to_owned(),
+                ),
+            ],
+            base: &[(HOLDER, Some(holder("Repo")))],
+            base_changes: &changes,
+            head_changes: &changes,
+        });
+        assert!(shared > 0, "the files the change cannot affect are shared");
+        assert_eq!(
+            with, without,
+            "sharing analyses changes nothing in the graph"
+        );
+        assert_eq!(
+            resolving(&with, "Reader::read -> method"),
+            [
+                "now_resolves method App\\Inferred\\Reader::read -> method App\\Inferred\\OtherRepo::fetch |  | 9",
+                "no_longer_resolves method App\\Inferred\\Reader::read -> method App\\Inferred\\Repo::fetch | 9 | ",
+            ],
+            "Reader is unchanged, but $repo is inferred from setRepo's parameter, which changed from Repo to OtherRepo"
+        );
+    }
+
+    #[test]
+    fn a_script_carries_the_changed_lines_outside_its_functions() {
+        let script = "app/Proof/boot.php";
+        let source = "<?php\n\nuse App\\Proof\\Pinger;\n\n(new Pinger())->ping();\n\nfunction helper(): string\n{\n    return (new Pinger())->ping();\n}\n\n(new Pinger())->ping();\n";
+        let pinger = proof_class(
+            "Pinger",
+            "    public function ping(): string\n    {\n        return 'ping';\n    }\n",
+        );
+        let changes = [whole(script), whole(PINGER)];
+        let (_, graph, _) = shared_and_independent(&Sides {
+            name: "graph-script-hunks",
+            head: &[(PINGER, pinger.clone()), (script, source.to_owned())],
+            base: &[(PINGER, Some(pinger))],
+            base_changes: &changes,
+            head_changes: &changes,
+        });
+        let node = graph["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| return node["id"] == "script app/Proof/boot.php")
+            .unwrap();
+        assert_eq!(
+            node["changed"]["head"].to_string(),
+            r#"{"ranges":[[1,6],[11,12]],"removed_before":[]}"#,
+            "helper's lines 7 to 10 belong to the function, the rest of the file to the script"
         );
     }
 }

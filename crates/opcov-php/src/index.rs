@@ -26,10 +26,12 @@ use crate::cache::{
 use crate::consumers::Untyped;
 use crate::facts::FileFacts;
 use crate::hierarchy::{TraitUsers, trait_users};
+use crate::inferred::{self, Inferred};
 use crate::laravel;
 use crate::laravel::Hooks;
 use crate::project::Project;
 use crate::references::{Reach, referenced_classes};
+use crate::trait_scope::TraitScope;
 
 const PRELUDE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/prelude.bin"));
 
@@ -91,6 +93,7 @@ pub struct Index {
     pub(crate) hooks: Hooks,
     pub(crate) symbol_references: SymbolReferences,
     pub(crate) trait_users: TraitUsers,
+    pub(crate) inferred: Inferred,
     pub(crate) positions: HashMap<String, usize>,
     pub(crate) untyped: Vec<Untyped>,
     root: PathBuf,
@@ -555,6 +558,8 @@ impl Index {
                 return Source::new(file, record);
             })
             .collect();
+        let files: Vec<&File> = sources.iter().map(|source| return &source.file).collect();
+        let inferred = inferred::infer_property_types(&mut metadata, &files);
         populate_codebase(
             &mut metadata,
             &mut symbol_references,
@@ -567,6 +572,7 @@ impl Index {
         registry.register_method_provider(facts.provider);
         let forwards = facts.forwards;
         let trait_users = trait_users(&metadata);
+        registry.register_expression_hook(TraitScope::new(trait_users.clone()));
         let hooks = merged_hooks(&sources);
         let positions = sources
             .iter()
@@ -588,6 +594,7 @@ impl Index {
             hooks,
             symbol_references,
             trait_users,
+            inferred,
             untyped: facts.untyped,
             positions,
             root,

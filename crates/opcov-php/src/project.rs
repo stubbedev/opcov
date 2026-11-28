@@ -370,6 +370,35 @@ impl Project {
     }
 
     #[must_use]
+    pub fn places_in_sources(&self, class: &str) -> bool {
+        let class = class.trim_start_matches('\\');
+        let lowered = lower(class);
+        let in_scope = |path: &Path| {
+            return self
+                .scope
+                .iter()
+                .any(|directory| return path.starts_with(directory));
+        };
+        if let Some(path) = self.classes.get(&lowered) {
+            return in_scope(path);
+        }
+        return lowered
+            .match_indices('\\')
+            .map(|(index, _)| return index)
+            .filter_map(|boundary| {
+                let prefix = lowered.get(..=boundary)?;
+                let rest = class.get(boundary.checked_add(1)?..)?;
+                return Some((self.namespaces.get(prefix)?, rest));
+            })
+            .any(|(directories, rest)| {
+                let relative = format!("{}.{SOURCE_EXTENSION}", rest.replace('\\', "/"));
+                return directories
+                    .iter()
+                    .any(|directory| return in_scope(&directory.join(&relative)));
+            });
+    }
+
+    #[must_use]
     pub fn source_files(&self) -> Vec<PathBuf> {
         return self.files_under(&self.scope);
     }

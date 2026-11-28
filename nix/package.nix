@@ -226,7 +226,7 @@
         };
         test = justRecipe "test" {
           NEXTEST_PROFILE = "ci";
-          nativeBuildInputs = [pkgs.cargo-nextest];
+          nativeBuildInputs = [pkgs.cargo-nextest pkgs.git];
         };
         overlay = pkgs.runCommand "opcov-overlay" {} ''
           ${versionCheck (lib.getExe (phpShell.withExtensions ({enabled, ...}: enabled ++ [(overlaid.mkOpcovExtension phpShell)])))}

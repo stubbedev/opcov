@@ -11,6 +11,45 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+### Added
+
+- `opcov graph --base <revision> [--head <revision>]` describes a change
+  from git without a checkout: the diff is git's from the merge base, and
+  the head's PHP sources are read with one `git cat-file --batch`.
+  `--link-template` links each member in the markdown to its lines at the
+  right commit, and docs/cli.md has a GitHub Actions workflow that posts the
+  summary on every pull request.
+- `opcov graph` asks a running `opcov serve`, which describes the change
+  against its warm head index: a 59-file change in an 8,881-file Laravel
+  application takes 2.0 s instead of 3.0 s, with the same output.
+- A changed script in the graph carries the changed lines outside its
+  functions.
+
+### Changed
+
+- A member a trait calls on `$this`, `self::` or `static::` but only its
+  using classes declare has the type they declare, instead of matching by
+  name.
+- An untyped private or protected property has the types written to it when
+  every write is a typed parameter, `new Foo` or `null`.
+- A method a model forwards to its builder binds its parameters to the model,
+  so the closure in `Post::chunk(100, fn ($posts) => …)` gets a collection of
+  `Post`.
+- On a 59-file change in a large Laravel application these three take the
+  name-only uses in the graph from 480 to 325.
+- A trait's uses are resolved once and specialised for each using class when
+  they are matched, instead of once per using class: `graph --tests` on that
+  application takes 6.6 s and 4.4 GB instead of 11.3 s and 8.4 GB.
+
+### Fixed
+
+- `opcov serve` rebuilt its index whenever a PHP file it never reads changed,
+  such as a translation in `lang/`; such a file is now ignored.
+- `opcov graph --routes` reported a route as broken when its controller is
+  vendor code the index did not read. A route is broken only when the index
+  has the controller without the method, or when the autoload maps put the
+  missing controller in the project's sources.
+
 ## [0.5.0] - 2026-11-28
 
 ### Added

@@ -35,6 +35,12 @@ pub(crate) struct Hunks {
     removed_before: Vec<u32>,
 }
 
+impl Hunks {
+    pub(crate) const fn is_empty(&self) -> bool {
+        return self.ranges.is_empty() && self.removed_before.is_empty();
+    }
+}
+
 impl FileChange {
     pub(crate) fn within(&self, member: &Member) -> Hunks {
         return match &self.changed {
@@ -56,6 +62,43 @@ impl FileChange {
                     .filter(|before| return member.first < *before && *before <= member.last)
                     .collect(),
             },
+        };
+    }
+
+    pub(crate) fn outside(&self, callables: &[&Member], lines: u32) -> Hunks {
+        let inside = |line: u32| return callables.iter().any(|member| return member.contains(line));
+        let (ranges, deletions): (Vec<(u32, u32)>, &[u32]) = match &self.changed {
+            Changed::Whole => (vec![(1, lines)], &[]),
+            Changed::Parts { ranges, deletions } => (ranges.clone(), deletions),
+        };
+        let mut outside = Vec::new();
+        for (first, last) in ranges {
+            let mut start = None;
+            for line in first..=last {
+                match (inside(line), start) {
+                    (false, None) => start = Some(line),
+                    (true, Some(open)) => {
+                        outside.push((open, line.saturating_sub(1)));
+                        start = None;
+                    }
+                    (true, None) | (false, Some(_)) => {}
+                }
+            }
+            if let Some(open) = start {
+                outside.push((open, last));
+            }
+        }
+        return Hunks {
+            ranges: outside,
+            removed_before: deletions
+                .iter()
+                .copied()
+                .filter(|before| {
+                    return !callables
+                        .iter()
+                        .any(|member| return member.first < *before && *before <= member.last);
+                })
+                .collect(),
         };
     }
 
@@ -136,6 +179,20 @@ impl Index {
             ),
             index: self.stats(),
         };
+    }
+
+    pub(crate) fn line_count(&self, path: &str) -> Option<u32> {
+        let source = self
+            .positions
+            .get(path)
+            .and_then(|position| return self.sources.get(*position))?;
+        let contents: &[u8] = source.file.contents.as_ref();
+        let newlines = contents
+            .iter()
+            .filter(|byte| return **byte == b'\n')
+            .count();
+        let unterminated = usize::from(!contents.is_empty() && !contents.ends_with(b"\n"));
+        return u32::try_from(newlines.saturating_add(unterminated)).ok();
     }
 
     pub(crate) fn members_of(&self, path: &str) -> Vec<Member> {

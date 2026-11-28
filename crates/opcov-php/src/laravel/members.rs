@@ -7,6 +7,7 @@ use mago_codex::metadata::function_like::FunctionLikeMetadata;
 use mago_codex::metadata::property::PropertyMetadata;
 use mago_codex::metadata::ttype::TypeMetadata;
 use mago_codex::misc::{GenericParent, VariableIdentifier};
+use mago_codex::ttype::TType;
 use mago_codex::ttype::atomic::TAtomic;
 use mago_codex::ttype::atomic::object::TObject;
 use mago_codex::ttype::atomic::object::named::TNamedObject;
@@ -116,11 +117,21 @@ impl Binding {
     }
 
     fn bind_function(&self, metadata: &CodebaseMetadata, function: &mut FunctionLikeMetadata) {
-        for slot in [
+        let parameters = function.parameters.iter_mut().flat_map(|parameter| {
+            return [
+                &mut parameter.type_metadata,
+                &mut parameter.type_declaration_metadata,
+            ];
+        });
+        let returns = [
             &mut function.return_type_metadata,
             &mut function.return_type_declaration_metadata,
-        ] {
-            if let Some(declared) = slot.as_mut() {
+        ];
+        for slot in returns.into_iter().chain(parameters) {
+            if let Some(declared) = slot.as_mut().filter(|declared| {
+                return declared.type_union.has_template_types()
+                    || declared.type_union.is_expandable();
+            }) {
                 declared.type_union = self.bind(metadata, &declared.type_union);
             }
         }

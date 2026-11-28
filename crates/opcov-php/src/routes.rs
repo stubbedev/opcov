@@ -2,6 +2,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::project::Project;
+
 const CLOSURE: &str = "Closure";
 const INVOKE: &str = "__invoke";
 
@@ -17,6 +19,7 @@ pub struct Route {
 pub(crate) struct Action {
     pub(crate) class: String,
     pub(crate) method: String,
+    pub(crate) in_sources: bool,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -60,10 +63,19 @@ fn action(listed: &str) -> Option<Action> {
     return Some(Action {
         class: class.trim_start_matches('\\').to_owned(),
         method: method.to_owned(),
+        in_sources: false,
     });
 }
 
 impl Routes {
+    #[must_use]
+    pub fn located(mut self, project: &Project) -> Self {
+        for (_, action) in &mut self.routes {
+            action.in_sources = project.places_in_sources(&action.class);
+        }
+        return self;
+    }
+
     pub fn parse(json: &[u8]) -> Result<Self, RoutesError> {
         let listed: Vec<Listed> = serde_json::from_slice(json).map_err(RoutesError)?;
         let routes = listed

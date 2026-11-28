@@ -63,6 +63,13 @@ impl RouteTable {
                 .metadata
                 .get_declaring_method_class(action.class.as_bytes(), action.method.as_bytes());
             let Some(declaring) = declaring else {
+                let indexed = head
+                    .metadata
+                    .get_class_like(action.class.as_bytes())
+                    .is_some();
+                if !indexed && !action.in_sources {
+                    continue;
+                }
                 table.broken.push(BrokenRoute {
                     route: route.clone(),
                     action: format!("{}@{}", action.class, action.method),

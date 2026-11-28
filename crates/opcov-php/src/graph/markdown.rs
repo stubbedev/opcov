@@ -4,10 +4,60 @@ use std::io::{self, Write};
 
 use super::entries::EntryPoint;
 use super::review::{Link, NodeCoverage, Ratio};
-use super::{Graph, Node, NodeChange, NodeId};
+use super::{Graph, Location, Node, NodeChange, NodeId};
 use crate::target::Resolution;
 
 const SHOWN: usize = 50;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Links {
+    pub template: String,
+    pub base: String,
+    pub head: String,
+}
+
+fn encoded(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            for digit in [byte >> 4, byte & 0x0f] {
+                encoded.extend(
+                    char::from_digit(u32::from(digit), 16)
+                        .map(|hex| return hex.to_ascii_uppercase()),
+                );
+            }
+        }
+    }
+    return encoded;
+}
+
+impl Links {
+    #[expect(
+        clippy::literal_string_with_formatting_args,
+        reason = "the template's placeholders look like format arguments but are filled in by replace"
+    )]
+    fn url(&self, commit: &str, location: &Location) -> String {
+        return self
+            .template
+            .replace("{commit}", commit)
+            .replace("{path}", &encoded(&location.path))
+            .replace("{first}", &location.first.to_string())
+            .replace("{last}", &location.last.to_string());
+    }
+
+    fn of(&self, node: &Node) -> Option<String> {
+        if let Some(head) = &node.head {
+            return Some(self.url(&self.head, head));
+        }
+        return node
+            .base
+            .as_ref()
+            .map(|base| return self.url(&self.base, base));
+    }
+}
 
 fn code(text: impl Display) -> String {
     return format!("`{text}`");
@@ -106,12 +156,35 @@ fn list<T>(
     return writeln!(out);
 }
 
-fn link(link: &Link) -> String {
-    let via = link
-        .via
-        .as_ref()
-        .map_or_else(String::new, |via| return format!(" via {}", code(via)));
-    return format!("{} → {}{via}", code(&link.from), code(&link.to));
+struct Renderer<'g> {
+    links: Option<&'g Links>,
+    nodes: BTreeMap<&'g NodeId, &'g Node>,
+}
+
+impl Renderer<'_> {
+    fn member(&self, id: &NodeId) -> String {
+        let shown = code(id);
+        let url = self
+            .links
+            .zip(self.nodes.get(id))
+            .and_then(|(links, node)| return links.of(node));
+        return url.map_or_else(
+            || return shown.clone(),
+            |url| return format!("[{shown}]({url})"),
+        );
+    }
+
+    fn link(&self, link: &Link) -> String {
+        let via = link
+            .via
+            .as_ref()
+            .map_or_else(String::new, |via| return format!(" via {}", code(via)));
+        return format!(
+            "{} → {}{via}",
+            self.member(&link.from),
+            self.member(&link.to)
+        );
+    }
 }
 
 impl Graph {
@@ -169,7 +242,7 @@ impl Graph {
         .sum();
     }
 
-    fn risk_sections(&self, out: &mut dyn Write) -> io::Result<()> {
+    fn risk_sections(&self, out: &mut dyn Write, renderer: &Renderer<'_>) -> io::Result<()> {
         let risks = &self.risks;
         writeln!(out, "### Risks\n")?;
         if self.risk_count() == 0 {
@@ -181,7 +254,7 @@ impl Graph {
             "Untouched code that stops reaching a member",
             "These callers are outside the diff, and their call resolved on the base but not on the head.",
             &risks.stops_resolving,
-            link,
+            |found| return renderer.link(found),
         )?;
         list(
             out,
@@ -189,7 +262,7 @@ impl Graph {
             "Untouched code that now reaches a member",
             "These callers are outside the diff, and their call resolves to this member only on the head.",
             &risks.starts_resolving,
-            link,
+            |found| return renderer.link(found),
         )?;
         list(
             out,
@@ -197,7 +270,7 @@ impl Graph {
             "Untouched callers of changed signatures",
             "These callers are outside the diff and call a member whose declaration changed.",
             &risks.untouched_signature_callers,
-            link,
+            |found| return renderer.link(found),
         )?;
         list(
             out,
@@ -205,7 +278,7 @@ impl Graph {
             "Uses matched by name only",
             "The receiver's type is unknown, so these uses of changed members are not proven.",
             &risks.unproven_uses,
-            link,
+            |found| return renderer.link(found),
         )?;
         list(
             out,
@@ -229,13 +302,13 @@ impl Graph {
                 "Members no baseline test reached",
                 "The baseline report records no test that ran these members on the base.",
                 untested,
-                |id| return code(id),
+                |id| return renderer.member(id),
             )?;
         }
         return Ok(());
     }
 
-    fn changed_table(&self, out: &mut dyn Write) -> io::Result<()> {
+    fn changed_table(&self, out: &mut dyn Write, renderer: &Renderer<'_>) -> io::Result<()> {
         let changed = self.changed();
         let measured = self.risks.untested.is_some();
         writeln!(out, "### Changed members, by impact\n")?;
@@ -268,7 +341,7 @@ impl Graph {
             writeln!(
                 out,
                 "| {} | {} | {callers} | {entry_points} |{measurement}",
-                code(cell(&node.id.to_string())),
+                cell(&renderer.member(&node.id)),
                 change_name(node.change),
             )?;
         }
@@ -279,7 +352,7 @@ impl Graph {
         return writeln!(out);
     }
 
-    fn entry_sections(&self, out: &mut dyn Write) -> io::Result<()> {
+    fn entry_sections(&self, out: &mut dyn Write, renderer: &Renderer<'_>) -> io::Result<()> {
         let entered: Vec<(&Node, &EntryPoint)> = self
             .nodes
             .iter()
@@ -300,7 +373,7 @@ impl Graph {
                 return format!(
                     "{} at {} (depth {}{proven})",
                     entry(point),
-                    code(&node.id),
+                    renderer.member(&node.id),
                     node.depth
                 );
             },
@@ -333,11 +406,19 @@ impl Graph {
         );
     }
 
-    pub fn render_markdown(&self, out: &mut dyn Write) -> io::Result<()> {
+    pub fn render_markdown(&self, out: &mut dyn Write, links: Option<&Links>) -> io::Result<()> {
+        let renderer = Renderer {
+            links,
+            nodes: self
+                .nodes
+                .iter()
+                .map(|node| return (&node.id, node))
+                .collect(),
+        };
         self.headline(out)?;
-        self.risk_sections(out)?;
-        self.changed_table(out)?;
-        self.entry_sections(out)?;
+        self.risk_sections(out, &renderer)?;
+        self.changed_table(out, &renderer)?;
+        self.entry_sections(out, &renderer)?;
         return self.namespace_section(out);
     }
 }

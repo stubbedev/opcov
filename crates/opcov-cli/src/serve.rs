@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::failure::Failure;
+use crate::graph;
 use crate::output::write_stderr;
 use crate::{index, local};
 
@@ -46,14 +47,24 @@ const SOURCE_EXTENSION: &str = "php";
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "message")]
 enum Message {
-    Query { version: String, query: Query },
-    Stop { version: String },
+    Query {
+        version: String,
+        query: Query,
+    },
+    Graph {
+        version: String,
+        request: graph::Request,
+    },
+    Stop {
+        version: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "reply")]
 enum Reply {
     Answer { answer: Answer },
+    Graph { rendered: String },
     Stopped,
     Error { error: String },
 }
@@ -328,7 +339,7 @@ fn handle(
             return;
         }
     };
-    if let Message::Query { version, .. } = &message
+    if let Message::Query { version, .. } | Message::Graph { version, .. } = &message
         && version != VERSION
     {
         respond(
@@ -360,6 +371,36 @@ fn handle(
                 Ok(()) => Reply::Answer {
                     answer: read(shared).index.answer(&query),
                 },
+                Err(error) => Reply::Error {
+                    error: error.to_string(),
+                },
+            };
+            respond(stream, &reply);
+        }
+        Message::Graph { request, .. } => {
+            let root = read(shared).project.root().to_path_buf();
+            let extra = request
+                .changed_paths()
+                .into_iter()
+                .map(|path| return root.join(path))
+                .collect();
+            let reply = match sync(shared, pending, extra) {
+                Ok(()) => {
+                    let started = Instant::now();
+                    let described = {
+                        let served = read(shared);
+                        graph::build_on(&served.project, &served.index, &request)
+                    };
+                    log!("described a change in {:.1?}", started.elapsed());
+                    described.map_or_else(
+                        |error| {
+                            return Reply::Error {
+                                error: error.to_string(),
+                            };
+                        },
+                        |rendered| return Reply::Graph { rendered },
+                    )
+                }
                 Err(error) => Reply::Error {
                     error: error.to_string(),
                 },
@@ -516,8 +557,25 @@ pub(crate) fn ask(root: &Path, query: &Query) -> Result<Option<Answer>, Failure>
     return match exchange(&mut stream, &message)? {
         Reply::Answer { answer } => Ok(Some(answer)),
         Reply::Error { error } => Err(Failure::failed(format!("opcov serve: {error}"))),
-        Reply::Stopped => Err(Failure::failed(
+        Reply::Graph { .. } | Reply::Stopped => Err(Failure::failed(
             "opcov serve stopped instead of answering".to_owned(),
+        )),
+    };
+}
+
+pub(crate) fn graph(root: &Path, request: &graph::Request) -> Result<Option<String>, Failure> {
+    let Ok(mut stream) = UnixStream::connect(socket_path(root)?) else {
+        return Ok(None);
+    };
+    let message = Message::Graph {
+        version: VERSION.to_owned(),
+        request: request.clone(),
+    };
+    return match exchange(&mut stream, &message)? {
+        Reply::Graph { rendered } => Ok(Some(rendered)),
+        Reply::Error { error } => Err(Failure::failed(format!("opcov serve: {error}"))),
+        Reply::Answer { .. } | Reply::Stopped => Err(Failure::failed(
+            "opcov serve did not describe the change".to_owned(),
         )),
     };
 }
@@ -534,7 +592,7 @@ pub(crate) fn stop(root: &Path) -> Result<bool, Failure> {
     )? {
         Reply::Stopped => Ok(true),
         Reply::Error { error } => Err(Failure::failed(format!("opcov serve: {error}"))),
-        Reply::Answer { .. } => Err(Failure::failed(
+        Reply::Answer { .. } | Reply::Graph { .. } => Err(Failure::failed(
             "opcov serve answered instead of stopping".to_owned(),
         )),
     };

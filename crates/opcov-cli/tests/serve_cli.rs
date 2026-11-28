@@ -204,6 +204,66 @@ mod serve_cli {
     }
 
     #[test]
+    fn a_running_server_describes_a_change_like_a_graph_in_process() {
+        let (root, runtime) = workspace("graph");
+        let log = root.parent().unwrap().join("serve.log");
+        let mut running = start(
+            &runtime,
+            &root,
+            Stdio::from(fs::File::create(&log).unwrap()),
+        );
+        wait_for(&log, "analysed");
+        let report = root.join("app/Services/Report.php");
+        let source = fs::read_to_string(&report).unwrap();
+        let lines: Vec<&str> = source.lines().collect();
+        assert_eq!(
+            lines[21], "        return '';",
+            "the fixture's render returns on line 22"
+        );
+        fs::write(
+            &report,
+            source.replacen("        return '';", "        return 'served';", 1),
+        )
+        .unwrap();
+        let diff = root.parent().unwrap().join("render.diff");
+        fs::write(
+            &diff,
+            "--- a/app/Services/Report.php\n+++ b/app/Services/Report.php\n@@ -22 +22 @@\n-        return '';\n+        return 'served';\n",
+        )
+        .unwrap();
+        let graph = |extra: &[&str]| {
+            let mut arguments = vec![
+                "graph",
+                "--root",
+                root.to_str().unwrap(),
+                "--diff",
+                diff.to_str().unwrap(),
+            ];
+            arguments.extend_from_slice(extra);
+            let output = opcov(&runtime, &arguments);
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return output.stdout;
+        };
+        let served = graph(&[]);
+        wait_for(&log, "described a change");
+        assert_eq!(
+            String::from_utf8(served).unwrap(),
+            String::from_utf8(graph(&["--no-serve"])).unwrap(),
+            "the server's warm head index describes the change as a fresh one does"
+        );
+        opcov(
+            &runtime,
+            &["serve", "--root", root.to_str().unwrap(), "--stop"],
+        );
+        assert!(running.0.wait().unwrap().success());
+        fs::remove_dir_all(&runtime).unwrap();
+    }
+
+    #[test]
     fn a_search_in_process_reuses_its_index_cache_and_rebuilds_a_corrupt_one() {
         let (root, runtime) = workspace("cache");
         let cache = root.join(".opcov/index.cache");

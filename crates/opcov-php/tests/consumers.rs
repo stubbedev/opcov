@@ -391,6 +391,203 @@ mod consumers {
     }
 
     #[test]
+    fn a_member_only_the_using_classes_declare_is_typed_in_the_trait_by_them() {
+        let root = project_copy("consumers-trait-scope");
+        let write = |path: &str, source: &str| {
+            std::fs::write(root.join(path), source).unwrap();
+        };
+        std::fs::create_dir_all(root.join("app/Columns")).unwrap();
+        for class in ["Column", "Other"] {
+            write(
+                &format!("app/Columns/{class}.php"),
+                &format!(
+                    "<?php\n\nnamespace App\\Columns;\n\nclass {class}\n{{\n    public function label(): string\n    {{\n        return '';\n    }}\n}}\n"
+                ),
+            );
+        }
+        write(
+            "app/Columns/Restrained.php",
+            "<?php\n\nnamespace App\\Columns;\n\ntrait Restrained\n{\n    public function firstLabel(): string\n    {\n        return $this->columns()->label() . $this->current->label();\n    }\n}\n",
+        );
+        write(
+            "app/Columns/Channel.php",
+            "<?php\n\nnamespace App\\Columns;\n\nfinal class Channel\n{\n    use Restrained;\n\n    public Column $current;\n\n    public function columns(): Column\n    {\n        return new Column();\n    }\n}\n",
+        );
+        let index = Index::build(&Project::open(&root).unwrap()).unwrap();
+        let request: Request = serde_json::from_str(
+            r#"{"targets": ["method App\\Columns\\Column::label", "method App\\Columns\\Other::label"], "within": ["app/Columns/Restrained.php"]}"#,
+        )
+        .unwrap();
+        let found: Vec<(String, Resolution)> = index
+            .uses(&request)
+            .uses
+            .into_iter()
+            .map(|found| {
+                return (
+                    format!("{}:{} {}", found.path, found.line, found.target),
+                    found.resolution,
+                );
+            })
+            .collect();
+        assert_eq!(
+            found,
+            vec![(
+                "app/Columns/Restrained.php:9 method App\\Columns\\Column::label".to_owned(),
+                Resolution::Typed
+            )],
+            "columns() and $current exist only on Channel, which uses the trait, and both give a Column"
+        );
+    }
+
+    #[test]
+    fn an_untyped_property_written_only_with_known_types_is_typed_by_them() {
+        let root = project_copy("consumers-inferred");
+        let write = |path: &str, source: &str| {
+            std::fs::write(root.join(path), source).unwrap();
+        };
+        std::fs::create_dir_all(root.join("app/Inferred")).unwrap();
+        for class in ["Repo", "OtherRepo"] {
+            write(
+                &format!("app/Inferred/{class}.php"),
+                &format!(
+                    "<?php\n\nnamespace App\\Inferred;\n\nclass {class}\n{{\n    public function fetch(): int\n    {{\n        return 1;\n    }}\n}}\n"
+                ),
+            );
+        }
+        let service = |name: &str, visibility: &str, extra: &str, constructor: &str| {
+            return format!(
+                "<?php\n\nnamespace App\\Inferred;\n\nclass {name}\n{{\n    {visibility} $repo;\n\n    public function __construct(Repo $repo)\n    {{\n{constructor}        $this->repo = $repo;\n    }}\n\n    public function run(): int\n    {{\n        return $this->repo->fetch();\n    }}\n{extra}}}\n"
+            );
+        };
+        write(
+            "app/Inferred/Plain.php",
+            &service("Plain", "private", "", ""),
+        );
+        write(
+            "app/Inferred/Swapped.php",
+            &service(
+                "Swapped",
+                "private",
+                "\n    public function swap($other): void\n    {\n        $this->repo = $other;\n    }\n",
+                "",
+            ),
+        );
+        write(
+            "app/Inferred/Dynamic.php",
+            &service(
+                "Dynamic",
+                "private",
+                "\n    public function set(string $name, Repo $value): void\n    {\n        $this->{$name} = $value;\n    }\n",
+                "",
+            ),
+        );
+        write(
+            "app/Inferred/Reassigned.php",
+            &service(
+                "Reassigned",
+                "private",
+                "",
+                "        $repo = make_repo();\n",
+            ),
+        );
+        write(
+            "app/Inferred/Shared.php",
+            &service("Shared", "protected", "", ""),
+        );
+        write(
+            "app/Inferred/SharedChild.php",
+            "<?php\n\nnamespace App\\Inferred;\n\nfinal class SharedChild extends Shared\n{\n    public function reset(): void\n    {\n        $this->repo = new OtherRepo();\n    }\n}\n",
+        );
+        let index = Index::build(&Project::open(&root).unwrap()).unwrap();
+        let request: Request = serde_json::from_str(
+            r#"{"targets": ["method App\\Inferred\\Repo::fetch", "method App\\Inferred\\OtherRepo::fetch"], "within": ["app/Inferred"]}"#,
+        )
+        .unwrap();
+        let found: Vec<String> = index
+            .uses(&request)
+            .uses
+            .into_iter()
+            .map(|found| {
+                return format!(
+                    "{}:{} {} {:?}",
+                    found.path, found.line, found.target, found.resolution
+                );
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                "app/Inferred/Dynamic.php:16 method App\\Inferred\\OtherRepo::fetch ByName",
+                "app/Inferred/Dynamic.php:16 method App\\Inferred\\Repo::fetch ByName",
+                "app/Inferred/Plain.php:16 method App\\Inferred\\Repo::fetch Typed",
+                "app/Inferred/Reassigned.php:17 method App\\Inferred\\OtherRepo::fetch ByName",
+                "app/Inferred/Reassigned.php:17 method App\\Inferred\\Repo::fetch ByName",
+                "app/Inferred/Shared.php:16 method App\\Inferred\\OtherRepo::fetch Typed",
+                "app/Inferred/Shared.php:16 method App\\Inferred\\Repo::fetch Typed",
+                "app/Inferred/Swapped.php:16 method App\\Inferred\\OtherRepo::fetch ByName",
+                "app/Inferred/Swapped.php:16 method App\\Inferred\\Repo::fetch ByName",
+            ],
+            "Plain's $repo is only ever a Repo; Shared's protected $repo is also an OtherRepo in its child; \
+             an untyped write, a dynamic write or a reassigned parameter leaves the property untyped"
+        );
+    }
+
+    #[test]
+    fn a_closure_passed_to_a_forwarded_builder_method_gets_the_models_of_the_query() {
+        let root = project_copy("consumers-forwarded-callable");
+        let builder =
+            root.join("vendor/laravel/framework/src/Illuminate/Database/Eloquent/Builder.php");
+        let stub = std::fs::read_to_string(&builder).unwrap().replace(
+            "    public function __call(",
+            "    /**\n     * @param callable(Collection<int, TModel>, int): mixed $callback\n     */\n    public function chunk(int $count, callable $callback): bool\n    {\n        return true;\n    }\n\n    public function __call(",
+        );
+        std::fs::write(&builder, stub).unwrap();
+        std::fs::create_dir_all(root.join("app/Chunks")).unwrap();
+        std::fs::write(
+            root.join("app/Chunks/Press.php"),
+            "<?php\n\nnamespace App\\Chunks;\n\nfinal class Press\n{\n    public function publish(): void\n    {\n    }\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("app/Chunks/Republish.php"),
+            "<?php\n\nnamespace App\\Chunks;\n\nuse App\\Models\\Comment;\n\nfinal class Republish\n{\n    public function run(): void\n    {\n        Comment::chunk(10, function ($comments): void {\n            foreach ($comments as $comment) {\n                $comment->publish();\n            }\n        });\n    }\n}\n",
+        )
+        .unwrap();
+        let comment = root.join("app/Models/Comment.php");
+        let model = std::fs::read_to_string(&comment).unwrap();
+        let model = model.replacen(
+            "\n}\n",
+            "\n\n    public function publish(): void\n    {\n    }\n}\n",
+            1,
+        );
+        std::fs::write(&comment, model).unwrap();
+        let index = Index::build(&Project::open(&root).unwrap()).unwrap();
+        let request: Request = serde_json::from_str(
+            r#"{"targets": ["method App\\Models\\Comment::publish", "method App\\Models\\Post::publish", "method App\\Chunks\\Press::publish"], "within": ["app/Chunks/Republish.php"]}"#,
+        )
+        .unwrap();
+        let found: Vec<(String, Resolution)> = index
+            .uses(&request)
+            .uses
+            .into_iter()
+            .map(|found| {
+                return (
+                    format!("{}:{} {}", found.path, found.line, found.target),
+                    found.resolution,
+                );
+            })
+            .collect();
+        assert_eq!(
+            found,
+            vec![(
+                "app/Chunks/Republish.php:13 method App\\Models\\Comment::publish".to_owned(),
+                Resolution::Typed
+            )],
+            "Comment::chunk forwards to Builder<Comment>, whose callback takes a collection of Comments, not of any Model"
+        );
+    }
+
+    #[test]
     fn parent_in_a_trait_resolves_to_the_parent_of_each_using_class() {
         let root = project_copy("consumers-trait-parent");
         let write = |path: &str, source: &str| {
