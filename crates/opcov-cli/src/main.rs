@@ -353,6 +353,30 @@ struct GraphArgs {
         help = "Call-graph levels of consumers to follow on each side (see opcov consumers --depth)"
     )]
     depth: u32,
+    #[arg(
+        long,
+        value_name = "JSON",
+        help = "Laravel's route table at the head, as `php artisan route:list --json` writes it: each route is listed on the method it runs, and a route whose method is gone is a risk"
+    )]
+    routes: Option<PathBuf>,
+    #[arg(
+        long,
+        help = "Also index the autoload-dev sources, so the tests that use changed code are nodes, marked as PHPUnit or Pest tests"
+    )]
+    tests: bool,
+    #[arg(
+        long,
+        value_name = "REPORT",
+        help = "Baseline opcov report of the base: each member at the base gets its line and branch coverage and the tests that reached it, and untested ones are a risk"
+    )]
+    report: Option<PathBuf>,
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = GraphFormat::Json,
+        help = "Output format: json, the whole graph for review tools, or markdown, a summary of its risks, changed members, entry points and namespaces for a pull request comment"
+    )]
+    format: GraphFormat,
 }
 
 #[derive(Debug, Args)]
@@ -413,6 +437,12 @@ struct ServeArgs {
         help = "Stop after this many seconds without a query [default: run until stopped]"
     )]
     idle_timeout: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum GraphFormat {
+    Json,
+    Markdown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -675,8 +705,20 @@ fn consumers_report(args: &ConsumersArgs) -> Result<Verdict, Failure> {
 fn graph_report(args: &GraphArgs) -> Result<Verdict, Failure> {
     let root = project_root(args.root.as_deref())?;
     let patch = read_patch(&args.diff, args.strip)?;
-    let graph = graph::build(&root, &patch, &args.path, args.depth)?;
-    write_stdout(|out| return graph::render_json(out, &graph))?;
+    let options = graph::Options {
+        routes: graph::routes(args.routes.as_deref())?,
+        report: args.report.as_deref(),
+        within: &args.path,
+        depth: args.depth,
+        tests: args.tests,
+    };
+    let graph = graph::build(&root, &patch, &options)?;
+    write_stdout(|out| {
+        return match args.format {
+            GraphFormat::Json => graph::render_json(out, &graph),
+            GraphFormat::Markdown => graph.render_markdown(out),
+        };
+    })?;
     return Ok(Verdict::Clean);
 }
 

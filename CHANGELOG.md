@@ -22,6 +22,20 @@ as the release notes, and refuses to release a version that has no section here.
   member's callers are found without a second checkout. A file the change
   cannot affect is analysed once for both sides. On an 8,881-file Laravel
   application a ten-commit branch takes 4.4 s.
+  - **Review data:** a modified member is `signature_changed`,
+    `body_changed` or `formatting_changed`, compared as PHP tokens. Every
+    edge and node says whether types prove it or it was matched by name.
+    Each changed member carries its hunks on both sides and its impact: the
+    callers that reach it, the proven ones, and their entry points.
+  - **Entry points:** routes from `php artisan route:list --json`
+    (`--routes`), console commands, queued jobs, event subscribers, model
+    hooks, and PHPUnit and Pest tests (`--tests`).
+  - **Coverage:** with a baseline report (`--report`), each member at the
+    base gets its line and branch coverage and the tests that reached it.
+  - **Risks:** untouched code that stops or starts reaching a member,
+    untouched callers of changed signatures, uses matched by name, routes
+    whose method is gone, and members no test reached.
+  - `--format markdown` summarises all of it for a pull request comment.
 
 ### Changed
 
@@ -30,6 +44,23 @@ as the release notes, and refuses to release a version that has no section here.
   of 3.8 s, with the same results.
 - A search no longer analyses a file that names a target only as a variable
   (`$name`); `Class::$name` still counts as a use of a static property.
+
+### Fixed
+
+- `opcov consumers` matched every `$this->property` read by name, as if its
+  receiver's type were unknown, so a property of one class was used by every
+  class with a property of that name. `$this` is now the class the code runs
+  in. On an 8,881-file Laravel application a 59-file change has 281
+  consumers at depth 2 instead of 549.
+- `parent::` in a trait resolves to the parent of each using class instead
+  of matching by name.
+- `Foo::run()`, `self::`, `parent::`, `new Foo` and class constants bind to
+  the member their lookup finds, not to the overrides in subclasses:
+  `parent::__construct()` no longer uses every sibling's constructor.
+- A receiver whose type is only partly known (`Account|iterable`) matched by
+  that part alone, missing the uses through the rest; the rest now matches
+  by name. A receiver narrowed by a structural check (`method_exists`) keeps
+  its class.
 
 ## [0.4.0] - 2026-11-26
 

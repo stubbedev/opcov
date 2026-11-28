@@ -52,6 +52,13 @@ impl Kind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Resolution {
+    Typed,
+    ByName,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Target {
     pub kind: Kind,

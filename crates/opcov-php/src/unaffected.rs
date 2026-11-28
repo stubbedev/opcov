@@ -20,8 +20,10 @@ use mago_word::ascii_lowercase_word;
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::consumers::Mentions;
+use crate::declaration::normalized;
 use crate::facts::short_name;
 use crate::index::Index;
+use crate::target::{Kind, Target};
 
 const CONSTRUCTOR: &str = "__construct";
 const SCOPE: &str = "scope";
@@ -59,9 +61,12 @@ const IMPLICIT: &[&str] = &[
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Declared {
     file: usize,
+    kind: Kind,
     text: Vec<u8>,
     names: Vec<String>,
 }
+
+type Bodies = BTreeMap<(Kind, String), BTreeSet<Vec<u8>>>;
 
 #[derive(Debug)]
 struct Shape {
@@ -69,6 +74,7 @@ struct Shape {
     name: String,
     header: Vec<u8>,
     members: BTreeSet<Declared>,
+    bodies: Bodies,
 }
 
 #[derive(Debug, Default)]
@@ -76,7 +82,14 @@ struct Declarations {
     imports: BTreeSet<(usize, String, Vec<u8>)>,
     classes: BTreeMap<String, Shape>,
     functions: BTreeSet<Declared>,
+    function_bodies: Bodies,
     redeclared: bool,
+}
+
+#[derive(Default)]
+struct Members {
+    declared: BTreeSet<Declared>,
+    bodies: Bodies,
 }
 
 struct Reader<'a, 'arena> {
@@ -103,29 +116,41 @@ impl Reader<'_, '_> {
     }
 
     fn documented(&self, span: Span, end: u32) -> Vec<u8> {
-        let mut text: Vec<u8> = PrecedingDocblocks::new(self.trivia, span.start.offset)
-            .flat_map(|docblock| return docblock.value.iter().copied())
-            .collect();
-        text.extend_from_slice(self.between(span.start.offset, end));
-        return text;
+        return normalized(
+            PrecedingDocblocks::new(self.trivia, span.start.offset)
+                .map(|docblock| return docblock.value),
+            self.between(span.start.offset, end),
+        );
     }
 
-    fn declared(&self, span: Span, end: u32, names: Vec<String>) -> Declared {
+    fn body(&self, kind: Kind, name: &str, span: Span, bodies: &mut Bodies) {
+        let code = self.between(span.start.offset, span.end.offset);
+        bodies
+            .entry((kind, name.to_owned()))
+            .or_default()
+            .insert(normalized(std::iter::empty(), code));
+    }
+
+    fn declared(&self, kind: Kind, span: Span, end: u32, names: Vec<String>) -> Declared {
         return Declared {
             file: self.file,
+            kind,
             text: self.documented(span, end),
             names,
         };
     }
 
-    fn method(&self, method: &Method<'_>, members: &mut BTreeSet<Declared>) {
+    fn method(&self, method: &Method<'_>, members: &mut Members) {
+        let name = lowercase(method.name.value);
         let end = match &method.body {
-            MethodBody::Concrete(block) => block.left_brace.start.offset,
+            MethodBody::Concrete(block) => {
+                self.body(Kind::Method, &name, block.span(), &mut members.bodies);
+                block.left_brace.start.offset
+            }
             MethodBody::Abstract(_) => method.span().end.offset,
         };
-        let name = lowercase(method.name.value);
         if name == CONSTRUCTOR {
-            members.extend(
+            members.declared.extend(
                 method
                     .parameter_list
                     .parameters
@@ -133,6 +158,7 @@ impl Reader<'_, '_> {
                     .filter(|parameter| return !parameter.modifiers.is_empty())
                     .map(|parameter| {
                         return self.declared(
+                            Kind::Property,
                             parameter.span(),
                             parameter.span().end.offset,
                             vec![variable(parameter.variable.name)],
@@ -140,25 +166,23 @@ impl Reader<'_, '_> {
                     }),
             );
         }
-        members.insert(self.declared(method.span(), end, vec![name]));
+        members
+            .declared
+            .insert(self.declared(Kind::Method, method.span(), end, vec![name]));
     }
 
-    fn member(
-        &self,
-        member: &ClassLikeMember<'_>,
-        header: &mut Vec<u8>,
-        members: &mut BTreeSet<Declared>,
-    ) {
-        let whole = |names: Vec<String>| {
-            return self.declared(member.span(), member.span().end.offset, names);
+    fn member(&self, member: &ClassLikeMember<'_>, header: &mut Vec<u8>, members: &mut Members) {
+        let whole = |kind: Kind, names: Vec<String>| {
+            return self.declared(kind, member.span(), member.span().end.offset, names);
         };
         let declared = match member {
             ClassLikeMember::TraitUse(_) => {
-                header.extend(whole(Vec::new()).text);
+                header.extend(self.documented(member.span(), member.span().end.offset));
                 return;
             }
             ClassLikeMember::Method(method) => return self.method(method, members),
             ClassLikeMember::Property(Property::Plain(plain)) => whole(
+                Kind::Property,
                 plain
                     .items
                     .iter()
@@ -166,21 +190,37 @@ impl Reader<'_, '_> {
                     .collect(),
             ),
             ClassLikeMember::Property(Property::Hooked(hooked)) => {
-                whole(vec![item_name(&hooked.item)])
+                let name = item_name(&hooked.item);
+                self.body(
+                    Kind::Property,
+                    &name,
+                    hooked.hook_list.span(),
+                    &mut members.bodies,
+                );
+                self.declared(
+                    Kind::Property,
+                    member.span(),
+                    hooked.hook_list.left_brace.start.offset,
+                    vec![name],
+                )
             }
             ClassLikeMember::Constant(constant) => whole(
+                Kind::Constant,
                 constant
                     .items
                     .iter()
                     .map(|item| return lowercase(item.name.value))
                     .collect(),
             ),
-            ClassLikeMember::EnumCase(case) => whole(vec![lowercase(match &case.item {
-                EnumCaseItem::Unit(unit) => unit.name.value,
-                EnumCaseItem::Backed(backed) => backed.name.value,
-            })]),
+            ClassLikeMember::EnumCase(case) => whole(
+                Kind::Constant,
+                vec![lowercase(match &case.item {
+                    EnumCaseItem::Unit(unit) => unit.name.value,
+                    EnumCaseItem::Backed(backed) => backed.name.value,
+                })],
+            ),
         };
-        members.insert(declared);
+        members.declared.insert(declared);
     }
 
     fn class_like<'m, 'arena: 'm>(
@@ -192,16 +232,17 @@ impl Reader<'_, '_> {
         declarations: &mut Declarations,
     ) {
         let mut header = self.documented(span, left_brace.end.offset);
-        let mut declared = BTreeSet::new();
+        let mut collected = Members::default();
         for member in members {
-            self.member(member, &mut header, &mut declared);
+            self.member(member, &mut header, &mut collected);
         }
         let resolved = self.names.get(name);
         let shape = Shape {
             file: self.file,
             name: String::from_utf8_lossy(resolved).into_owned(),
             header,
-            members: declared,
+            members: collected.declared,
+            bodies: collected.bodies,
         };
         if declarations
             .classes
@@ -285,7 +326,14 @@ impl<'ast, 'arena> Walker<'ast, 'arena, Collecting> for Reader<'_, 'arena> {
 
     fn walk_in_function(&self, function: &'ast Function<'arena>, collecting: &mut Collecting) {
         let name = short_name(&lowercase(self.names.get(&function.name))).to_owned();
+        self.body(
+            Kind::Function,
+            &name,
+            function.body.span(),
+            &mut collecting.declarations.function_bodies,
+        );
         let declared = self.declared(
+            Kind::Function,
             function.span(),
             function.body.left_brace.start.offset,
             vec![name],
@@ -325,6 +373,89 @@ fn read(file: &File, position: usize, collecting: &mut Collecting) {
         trivia: program.trivia.nodes,
     }
     .walk_program(program, collecting);
+}
+
+type SignatureKey = (Kind, String, String);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MemberChange {
+    Signature,
+    Body,
+    Formatting,
+}
+
+#[derive(Default)]
+pub(crate) struct Signatures {
+    declarations: BTreeMap<SignatureKey, BTreeSet<Vec<u8>>>,
+    bodies: BTreeMap<SignatureKey, BTreeSet<Vec<u8>>>,
+}
+
+impl Signatures {
+    fn key(target: &Target) -> SignatureKey {
+        let member = match target.kind {
+            Kind::Function | Kind::GlobalConstant => {
+                short_name(&target.member).to_ascii_lowercase()
+            }
+            Kind::Method | Kind::Property | Kind::Constant => target.member.to_ascii_lowercase(),
+        };
+        let class = target
+            .class
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        return (target.kind, class, member);
+    }
+
+    pub(crate) fn change(&self, other: &Self, target: &Target) -> MemberChange {
+        let key = Self::key(target);
+        let declared = match (self.declarations.get(&key), other.declarations.get(&key)) {
+            (Some(mine), Some(theirs)) => mine == theirs,
+            _ => false,
+        };
+        if !declared {
+            return MemberChange::Signature;
+        }
+        if self.bodies.get(&key) != other.bodies.get(&key) {
+            return MemberChange::Body;
+        }
+        return MemberChange::Formatting;
+    }
+
+    fn add(&mut self, class: &str, declared: &Declared) {
+        for name in &declared.names {
+            self.declarations
+                .entry((declared.kind, class.to_owned(), name.clone()))
+                .or_default()
+                .insert(declared.text.clone());
+        }
+    }
+
+    fn add_bodies(&mut self, class: &str, bodies: &Bodies) {
+        for ((kind, name), texts) in bodies {
+            self.bodies
+                .entry((*kind, class.to_owned(), name.clone()))
+                .or_default()
+                .extend(texts.iter().cloned());
+        }
+    }
+}
+
+impl Index {
+    pub(crate) fn signatures(&self, paths: &[&str]) -> Signatures {
+        let declarations = Declarations::of(self, paths);
+        let mut signatures = Signatures::default();
+        for (class, shape) in &declarations.classes {
+            for declared in &shape.members {
+                signatures.add(class, declared);
+            }
+            signatures.add_bodies(class, &shape.bodies);
+        }
+        for declared in &declarations.functions {
+            signatures.add("", declared);
+        }
+        signatures.add_bodies("", &declarations.function_bodies);
+        return signatures;
+    }
 }
 
 struct Words(BTreeSet<String>);

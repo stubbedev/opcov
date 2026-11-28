@@ -4,7 +4,9 @@ use std::process::Output;
 
 use serde_json::Value;
 
-use super::fixture::{run, stderr, stdout, unified, workspace};
+use super::fixture::{
+    Extras, fixture_source, report, run, sha256, stderr, stdout, unified, workspace,
+};
 
 const REPORT: &str = "app/Services/Report.php";
 const RECEIVERS: &str = "app/Uses/Receivers.php";
@@ -138,13 +140,13 @@ fn a_branch_is_described_from_both_sides_of_its_diff() {
         described(&json(&graph(&root, &patch))),
         [
             "0 added method App\\Services\\Calendar::today | - | 7-10",
-            "0 modified method App\\Services\\Report::__construct | 16-18 | 14-16",
-            "0 modified method App\\Services\\Report::render | 20-23 | 18-21",
+            "0 formatting_changed method App\\Services\\Report::__construct | 16-18 | 14-16",
+            "0 body_changed method App\\Services\\Report::render | 20-23 | 18-21",
             "0 added method App\\Services\\Report::summary | - | 23-26",
             "0 removed method App\\Uses\\Lookalike::run | 9-14 | -",
-            "0 modified method App\\Uses\\Receivers::run | 13-24 | 13-24",
+            "0 body_changed method App\\Uses\\Receivers::run | 13-24 | 13-24",
             "0 removed constant App\\Services\\Report::LIMIT | 12-12 | -",
-            "0 modified property App\\Services\\Report::title | 14-14 | 12-12",
+            "0 formatting_changed property App\\Services\\Report::title | 14-14 | 12-12",
             "added method App\\Services\\Calendar::today -> method App\\Services\\Report::summary |  | 9",
             "added method App\\Services\\Report::render -> method App\\Services\\Report::summary |  | 20",
             "kept method App\\Uses\\Receivers::run -> method App\\Services\\Report::__construct | 22 | 22",
@@ -153,7 +155,7 @@ fn a_branch_is_described_from_both_sides_of_its_diff() {
             "removed method App\\Uses\\Receivers::run -> constant App\\Services\\Report::LIMIT | 23 | ",
             "kept method App\\Uses\\Receivers::run -> property App\\Services\\Report::title | 23 | 23",
         ],
-        "the diff's one hunk in Report.php replaces lines 12-23, so title and __construct are modified and move; \
+        "the diff's one hunk in Report.php replaces lines 12-23, so title and __construct are touched and move with the same tokens; \
          the deleted Lookalike.php removes its method, the created Calendar.php adds its own, and the removed LIMIT keeps its base caller"
     );
 }
@@ -211,5 +213,162 @@ fn a_binary_php_change_fails() {
         stderr(&output).contains("cannot rebuild the base version of app/Services/Clock.php: the diff shows a binary change"),
         "{}",
         stderr(&output)
+    );
+}
+
+#[test]
+fn a_route_table_that_is_not_route_list_json_fails() {
+    let root = php_project("graph-routes");
+    let patch = branch(&root);
+    let routes = root.join("routes.json");
+    fs::write(&routes, "{\"routes\": []}").unwrap();
+    let output = run(&[
+        "graph",
+        "--root",
+        root.to_str().unwrap(),
+        "--diff",
+        patch.to_str().unwrap(),
+        "--routes",
+        routes.to_str().unwrap(),
+    ]);
+    assert!(!output.status.success(), "{}", stdout(&output));
+    assert!(
+        stderr(&output).contains(&format!(
+            "cannot read the routes {}: the routes are not the JSON array `php artisan route:list --json` writes",
+            routes.display()
+        )),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn indexing_the_tests_leaves_the_projects_cache_to_the_head_sources() {
+    let root = php_project("graph-tests-cache");
+    let patch = branch(&root);
+    json(&graph(&root, &patch));
+    let cache = root.join(".opcov/index.cache");
+    let written = fs::read(&cache).unwrap();
+    let output = run(&[
+        "graph",
+        "--root",
+        root.to_str().unwrap(),
+        "--diff",
+        patch.to_str().unwrap(),
+        "--tests",
+    ]);
+    json(&output);
+    assert_eq!(
+        fs::read(&cache).unwrap(),
+        written,
+        "a graph with the tests reads the cache but leaves it as a search of the head would"
+    );
+}
+
+const FOO: &str = "app/Foo.php";
+const FOO_CALLER: &str = "app/Uses/FooCaller.php";
+const FOO_CALLER_SOURCE: &str = "<?php\n\nnamespace App\\Uses;\n\nuse App\\Foo;\n\nfinal class FooCaller\n{\n    public function run(Foo $foo): string\n    {\n        return $foo->bar(null, null);\n    }\n}\n";
+
+fn covered_branch(name: &str, recorded: &[u8]) -> (PathBuf, PathBuf, PathBuf) {
+    let root = php_project(name);
+    let base = fs::read_to_string(fixture_source()).unwrap();
+    fs::write(root.join(FOO), &base).unwrap();
+    fs::write(root.join(FOO_CALLER), FOO_CALLER_SOURCE).unwrap();
+    let baseline = root.join("baseline.json");
+    fs::write(
+        &baseline,
+        report(root.to_str().unwrap(), &sha256(recorded), Extras::default()),
+    )
+    .unwrap();
+    let head = replaced(
+        &base,
+        "        return $label;\n    }\n\n    public function baz",
+        "        return $label . '!';\n    }\n\n    public function baz",
+    );
+    let patch = root.join("branch.diff");
+    fs::write(&patch, change(&root, FOO, Some(&head))).unwrap();
+    return (root, patch, baseline);
+}
+
+fn graph_with_report(root: &Path, patch: &Path, baseline: &Path) -> Output {
+    return run(&[
+        "graph",
+        "--root",
+        root.to_str().unwrap(),
+        "--diff",
+        patch.to_str().unwrap(),
+        "--report",
+        baseline.to_str().unwrap(),
+    ]);
+}
+
+#[test]
+fn a_baseline_report_gives_each_base_member_its_coverage_and_tests() {
+    let base = fs::read(fixture_source()).unwrap();
+    let (root, patch, baseline) = covered_branch("graph-coverage", &base);
+    let graph = json(&graph_with_report(&root, &patch, &baseline));
+    let coverage: Vec<String> = graph["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| return format!("{} {}", node["id"].as_str().unwrap(), node["coverage"]))
+        .collect();
+    assert_eq!(
+        (coverage, graph["risks"]["untested"].to_string()),
+        (
+            vec![
+                r#"method App\Foo::bar {"state":"measured","lines":{"covered":6,"total":6},"outcomes":{"covered":5,"total":6},"tests":["T\\A::one","T\\B::two"]}"#.to_owned(),
+                r#"method App\Uses\FooCaller::run {"state":"never_loaded"}"#.to_owned(),
+            ],
+            r#"["method App\\Uses\\FooCaller::run"]"#.to_owned()
+        ),
+        "bar's base lines all ran, under both tests, and all but its loop's exit outcome; the caller's file never loaded in the baseline run"
+    );
+}
+
+#[test]
+fn a_baseline_of_another_base_is_refused() {
+    let (root, patch, baseline) = covered_branch("graph-coverage-stale", b"<?php\n");
+    let output = graph_with_report(&root, &patch, &baseline);
+    assert!(!output.status.success(), "{}", stdout(&output));
+    assert!(
+        stderr(&output).contains("was not built from the diff's base")
+            && stderr(&output).contains("app/Foo.php: the diff's base has sha256"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn the_markdown_format_summarises_the_graph_for_a_pull_request() {
+    let root = php_project("graph-markdown");
+    let patch = branch(&root);
+    let output = run(&[
+        "graph",
+        "--root",
+        root.to_str().unwrap(),
+        "--diff",
+        patch.to_str().unwrap(),
+        "--format",
+        "markdown",
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        stdout(&output),
+        "## Change review\n\n\
+         8 changed members (2 added, 2 body changed, 2 formatting only, 2 removed); 0 unchanged members and scripts use them within depth 2.\n\n\
+         ### Risks\n\nNone found.\n\n\
+         ### Changed members, by impact\n\n\
+         | Member | Change | Callers (proven) | Entry points |\n\
+         | --- | --- | --- | --- |\n\
+         | `method App\\Services\\Report::summary` | added | 3 (3) | 0 |\n\
+         | `method App\\Services\\Report::__construct` | formatting only | 1 (1) | 0 |\n\
+         | `method App\\Services\\Report::render` | body changed | 1 (1) | 0 |\n\
+         | `constant App\\Services\\Report::LIMIT` | removed | 1 (1) | 0 |\n\
+         | `property App\\Services\\Report::title` | formatting only | 1 (1) | 0 |\n\
+         | `method App\\Services\\Calendar::today` | added | 0 (0) | 0 |\n\
+         | `method App\\Uses\\Lookalike::run` | removed | 0 (0) | 0 |\n\
+         | `method App\\Uses\\Receivers::run` | body changed | 0 (0) | 0 |\n\n",
+        "the members are ranked by entry points, then proven and all callers; no report leaves out the coverage columns"
     );
 }

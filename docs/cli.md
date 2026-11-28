@@ -563,12 +563,24 @@ it rebuilds its index. Add `.opcov/` to `.gitignore`.
   reaches `Report::render`. A same-named method of an unrelated class does
   not, and neither does an override in a subclass.
 - **Supertypes match:** a call through a supertype or interface the target
-  implements matches, since dispatch can land on the target.
+  implements matches, since dispatch can land on the target. That holds for
+  an object receiver and for `static::` and `new static`, which dispatch
+  late.
+- **A class-qualified use binds early:** `Foo::run()`, `self::run()`,
+  `parent::run()`, `new Foo`, `self::LIMIT` and `Foo::$cache` reach only the
+  member that looking it up from that class finds, never an override in a
+  subclass. A call forwarded by a facade or a model still reaches the
+  forwarded class's subclasses.
+- **`$this` is the class the code runs in,** also where the analyzer records
+  no type for it, as in a property read `$this->client`.
 - **Unknown receivers match by name:** a receiver whose type is unknown
-  (`mixed`, `object`) matches. A missed use is worse than an extra one.
+  (`mixed`, `object`) matches. When only part of its type is unknown
+  (`Account|iterable`), the known part matches by type and the rest by name.
+  A missed use is worse than an extra one.
 - **Traits are analysed per using class.** A use the using class decides
   (`(new static())->handle()` in a trait) is reported as
-  `<target> via <class>`; any other use belongs to the trait.
+  `<target> via <class>`; any other use belongs to the trait. `parent::` in
+  a trait is the parent of each using class.
 - **Code the framework calls is used where it is triggered.** `consumers`
   reads the hooks from the code itself:
   - a queued job's `handle` and `failed` where the job is created or
@@ -663,6 +675,10 @@ moved, disappeared or started to land elsewhere shows on the side it is on.
 | `--strip <N>` | Leading path components to remove from diff paths (default 1, which removes git's `a/` and `b/`). |
 | `--path <PATH>` | Search only this directory or file, relative to the root (repeatable), on both sides. The default is every source the root `composer.json` autoloads. |
 | `--depth <N>` | Call-graph levels of consumers to follow (default 2). |
+| `--routes <JSON>` | Laravel's route table at the head, as `php artisan route:list --json` writes it. Each route is listed on the method it runs. |
+| `--tests` | Also index the `autoload-dev` sources, so the tests that use changed code are nodes. The head index then reads the cache without writing it. On an 8,881-file Laravel application with 3,543 test files, a 59-file change takes 12 s and 8 GB instead of 4 s and 2.9 GB; `--report` names the tests that reached each member without indexing them. |
+| `--report <REPORT>` | A baseline opcov report of the base. Each member at the base gets its coverage and the tests that reached it. |
+| `--format <FORMAT>` | `json` (default), the whole graph, or `markdown`, a summary for a pull request comment. |
 
 ### The base side
 
@@ -717,14 +733,25 @@ through a typed receiver still matches a member the branch removed: a
 {
   "version": 1,
   "depth": 2,
+  "risks": {
+    "stops_resolving": [{"from": "method App\\Uses\\Overriding::run", "to": "method App\\Services\\Report::render", "via": null}],
+    "starts_resolving": [], "untouched_signature_callers": [], "unproven_uses": [],
+    "broken_routes": [{"route": {"methods": ["DELETE"], "uri": "gone", "name": null, "domain": null}, "action": "App\\Http\\Controllers\\PingController@gone"}],
+    "untested": null
+  },
   "nodes": [
-    {"id": "method App\\Services\\Report::render", "kind": "method", "change": "modified", "depth": 0,
+    {"id": "method App\\Services\\Report::render", "kind": "method", "change": "body_changed",
+     "resolution": "typed", "depth": 0,
+     "entries": [{"kind": "route", "methods": ["GET", "HEAD"], "uri": "report", "name": "report.show", "domain": null}],
+     "impact": {"callers": 3, "proven_callers": 2, "entry_points": 1},
+     "coverage": {"state": "measured", "lines": {"covered": 6, "total": 6}, "outcomes": {"covered": 5, "total": 6}, "tests": ["Tests\\ReportTest::renders"]},
+     "changed": {"base": {"ranges": [[22, 22]], "removed_before": []}, "head": {"ranges": [[20, 20]], "removed_before": []}},
      "base": {"path": "app/Services/Report.php", "first": 20, "last": 23},
      "head": {"path": "app/Services/Report.php", "first": 18, "last": 21}}
   ],
   "edges": [
     {"from": "method App\\Uses\\Receivers::run", "to": "method App\\Services\\Report::render",
-     "via": null, "change": "kept",
+     "via": null, "change": "kept", "resolution": "typed",
      "base": [{"path": "app/Uses/Receivers.php", "line": 15}],
      "head": [{"path": "app/Uses/Receivers.php", "line": 15}]}
   ],
@@ -748,16 +775,53 @@ script's lines span the uses found in it.
 
 | `change` | Member | Script |
 |---|---|---|
-| `modified` | The diff changes its lines and it exists on both sides. | Its file is in the diff on both sides. |
+| `signature_changed` | The diff changes it, it exists on both sides, and its declaration differs: the docblock and everything before the body, or the whole declaration of a constant or property. | |
+| `body_changed` | The diff changes it, its declaration is the same, and its body differs. | Its file is in the diff on both sides. |
+| `formatting_changed` | The diff changes its lines, but its tokens are the same on both sides: only whitespace, comments, a trailing comma or its position changed. | |
 | `added` | The diff changes its lines and it exists only on the head. | Its file exists only on the head side of the diff. |
 | `removed` | The diff changes its lines and it exists only on the base. | Its file exists only on the base side of the diff. |
 | `unchanged` | A consumer the diff does not touch. | Its file is not in the diff. |
+
+Declarations and bodies are compared as PHP tokens without whitespace and
+comments. A docblock is compared with its whitespace collapsed, and a string
+or a number exactly as written.
+
+`resolution` is `typed` when a chain of `typed` edges, on either side,
+connects the node to a changed member, and `by_name` when every chain passes
+through a use matched by name. `changed` lists, for a changed member, the
+changed line ranges inside it on each side and the lines before which the
+other side's lines were removed.
+
+`entries` lists how the framework or a test runner enters the member:
+
+| `kind` | Entered |
+|---|---|
+| `route` | By the route, from `--routes`, on the method that runs it, including one a controller inherits. |
+| `command` | As the console command `name`. |
+| `job` | As a queued job's `handle` or `failed`. |
+| `listener` | By an event subscriber, for `events`. |
+| `model_hook` | By a model event of `model`, fired by the `instance` and `query` calls. |
+| `phpunit_test` | As a PHPUnit test in each concrete class of `classes` that runs it: a public method named `test…` or marked `#[Test]`. |
+| `pest_test` | As a Pest test file, which calls Pest's `test()`, `it()` or `describe()`. |
+
+Tests are nodes only with `--tests`. `impact`, on a changed member, counts
+the nodes that reach it (`callers`), those a chain of typed edges connects
+to it (`proven_callers`), and the entry points among them and itself.
+
+`coverage`, with `--report`, describes the member at the base: `measured`
+with its line and branch-outcome coverage and the tests that reached it, as
+`impact` measures a function, `never_loaded` when the baseline run never
+loaded its file, or `unmeasured` with the reason, such as a method without a
+body. Every file it reads must have the sha256 the report records for the
+base, or the run stops with the files that differ.
 
 **Edges** go from the consumer to the member it uses. `base` and `head` list
 the lines of the uses on each side; a `kept` edge whose lists differ gained
 or lost uses. `via` is the using class when the use is a trait's
 `(new static())->member()`; `from` is then that class's copy of the trait
-method.
+method. `resolution` is `typed` when the receiver's type proves at least one
+use, and `by_name` when every use matched by name because the receiver's
+type is unknown.
 
 | `change` | Meaning |
 |---|---|
@@ -771,9 +835,27 @@ The code around a use is the method or function that holds it on that side,
 the trait's own method for a trait copy, or the whole file for code outside
 any function.
 
+**Risks** collect what deserves a reviewer's eye:
+
+| Risk | Meaning |
+|---|---|
+| `stops_resolving` | The `no_longer_resolves` edges. |
+| `starts_resolving` | The `now_resolves` edges. |
+| `untouched_signature_callers` | Uses at the head, from unchanged code, of a member whose signature changed. |
+| `unproven_uses` | Uses at the head of a changed member, matched by name only. |
+| `broken_routes` | Routes from `--routes` whose method the head does not have. |
+| `untested` | With `--report`, the members no baseline test reached; null without a report. |
+
 `untyped` lists, per side, the files the analyzer could not type, whose uses
 were matched by name, and `index` counts each side's index as `consumers`
 does.
+
+`--format markdown` writes the same findings for a pull request comment: a
+count of the changed members by kind of change, each risk as a list, the
+changed members as a table ranked by entry points, proven callers and
+callers (with coverage columns when `--report` is given), the entry points
+the change reaches, and the unchanged callers folded by namespace. A list
+longer than 50 items says how many more there are.
 
 ## `opcov serve`
 

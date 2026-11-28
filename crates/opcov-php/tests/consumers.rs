@@ -7,7 +7,7 @@ mod consumers {
     use std::path::Path;
     use std::sync::OnceLock;
 
-    use opcov_php::{Index, Project, Request};
+    use opcov_php::{Index, Project, Request, Resolution};
 
     use crate::fixture::project_copy;
 
@@ -189,6 +189,254 @@ mod consumers {
                 ]
             ),
             "the $zone variable leaves Variables.php unanalysed; Settings:: $zone reads the static property"
+        );
+    }
+
+    #[test]
+    fn a_property_read_on_this_resolves_to_the_class_it_runs_in() {
+        let root = project_copy("consumers-this-property");
+        let write = |path: &str, source: &str| {
+            std::fs::write(root.join(path), source).unwrap();
+        };
+        std::fs::create_dir_all(root.join("app/Owners")).unwrap();
+        write(
+            "app/Owners/Account.php",
+            "<?php\n\nnamespace App\\Owners;\n\nfinal class Account\n{\n    public int $id = 1;\n}\n",
+        );
+        write(
+            "app/Owners/Other.php",
+            "<?php\n\nnamespace App\\Owners;\n\nfinal class Other\n{\n    public ?Account $account = null;\n}\n",
+        );
+        write(
+            "app/Owners/Holder.php",
+            "<?php\n\nnamespace App\\Owners;\n\nfinal class Holder\n{\n    private Account $account;\n\n    public function id(): int\n    {\n        return $this->account->id + $this->account->id;\n    }\n}\n",
+        );
+        let index = Index::build(&Project::open(&root).unwrap()).unwrap();
+        let request: Request = serde_json::from_str(
+            r#"{"targets": ["property App\\Owners\\Holder::account", "property App\\Owners\\Other::account"], "within": ["app/Owners/Holder.php"]}"#,
+        )
+        .unwrap();
+        let found: Vec<(String, Resolution)> = index
+            .uses(&request)
+            .uses
+            .into_iter()
+            .map(|found| {
+                return (
+                    format!("{}:{} {}", found.path, found.line, found.target),
+                    found.resolution,
+                );
+            })
+            .collect();
+        assert_eq!(
+            found,
+            vec![(
+                "app/Owners/Holder.php:11 property App\\Owners\\Holder::account".to_owned(),
+                Resolution::Typed
+            )],
+            "$this->account in Holder reads Holder::account, never Other::account"
+        );
+    }
+
+    #[test]
+    fn a_receiver_typed_partly_as_any_object_matches_the_rest_by_name() {
+        let root = project_copy("consumers-open-union");
+        let write = |path: &str, source: &str| {
+            std::fs::write(root.join(path), source).unwrap();
+        };
+        std::fs::create_dir_all(root.join("app/Pings")).unwrap();
+        for class in ["Account", "Other"] {
+            write(
+                &format!("app/Pings/{class}.php"),
+                &format!(
+                    "<?php\n\nnamespace App\\Pings;\n\nfinal class {class}\n{{\n    public function ping(): int\n    {{\n        return 1;\n    }}\n}}\n"
+                ),
+            );
+        }
+        write(
+            "app/Pings/Caller.php",
+            "<?php\n\nnamespace App\\Pings;\n\nfinal class Caller\n{\n    /**\n     * @param Account|iterable<mixed> $value\n     */\n    public function call(Account|iterable $value): int\n    {\n        return $value->ping();\n    }\n}\n",
+        );
+        let index = Index::build(&Project::open(&root).unwrap()).unwrap();
+        let request: Request = serde_json::from_str(
+            r#"{"targets": ["method App\\Pings\\Account::ping", "method App\\Pings\\Other::ping"], "within": ["app/Pings/Caller.php"]}"#,
+        )
+        .unwrap();
+        let found: Vec<(String, Resolution)> = index
+            .uses(&request)
+            .uses
+            .into_iter()
+            .map(|found| {
+                return (
+                    format!("{}:{} {}", found.path, found.line, found.target),
+                    found.resolution,
+                );
+            })
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                (
+                    "app/Pings/Caller.php:12 method App\\Pings\\Account::ping".to_owned(),
+                    Resolution::Typed
+                ),
+                (
+                    "app/Pings/Caller.php:12 method App\\Pings\\Other::ping".to_owned(),
+                    Resolution::ByName
+                ),
+            ],
+            "Account is proven by the type; the iterable may be any Traversable, so an Other too"
+        );
+    }
+
+    #[test]
+    fn a_class_named_call_binds_to_the_member_its_lookup_finds_and_static_dispatches_late() {
+        let root = project_copy("consumers-binding");
+        let write = |path: &str, source: &str| {
+            std::fs::write(root.join(path), source).unwrap();
+        };
+        std::fs::create_dir_all(root.join("app/Binding")).unwrap();
+        write(
+            "app/Binding/Base.php",
+            "<?php\n\nnamespace App\\Binding;\n\nclass Base\n{\n    public const LIMIT = 1;\n\n    public function __construct()\n    {\n    }\n\n    public static function make(): static\n    {\n        return new static();\n    }\n\n    public static function build(): self\n    {\n        return static::make();\n    }\n\n    public function limit(): int\n    {\n        return self::LIMIT;\n    }\n}\n",
+        );
+        write(
+            "app/Binding/Child.php",
+            "<?php\n\nnamespace App\\Binding;\n\nfinal class Child extends Base\n{\n    public const LIMIT = 2;\n\n    public function __construct()\n    {\n        parent::__construct();\n    }\n\n    public static function make(): static\n    {\n        return new static();\n    }\n\n    public function own(): int\n    {\n        return self::LIMIT + parent::LIMIT;\n    }\n}\n",
+        );
+        write(
+            "app/Binding/Sibling.php",
+            "<?php\n\nnamespace App\\Binding;\n\nfinal class Sibling extends Base\n{\n    public function __construct()\n    {\n        parent::__construct();\n    }\n}\n",
+        );
+        write(
+            "app/Binding/Maker.php",
+            "<?php\n\nnamespace App\\Binding;\n\nfinal class Maker\n{\n    public function plain(): Base\n    {\n        return new Base();\n    }\n}\n",
+        );
+        let index = Index::build(&Project::open(&root).unwrap()).unwrap();
+        let request: Request = serde_json::from_str(
+            r#"{"targets": [
+                "method App\\Binding\\Base::__construct", "method App\\Binding\\Child::__construct", "method App\\Binding\\Sibling::__construct",
+                "method App\\Binding\\Child::make", "constant App\\Binding\\Base::LIMIT", "constant App\\Binding\\Child::LIMIT"
+            ], "within": ["app/Binding"]}"#,
+        )
+        .unwrap();
+        let found: Vec<String> = index
+            .uses(&request)
+            .uses
+            .into_iter()
+            .map(|found| return format!("{}:{} {}", found.path, found.line, found.target))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                "app/Binding/Base.php:15 method App\\Binding\\Base::__construct",
+                "app/Binding/Base.php:15 method App\\Binding\\Child::__construct",
+                "app/Binding/Base.php:15 method App\\Binding\\Sibling::__construct",
+                "app/Binding/Base.php:20 method App\\Binding\\Child::make",
+                "app/Binding/Base.php:25 constant App\\Binding\\Base::LIMIT",
+                "app/Binding/Child.php:11 method App\\Binding\\Base::__construct",
+                "app/Binding/Child.php:16 method App\\Binding\\Child::__construct",
+                "app/Binding/Child.php:21 constant App\\Binding\\Base::LIMIT",
+                "app/Binding/Child.php:21 constant App\\Binding\\Child::LIMIT",
+                "app/Binding/Maker.php:9 method App\\Binding\\Base::__construct",
+                "app/Binding/Sibling.php:9 method App\\Binding\\Base::__construct",
+            ],
+            "parent:: and new Base bind to Base's constructor alone; new static and static::make reach the overrides; \
+             self::LIMIT reads the nearest declaration, Child's own in Child and Base's in Base"
+        );
+    }
+
+    #[test]
+    fn a_receiver_narrowed_by_a_structural_check_stays_its_class() {
+        let root = project_copy("consumers-narrowed");
+        let write = |path: &str, source: &str| {
+            std::fs::write(root.join(path), source).unwrap();
+        };
+        std::fs::create_dir_all(root.join("app/Pings")).unwrap();
+        for class in ["Account", "Other"] {
+            write(
+                &format!("app/Pings/{class}.php"),
+                &format!(
+                    "<?php\n\nnamespace App\\Pings;\n\nclass {class}\n{{\n    public function ping(): int\n    {{\n        return 1;\n    }}\n}}\n"
+                ),
+            );
+        }
+        write(
+            "app/Pings/Checker.php",
+            "<?php\n\nnamespace App\\Pings;\n\nfinal class Checker\n{\n    public function call(Account $value): int\n    {\n        if (method_exists($value, 'extra')) {\n            return $value->ping();\n        }\n        return 0;\n    }\n}\n",
+        );
+        let index = Index::build(&Project::open(&root).unwrap()).unwrap();
+        let request: Request = serde_json::from_str(
+            r#"{"targets": ["method App\\Pings\\Account::ping", "method App\\Pings\\Other::ping"], "within": ["app/Pings/Checker.php"]}"#,
+        )
+        .unwrap();
+        let found: Vec<(String, Resolution)> = index
+            .uses(&request)
+            .uses
+            .into_iter()
+            .map(|found| {
+                return (
+                    format!("{}:{} {}", found.path, found.line, found.target),
+                    found.resolution,
+                );
+            })
+            .collect();
+        assert_eq!(
+            found,
+            vec![(
+                "app/Pings/Checker.php:10 method App\\Pings\\Account::ping".to_owned(),
+                Resolution::Typed
+            )],
+            "method_exists narrows the Account to an Account that has extra, which is still no Other"
+        );
+    }
+
+    #[test]
+    fn parent_in_a_trait_resolves_to_the_parent_of_each_using_class() {
+        let root = project_copy("consumers-trait-parent");
+        let write = |path: &str, source: &str| {
+            std::fs::write(root.join(path), source).unwrap();
+        };
+        std::fs::create_dir_all(root.join("app/Shapes")).unwrap();
+        write(
+            "app/Shapes/Base.php",
+            "<?php\n\nnamespace App\\Shapes;\n\nclass Base\n{\n    public function toArray(): array\n    {\n        return [];\n    }\n}\n",
+        );
+        write(
+            "app/Shapes/Unrelated.php",
+            "<?php\n\nnamespace App\\Shapes;\n\nfinal class Unrelated\n{\n    public function toArray(): array\n    {\n        return [];\n    }\n}\n",
+        );
+        write(
+            "app/Shapes/Camel.php",
+            "<?php\n\nnamespace App\\Shapes;\n\ntrait Camel\n{\n    public function toArray(): array\n    {\n        return parent::toArray();\n    }\n}\n",
+        );
+        write(
+            "app/Shapes/Child.php",
+            "<?php\n\nnamespace App\\Shapes;\n\nfinal class Child extends Base\n{\n    use Camel;\n}\n",
+        );
+        let index = Index::build(&Project::open(&root).unwrap()).unwrap();
+        let request: Request = serde_json::from_str(
+            r#"{"targets": ["method App\\Shapes\\Base::toArray", "method App\\Shapes\\Unrelated::toArray"], "within": ["app/Shapes/Camel.php"]}"#,
+        )
+        .unwrap();
+        let found: Vec<(String, Resolution)> = index
+            .uses(&request)
+            .uses
+            .into_iter()
+            .map(|found| {
+                return (
+                    format!("{}:{} {}", found.path, found.line, found.target),
+                    found.resolution,
+                );
+            })
+            .collect();
+        assert_eq!(
+            found,
+            vec![(
+                "app/Shapes/Camel.php:9 method App\\Shapes\\Base::toArray via App\\Shapes\\Child"
+                    .to_owned(),
+                Resolution::Typed
+            )],
+            "parent:: in Camel is Base for its user Child, and never Unrelated"
         );
     }
 }

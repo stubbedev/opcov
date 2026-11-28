@@ -4,7 +4,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::{panic, thread};
 
-use opcov_php::{FileChange, Graph, Overlaid, Project, Revision};
+use opcov_php::{FileChange, Graph, Overlaid, Project, Revision, Routes};
+
+mod coverage;
 
 use crate::changes::{ChangeSet, Content, FileChange as Lines, FilePatch, Patch, rebuild_base};
 use crate::consumers;
@@ -68,17 +70,43 @@ fn side_changes(
     return consumers::changes(&set);
 }
 
-pub(crate) fn build(
-    root: &Path,
-    patch: &Patch,
-    within: &[String],
-    depth: u32,
-) -> Result<Graph, Failure> {
-    let project = Project::open(root).map_err(|error| return failed(&error))?;
-    let base_project = project.clone().overlaid(overlay(root, patch)?);
+pub(crate) fn routes(path: Option<&Path>) -> Result<Routes, Failure> {
+    let Some(path) = path else {
+        return Ok(Routes::default());
+    };
+    let bytes = fs::read(path).map_err(|error| return Failure::io("read", path, &error))?;
+    return Routes::parse(&bytes).map_err(|error| {
+        return Failure::failed(format!(
+            "cannot read the routes {}: {error}",
+            path.display()
+        ));
+    });
+}
+
+pub(crate) struct Options<'a> {
+    pub(crate) routes: Routes,
+    pub(crate) report: Option<&'a Path>,
+    pub(crate) within: &'a [String],
+    pub(crate) depth: u32,
+    pub(crate) tests: bool,
+}
+
+pub(crate) fn build(root: &Path, patch: &Patch, options: &Options<'_>) -> Result<Graph, Failure> {
+    let opened = Project::open(root).map_err(|error| return failed(&error))?;
+    let project = if options.tests {
+        opened.with_development()
+    } else {
+        opened
+    };
+    let overlay = overlay(root, patch)?;
+    let base_project = project.clone().overlaid(overlay.clone());
     let (head_index, base_index) = thread::scope(|scope| {
         let base = scope.spawn(|| return index::build_unpersisted(&base_project));
-        let head = index::build(&project);
+        let head = if options.tests {
+            index::build_unpersisted(&project)
+        } else {
+            index::build(&project)
+        };
         let base = match base.join() {
             Ok(built) => built,
             Err(payload) => panic::resume_unwind(payload),
@@ -107,15 +135,21 @@ pub(crate) fn build(
             index: &head_index,
             changes: &head_changes,
         },
-        within,
-        depth,
+        &options.routes,
+        options.within,
+        options.depth,
     )
     .map_err(|error| return failed(&error));
     thread::scope(|scope| {
         scope.spawn(move || return drop(base_index));
         drop(head_index);
     });
-    return walked;
+    let mut graph = walked?;
+    if let Some(report) = options.report {
+        let covered = coverage::measure(report, root, &overlay, &graph)?;
+        graph.cover(covered);
+    }
+    return Ok(graph);
 }
 
 pub(crate) fn render_json(out: &mut dyn Write, graph: &Graph) -> io::Result<()> {

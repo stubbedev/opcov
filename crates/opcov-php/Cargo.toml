@@ -31,6 +31,7 @@ mago-names = "=1.61.0"
 mago-prelude = { version = "=1.61.0", features = ["serde"] }
 mago-span = "=1.61.0"
 mago-syntax = "=1.61.0"
+mago-syntax-core = "=1.61.0"
 mago-word = { version = "=1.61.0", features = ["serde"] }
 rayon = "1.12.0"
 serde.workspace = true

@@ -10,15 +10,43 @@ use mago_syntax::cst::{
 use mago_syntax::walker::Walker;
 
 use crate::syntax::class_or_string;
+use crate::types::Dispatch;
 
 const CLASS_CONSTANT: &[u8] = b"class";
+const THIS: &[u8] = b"$this";
 
 #[derive(Debug, Clone)]
 pub(crate) enum ClassReference {
     Named(String),
-    Current,
+    Own,
+    Late,
     Parent(Option<String>),
+    UsersParent,
     Expression(Span),
+}
+
+impl ClassReference {
+    pub(crate) const fn dispatch(&self) -> Dispatch {
+        return match self {
+            Self::Named(_) | Self::Own | Self::Parent(_) | Self::UsersParent => Dispatch::Exact,
+            Self::Late | Self::Expression(_) => Dispatch::Late,
+        };
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Receiver {
+    pub(crate) span: Span,
+    pub(crate) is_this: bool,
+}
+
+impl Receiver {
+    fn of(object: &Expression<'_>) -> Self {
+        return Self {
+            span: object.span(),
+            is_this: matches!(object, Expression::Variable(Variable::Direct(variable)) if variable.name == THIS),
+        };
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -36,7 +64,7 @@ pub(crate) enum Site {
         candidates: Vec<String>,
     },
     Method {
-        receiver: Span,
+        receiver: Receiver,
         member: Option<String>,
         first_argument: Option<FirstArgument>,
     },
@@ -53,7 +81,7 @@ pub(crate) enum Site {
         member: String,
     },
     Property {
-        receiver: Span,
+        receiver: Receiver,
         member: String,
     },
     StaticProperty {
@@ -128,8 +156,16 @@ impl Collector<'_, '_> {
     fn class_reference(&self, expression: &Expression<'_>, sites: &Sites) -> ClassReference {
         return match expression {
             Expression::Identifier(identifier) => ClassReference::Named(self.resolved(identifier)),
-            Expression::Self_(_) | Expression::Static(_) => ClassReference::Current,
-            Expression::Parent(_) => ClassReference::Parent(sites.frame().parent),
+            Expression::Self_(_) => ClassReference::Own,
+            Expression::Static(_) => ClassReference::Late,
+            Expression::Parent(_) => {
+                let frame = sites.frame();
+                if frame.in_trait {
+                    ClassReference::UsersParent
+                } else {
+                    ClassReference::Parent(frame.parent)
+                }
+            }
             other => ClassReference::Expression(other.span()),
         };
     }
@@ -240,7 +276,7 @@ impl<'ast, 'arena> Walker<'ast, 'arena, Sites> for Collector<'_, 'arena> {
 
     fn walk_in_method_call(&self, call: &'ast MethodCall<'arena>, sites: &mut Sites) {
         let site = Site::Method {
-            receiver: call.object.span(),
+            receiver: Receiver::of(call.object),
             member: selector(&call.method),
             first_argument: self.first_argument(&call.argument_list),
         };
@@ -253,7 +289,7 @@ impl<'ast, 'arena> Walker<'ast, 'arena, Sites> for Collector<'_, 'arena> {
         sites: &mut Sites,
     ) {
         let site = Site::Method {
-            receiver: call.object.span(),
+            receiver: Receiver::of(call.object),
             member: selector(&call.method),
             first_argument: self.first_argument(&call.argument_list),
         };
@@ -299,7 +335,7 @@ impl<'ast, 'arena> Walker<'ast, 'arena, Sites> for Collector<'_, 'arena> {
             Self::push(
                 sites,
                 Site::Property {
-                    receiver: access.object.span(),
+                    receiver: Receiver::of(access.object),
                     member,
                 },
                 access.span(),
@@ -316,7 +352,7 @@ impl<'ast, 'arena> Walker<'ast, 'arena, Sites> for Collector<'_, 'arena> {
             Self::push(
                 sites,
                 Site::Property {
-                    receiver: access.object.span(),
+                    receiver: Receiver::of(access.object),
                     member,
                 },
                 access.span(),

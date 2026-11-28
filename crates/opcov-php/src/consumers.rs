@@ -16,13 +16,14 @@ use crate::index::{Index, Source};
 use crate::matching::Matcher;
 use crate::members::Lines;
 use crate::sites::{Collector, Located, Sites};
-use crate::target::Request;
+use crate::target::{Request, Resolution};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub struct Use {
     pub path: String,
     pub line: u32,
     pub target: String,
+    pub resolution: Resolution,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
@@ -230,18 +231,22 @@ impl Index {
                     return matcher
                         .matches(&entry.reference)
                         .into_iter()
-                        .map(move |target| {
+                        .map(move |found| {
                             return Use {
-                                target: matcher.attributed(target, entry.using.as_deref()),
+                                target: matcher.attributed(found.target, entry.using.as_deref()),
                                 path: source.path.clone(),
                                 line: entry.line,
+                                resolution: found.resolution,
                             };
                         });
                 });
             })
             .collect();
         found.sort();
-        found.dedup();
+        found.dedup_by(|later, kept| {
+            return (&later.path, later.line, &later.target)
+                == (&kept.path, kept.line, &kept.target);
+        });
         let mut untyped: Vec<Untyped> = self
             .untyped
             .iter()

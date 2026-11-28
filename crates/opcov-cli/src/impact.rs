@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use opcov_core::cfg::{ClassRef, FunctionKey, Line};
 use opcov_core::filter::Selection;
 use opcov_core::report::{FileCoverage, Header, HitSet, Sha256, SourcePath, TestIndex};
-use opcov_syntax::{Outline, SourceFile};
+use opcov_syntax::{FunctionSource, Outline, SourceFile};
 use serde::{Serialize, Serializer};
 
 use crate::changes::{
@@ -23,9 +23,9 @@ use crate::stream;
 const STALE_SHOWN: usize = 10;
 
 #[derive(Debug, Clone, Copy, Serialize)]
-struct Coverage {
-    covered: usize,
-    total: usize,
+pub(crate) struct Coverage {
+    pub(crate) covered: usize,
+    pub(crate) total: usize,
 }
 
 impl Coverage {
@@ -49,9 +49,9 @@ pub(crate) struct FunctionImpact<'r> {
     key: String,
     first: Line,
     last: Line,
-    lines: Coverage,
-    outcomes: Coverage,
-    tests: Vec<&'r str>,
+    pub(crate) lines: Coverage,
+    pub(crate) outcomes: Coverage,
+    pub(crate) tests: Vec<&'r str>,
 }
 
 #[derive(Debug)]
@@ -402,6 +402,53 @@ fn names<'r>(header: &'r Header, tests: &BTreeSet<TestIndex>) -> Vec<&'r str> {
         .collect();
 }
 
+pub(crate) fn function_coverage<'r>(
+    header: &'r Header,
+    file: &FileCoverage,
+    functions: &[FunctionSource],
+    index: usize,
+) -> Option<FunctionImpact<'r>> {
+    let source = functions.get(index)?;
+    let span = source.span();
+    let (first, last) = (span.start().line(), span.end().line());
+    let owned: Vec<&HitSet> = file
+        .lines
+        .range(first..=last)
+        .filter(|(line, _)| return owner_of_line(functions, **line) == Some(index))
+        .map(|(_, hits)| return hits)
+        .collect();
+    let measured = file.functions.get(source.key());
+    let outcomes: Vec<&HitSet> = measured.map_or_else(Vec::new, |function| {
+        return function
+            .outcomes
+            .as_slice()
+            .iter()
+            .filter(|outcome| return outcome.kind().get().counts_toward_verdict())
+            .map(|outcome| return outcome.hits())
+            .collect();
+    });
+    let mut tests: BTreeSet<TestIndex> = BTreeSet::new();
+    for hits in owned.iter().chain(outcomes.iter()) {
+        tests.extend(hits.as_slice().iter().copied());
+    }
+    if let Some(function) = measured {
+        for looped in function.loops.as_slice() {
+            tests.extend(looped.second().as_slice().iter().copied());
+            if let Some(zero) = looped.zero() {
+                tests.extend(zero.as_slice().iter().copied());
+            }
+        }
+    }
+    return Some(FunctionImpact {
+        key: source.key().to_string(),
+        first,
+        last,
+        lines: Coverage::of(owned.into_iter()),
+        outcomes: Coverage::of(outcomes.into_iter()),
+        tests: names(header, &tests),
+    });
+}
+
 fn function_impacts<'r>(
     header: &'r Header,
     file: &FileCoverage,
@@ -411,50 +458,12 @@ fn function_impacts<'r>(
     let functions = base.functions();
     return changed_functions(functions, change)
         .into_iter()
-        .filter_map(|index| {
-            let source = functions.get(index)?;
-            if matches!(source.key(), FunctionKey::Main { .. }) {
-                return None;
-            }
-            let span = source.span();
-            let (first, last) = (span.start().line(), span.end().line());
-            let owned: Vec<&HitSet> = file
-                .lines
-                .range(first..=last)
-                .filter(|(line, _)| return owner_of_line(functions, **line) == Some(index))
-                .map(|(_, hits)| return hits)
-                .collect();
-            let measured = file.functions.get(source.key());
-            let outcomes: Vec<&HitSet> = measured.map_or_else(Vec::new, |function| {
-                return function
-                    .outcomes
-                    .as_slice()
-                    .iter()
-                    .filter(|outcome| return outcome.kind().get().counts_toward_verdict())
-                    .map(|outcome| return outcome.hits())
-                    .collect();
-            });
-            let mut tests: BTreeSet<TestIndex> = BTreeSet::new();
-            for hits in owned.iter().chain(outcomes.iter()) {
-                tests.extend(hits.as_slice().iter().copied());
-            }
-            if let Some(function) = measured {
-                for looped in function.loops.as_slice() {
-                    tests.extend(looped.second().as_slice().iter().copied());
-                    if let Some(zero) = looped.zero() {
-                        tests.extend(zero.as_slice().iter().copied());
-                    }
-                }
-            }
-            return Some(FunctionImpact {
-                key: source.key().to_string(),
-                first,
-                last,
-                lines: Coverage::of(owned.into_iter()),
-                outcomes: Coverage::of(outcomes.into_iter()),
-                tests: names(header, &tests),
-            });
+        .filter(|index| {
+            return functions
+                .get(*index)
+                .is_some_and(|source| return !matches!(source.key(), FunctionKey::Main { .. }));
         })
+        .filter_map(|index| return function_coverage(header, file, functions, index))
         .collect();
 }
 
@@ -540,7 +549,7 @@ fn check_entry<'r>(
     };
 }
 
-fn stale_failure(report: &Path, stale: &[String]) -> Failure {
+pub(crate) fn stale_failure(report: &Path, stale: &[String]) -> Failure {
     let shown: Vec<&str> = stale.iter().take(STALE_SHOWN).map(String::as_str).collect();
     let more = stale.len().saturating_sub(shown.len());
     let mut message = format!(

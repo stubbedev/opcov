@@ -4,18 +4,47 @@ use mago_codex::ttype::atomic::scalar::TScalar;
 use mago_codex::ttype::atomic::scalar::class_like_string::TClassLikeString;
 use mago_codex::ttype::union::TUnion;
 
+use crate::target::Resolution;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Dispatch {
+    Exact,
+    Late,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Classes {
     Known(Vec<String>),
-    Unknown,
+    Open(Vec<String>),
 }
 
 impl Classes {
-    pub(crate) fn as_known(&self) -> Option<&[String]> {
+    pub(crate) const fn unknown() -> Self {
+        return Self::Open(Vec::new());
+    }
+
+    pub(crate) fn known(&self) -> &[String] {
         return match self {
-            Self::Known(classes) => Some(classes),
-            Self::Unknown => None,
+            Self::Known(classes) | Self::Open(classes) => classes,
         };
+    }
+
+    pub(crate) const fn is_open(&self) -> bool {
+        return matches!(self, Self::Open(_));
+    }
+
+    pub(crate) const fn with(&self, classes: Vec<String>) -> Self {
+        return match self {
+            Self::Known(_) => Self::Known(classes),
+            Self::Open(_) => Self::Open(classes),
+        };
+    }
+
+    pub(crate) fn matching(&self, reaches: impl Fn(&str) -> bool) -> Option<Resolution> {
+        if self.known().iter().any(|class| return reaches(class)) {
+            return Some(Resolution::Typed);
+        }
+        return self.is_open().then_some(Resolution::ByName);
     }
 }
 
@@ -39,13 +68,18 @@ impl Collected {
                     _ => named.name.to_string(),
                 };
                 self.classes.push(name);
+                let mut narrowing = Self {
+                    classes: Vec::new(),
+                    unknown: false,
+                };
                 for extra in named
                     .intersection_types
                     .iter()
                     .flat_map(|types| return types.iter())
                 {
-                    self.atomic(extra, this, reading);
+                    narrowing.atomic(extra, this, reading);
                 }
+                self.classes.extend(narrowing.classes);
             }
             (TAtomic::Object(TObject::Enum(enumeration)), _) => {
                 self.classes.push(enumeration.name.to_string());
@@ -100,8 +134,8 @@ pub(crate) fn classes_of(union: &TUnion, this: Option<&str>, reading: Reading) -
     }
     collected.classes.sort();
     collected.classes.dedup();
-    if collected.classes.is_empty() && collected.unknown {
-        return Classes::Unknown;
+    if collected.unknown {
+        return Classes::Open(collected.classes);
     }
     return Classes::Known(collected.classes);
 }

@@ -29,7 +29,36 @@ pub struct FileChange {
     pub changed: Changed,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct Hunks {
+    ranges: Vec<(u32, u32)>,
+    removed_before: Vec<u32>,
+}
+
 impl FileChange {
+    pub(crate) fn within(&self, member: &Member) -> Hunks {
+        return match &self.changed {
+            Changed::Whole => Hunks {
+                ranges: vec![(member.first, member.last)],
+                removed_before: Vec::new(),
+            },
+            Changed::Parts { ranges, deletions } => Hunks {
+                ranges: ranges
+                    .iter()
+                    .filter(|(first, last)| return *first <= member.last && member.first <= *last)
+                    .map(|(first, last)| {
+                        return ((*first).max(member.first), (*last).min(member.last));
+                    })
+                    .collect(),
+                removed_before: deletions
+                    .iter()
+                    .copied()
+                    .filter(|before| return member.first < *before && *before <= member.last)
+                    .collect(),
+            },
+        };
+    }
+
     pub(crate) fn touches(&self, member: &Member) -> bool {
         return match &self.changed {
             Changed::Whole => true,

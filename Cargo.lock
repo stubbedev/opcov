@@ -1454,6 +1454,7 @@ dependencies = [
  "mago-prelude",
  "mago-span",
  "mago-syntax",
+ "mago-syntax-core",
  "mago-word",
  "rayon",
  "serde",

@@ -288,6 +288,14 @@ impl Project {
     }
 
     #[must_use]
+    pub fn with_development(mut self) -> Self {
+        self.scope.extend(self.development.iter().cloned());
+        self.scope.sort();
+        self.scope.dedup();
+        return self;
+    }
+
+    #[must_use]
     pub fn overlaid(mut self, overlay: BTreeMap<PathBuf, Overlaid>) -> Self {
         self.overlay = overlay
             .into_iter()

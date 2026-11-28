@@ -1,15 +1,17 @@
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use mago_analyzer::artifacts::AnalysisArtifacts;
 use mago_codex::ttype::atomic::TAtomic;
 use mago_codex::ttype::atomic::object::TObject;
+use mago_codex::ttype::atomic::object::named::TNamedObject;
 use mago_codex::ttype::union::TUnion;
 use mago_span::Span;
 use mago_word::{ascii_lowercase_word, word};
 
 use crate::hierarchy::Hierarchy;
-use crate::sites::{ClassReference, FirstArgument, Site};
-use crate::types::{Classes, Reading, classes_of, literal_strings};
+use crate::sites::{ClassReference, FirstArgument, Receiver, Site};
+use crate::types::{Classes, Dispatch, Reading, classes_of, literal_strings};
 
 const BUILDER: &str = "Illuminate\\Database\\Eloquent\\Builder";
 const RELATION: &str = "Illuminate\\Database\\Eloquent\\Relations\\Relation";
@@ -35,18 +37,22 @@ pub(crate) enum Reference {
     Static {
         member: String,
         receivers: Classes,
+        dispatch: Dispatch,
         names: Vec<String>,
     },
     New {
         classes: Classes,
+        dispatch: Dispatch,
     },
     ClassConstant {
         member: String,
         classes: Classes,
+        dispatch: Dispatch,
     },
     Property {
         member: String,
         receivers: Classes,
+        dispatch: Dispatch,
     },
 }
 
@@ -128,23 +134,53 @@ impl Resolver<'_> {
         return self.artifacts?.get_expression_type(span);
     }
 
-    fn objects(&self, span: &Span) -> Classes {
-        return self.type_of(span).map_or(Classes::Unknown, |union| {
-            return classes_of(union, self.this, Reading::Objects);
+    fn receiver_type(&self, receiver: &Receiver) -> Option<Cow<'_, TUnion>> {
+        if let Some(recorded) = self.type_of(&receiver.span) {
+            return Some(Cow::Borrowed(recorded));
+        }
+        let this = self.this.filter(|_| return receiver.is_this)?;
+        let object = TNamedObject::new_this(word(this.as_bytes()));
+        return Some(Cow::Owned(TUnion::from_atomic(TAtomic::Object(
+            TObject::Named(object),
+        ))));
+    }
+
+    fn objects(&self, receiver: &Receiver) -> Classes {
+        return self
+            .receiver_type(receiver)
+            .map_or(Classes::unknown(), |union| {
+                return classes_of(&union, self.this, Reading::Objects);
+            });
+    }
+
+    fn users_parent(&self) -> Classes {
+        let codebase = self.hierarchy.codebase();
+        let parent = self
+            .this
+            .and_then(|user| return codebase.get_class_like(user.as_bytes()))
+            .and_then(|user| return user.direct_parent_class)
+            .and_then(|parent| return codebase.get_class_like(parent.as_bytes()));
+        return parent.map_or(Classes::unknown(), |parent| {
+            return Classes::Known(vec![parent.original_name.to_string()]);
         });
     }
 
     fn classes(&self, reference: &ClassReference) -> Classes {
         return match reference {
             ClassReference::Named(name) => Classes::Known(vec![name.clone()]),
-            ClassReference::Current => self.this.map_or(Classes::Unknown, |class| {
-                return Classes::Known(vec![class.to_owned()]);
-            }),
-            ClassReference::Parent(parent) => parent.as_ref().map_or(Classes::Unknown, |parent| {
-                return Classes::Known(vec![parent.clone()]);
-            }),
+            ClassReference::Own | ClassReference::Late => {
+                self.this.map_or(Classes::unknown(), |class| {
+                    return Classes::Known(vec![class.to_owned()]);
+                })
+            }
+            ClassReference::Parent(parent) => {
+                parent.as_ref().map_or(Classes::unknown(), |parent| {
+                    return Classes::Known(vec![parent.clone()]);
+                })
+            }
+            ClassReference::UsersParent => self.users_parent(),
             ClassReference::Expression(span) => {
-                self.type_of(span).map_or(Classes::Unknown, |union| {
+                self.type_of(span).map_or(Classes::unknown(), |union| {
                     return classes_of(union, self.this, Reading::ClassNames);
                 })
             }
@@ -197,13 +233,11 @@ impl Resolver<'_> {
         return Some(forwarded.unwrap_or_else(|| return resolved.clone()));
     }
 
-    fn query_models(&self, span: &Span) -> Classes {
-        let Some(union) = self.type_of(span) else {
-            return Classes::Unknown;
+    fn query_models(&self, receiver: &Receiver) -> Classes {
+        let Some(union) = self.receiver_type(receiver) else {
+            return Classes::unknown();
         };
-        if classes_of(union, self.this, Reading::Objects) == Classes::Unknown {
-            return Classes::Unknown;
-        }
+        let mut open = classes_of(&union, self.this, Reading::Objects).is_open();
         let mut models = Vec::new();
         for atomic in union.types.iter() {
             let TAtomic::Object(TObject::Named(named)) = atomic else {
@@ -219,22 +253,22 @@ impl Resolver<'_> {
                 ) else {
                     continue;
                 };
-                let Classes::Known(queried) = classes_of(&bound, self.this, Reading::Objects)
-                else {
-                    return Classes::Unknown;
-                };
+                let queried = classes_of(&bound, self.this, Reading::Objects);
                 let concrete: Vec<String> = queried
-                    .into_iter()
+                    .known()
+                    .iter()
                     .filter(|name| return !name.eq_ignore_ascii_case(MODEL))
+                    .cloned()
                     .collect();
-                if concrete.is_empty() {
-                    return Classes::Unknown;
-                }
+                open |= queried.is_open() || concrete.is_empty();
                 models.extend(concrete);
             }
         }
         models.sort();
         models.dedup();
+        if open {
+            return Classes::Open(models);
+        }
         return Classes::Known(models);
     }
 
@@ -264,22 +298,27 @@ impl Resolver<'_> {
             } => Some(Reference::Static {
                 member: member.clone(),
                 receivers: self.classes(class),
+                dispatch: class.dispatch(),
                 names: self.names(first_argument.as_ref()),
             }),
             Site::New { class } => Some(Reference::New {
                 classes: self.classes(class),
+                dispatch: class.dispatch(),
             }),
             Site::ClassConstant { class, member } => Some(Reference::ClassConstant {
                 member: member.clone(),
                 classes: self.classes(class),
+                dispatch: class.dispatch(),
             }),
             Site::Property { receiver, member } => Some(Reference::Property {
                 member: member.clone(),
                 receivers: self.objects(receiver),
+                dispatch: Dispatch::Late,
             }),
             Site::StaticProperty { class, member } => Some(Reference::Property {
                 member: member.clone(),
                 receivers: self.classes(class),
+                dispatch: class.dispatch(),
             }),
         };
     }

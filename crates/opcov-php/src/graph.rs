@@ -7,8 +7,18 @@ use serde::{Serialize, Serializer};
 use crate::consumers::{Search, Untyped, Use};
 use crate::index::{Index, IndexStats};
 use crate::members::{Member, innermost_callable};
-use crate::target::{Kind, Request, Target};
-use crate::tree::{FileChange, attributed, split_via};
+use crate::routes::Routes;
+use crate::target::{Kind, Request, Resolution, Target};
+use crate::tree::{FileChange, Hunks, attributed, split_via};
+use crate::unaffected::MemberChange;
+
+mod entries;
+mod markdown;
+mod review;
+
+use entries::{EntryPoint, RouteTable};
+use review::{Impact, Risks};
+pub use review::{NodeCoverage, Ratio};
 
 const VERSION: u32 = 1;
 
@@ -89,10 +99,11 @@ struct EdgeKey {
     via: Option<String>,
 }
 
-#[derive(Debug, Default)]
-struct Sites {
+#[derive(Debug)]
+struct Calls {
     sites: BTreeSet<Site>,
     in_changed_code: bool,
+    resolution: Resolution,
 }
 
 #[derive(Debug)]
@@ -141,12 +152,13 @@ impl Frontier {
 
 #[derive(Debug, Default)]
 struct Side {
+    hunks: BTreeMap<NodeId, Hunks>,
     paths: BTreeSet<String>,
     files: BTreeMap<String, Vec<Member>>,
     declared: BTreeMap<NodeId, Location>,
     reached: BTreeMap<NodeId, Reached>,
     touched: BTreeSet<NodeId>,
-    edges: BTreeMap<EdgeKey, Sites>,
+    edges: BTreeMap<EdgeKey, Calls>,
     untyped: BTreeSet<Untyped>,
 }
 
@@ -161,6 +173,7 @@ impl Side {
                 continue;
             }
             self.touched.insert(id.clone());
+            self.hunks.insert(id.clone(), change.within(member));
             self.reached.entry(id.clone()).or_insert_with(|| {
                 return Reached {
                     location: Location::from(member),
@@ -227,6 +240,7 @@ impl Side {
             || return NodeId::Script(found.path.clone()),
             |member| return NodeId::Member(member.target.clone()),
         );
+        let resolution = found.resolution;
         let site = Site {
             path: found.path,
             line: found.line,
@@ -242,9 +256,16 @@ impl Side {
                 to,
                 via: via.map(str::to_owned),
             })
-            .or_default();
+            .or_insert_with(|| {
+                return Calls {
+                    sites: BTreeSet::new(),
+                    in_changed_code,
+                    resolution,
+                };
+            });
         sites.sites.insert(site);
         sites.in_changed_code |= in_changed_code;
+        sites.resolution = sites.resolution.min(resolution);
         return Ok(());
     }
 
@@ -281,7 +302,9 @@ struct Sides<T> {
 enum NodeChange {
     Added,
     Removed,
-    Modified,
+    SignatureChanged,
+    BodyChanged,
+    FormattingChanged,
     Unchanged,
 }
 
@@ -300,7 +323,12 @@ struct Node {
     id: NodeId,
     kind: NodeKind,
     change: NodeChange,
+    resolution: Resolution,
     depth: u32,
+    entries: Vec<EntryPoint>,
+    impact: Option<Impact>,
+    coverage: Option<NodeCoverage>,
+    changed: Sides<Option<Hunks>>,
     base: Option<Location>,
     head: Option<Location>,
 }
@@ -311,6 +339,7 @@ struct Edge {
     to: NodeId,
     via: Option<String>,
     change: EdgeChange,
+    resolution: Resolution,
     base: Vec<Site>,
     head: Vec<Site>,
 }
@@ -319,19 +348,106 @@ struct Edge {
 pub struct Graph {
     version: u32,
     depth: u32,
+    risks: Risks,
     nodes: Vec<Node>,
     edges: Vec<Edge>,
     untyped: Sides<Vec<Untyped>>,
     index: Sides<IndexStats>,
 }
 
-fn listed(side: Option<Sites>) -> Vec<Site> {
+fn listed(side: Option<Calls>) -> Vec<Site> {
     return side.map_or_else(Vec::new, |side| return side.sites.into_iter().collect());
 }
 
 struct Merge {
     base: Side,
     head: Side,
+    modifications: BTreeMap<NodeId, MemberChange>,
+}
+
+fn node_entries(id: &NodeId, base: &Index, head: &Index, routes: &RouteTable) -> Vec<EntryPoint> {
+    return match id {
+        NodeId::Member(target) => {
+            let class = target.class.as_deref().unwrap_or_default();
+            let index = if head
+                .metadata
+                .get_method(class.as_bytes(), target.member.as_bytes())
+                .is_some()
+            {
+                head
+            } else {
+                base
+            };
+            entries::of_member(index, routes, target)
+        }
+        NodeId::Script(path) => {
+            let index = if head.positions.contains_key(path) {
+                head
+            } else {
+                base
+            };
+            if entries::is_pest_file(index, path) {
+                vec![EntryPoint::PestTest]
+            } else {
+                Vec::new()
+            }
+        }
+    };
+}
+
+fn modifications(
+    base_side: &Side,
+    head_side: &Side,
+    base: Revision<'_>,
+    head: Revision<'_>,
+) -> BTreeMap<NodeId, MemberChange> {
+    let paths: BTreeSet<&str> = base
+        .changes
+        .iter()
+        .chain(head.changes)
+        .map(|change| return change.path.as_str())
+        .collect();
+    let paths: Vec<&str> = paths.into_iter().collect();
+    let (before, after) = rayon::join(
+        || return base.index.signatures(&paths),
+        || return head.index.signatures(&paths),
+    );
+    return base_side
+        .touched
+        .union(&head_side.touched)
+        .filter(|id| {
+            return base_side.declared.contains_key(*id) && head_side.declared.contains_key(*id);
+        })
+        .filter_map(|id| {
+            let NodeId::Member(target) = id else {
+                return None;
+            };
+            return Some((id.clone(), before.change(&after, target)));
+        })
+        .collect();
+}
+
+fn proven<'e>(
+    changed: impl Iterator<Item = &'e NodeId>,
+    edges: &'e [Edge],
+) -> BTreeSet<&'e NodeId> {
+    let mut callers: BTreeMap<&NodeId, Vec<&NodeId>> = BTreeMap::new();
+    for edge in edges
+        .iter()
+        .filter(|edge| return edge.resolution == Resolution::Typed)
+    {
+        callers.entry(&edge.to).or_default().push(&edge.from);
+    }
+    let mut proven: BTreeSet<&NodeId> = changed.collect();
+    let mut pending: Vec<&NodeId> = proven.iter().copied().collect();
+    while let Some(id) = pending.pop() {
+        for caller in callers.get(id).into_iter().flatten() {
+            if proven.insert(caller) {
+                pending.push(caller);
+            }
+        }
+    }
+    return proven;
 }
 
 impl Merge {
@@ -339,22 +455,30 @@ impl Merge {
         return self.base.paths.contains(path) || self.head.paths.contains(path);
     }
 
+    fn modified(&self, id: &NodeId) -> NodeChange {
+        return match self.modifications.get(id) {
+            Some(MemberChange::Signature) | None => NodeChange::SignatureChanged,
+            Some(MemberChange::Body) => NodeChange::BodyChanged,
+            Some(MemberChange::Formatting) => NodeChange::FormattingChanged,
+        };
+    }
+
     fn change(&self, id: &NodeId) -> NodeChange {
         let (base, head) = (&self.base, &self.head);
         if let NodeId::Script(path) = id {
             return match (base.paths.contains(path), head.paths.contains(path)) {
                 (false, false) => NodeChange::Unchanged,
-                (true, true) => NodeChange::Modified,
+                (true, true) => NodeChange::BodyChanged,
                 (false, true) => NodeChange::Added,
                 (true, false) => NodeChange::Removed,
             };
         }
         return match (base.touched.contains(id), head.touched.contains(id)) {
             (false, false) => NodeChange::Unchanged,
-            (true, true) => NodeChange::Modified,
-            (false, true) if base.declared.contains_key(id) => NodeChange::Modified,
+            (true, true) => self.modified(id),
+            (false, true) if base.declared.contains_key(id) => self.modified(id),
             (false, true) => NodeChange::Added,
-            (true, false) if head.declared.contains_key(id) => NodeChange::Modified,
+            (true, false) if head.declared.contains_key(id) => self.modified(id),
             (true, false) => NodeChange::Removed,
         };
     }
@@ -384,11 +508,24 @@ impl Merge {
             .unwrap_or_default();
     }
 
-    fn node(&self, id: NodeId) -> Node {
+    fn node(&self, id: NodeId, proven: &BTreeSet<&NodeId>) -> Node {
         let (base, head) = self.locations(&id);
+        let resolution = if proven.contains(&id) {
+            Resolution::Typed
+        } else {
+            Resolution::ByName
+        };
         return Node {
             kind: id.kind(),
             change: self.change(&id),
+            resolution,
+            entries: Vec::new(),
+            impact: None,
+            coverage: None,
+            changed: Sides {
+                base: self.base.hunks.get(&id).cloned(),
+                head: self.head.hunks.get(&id).cloned(),
+            },
             depth: self.depth(&id),
             base,
             head,
@@ -396,16 +533,20 @@ impl Merge {
         };
     }
 
-    fn nodes(&self) -> Vec<Node> {
+    fn nodes(&self, edges: &[Edge]) -> Vec<Node> {
         let ids: BTreeSet<&NodeId> = self
             .base
             .reached
             .keys()
             .chain(self.head.reached.keys())
             .collect();
+        let proven = proven(
+            ids.iter().copied().filter(|id| return self.depth(id) == 0),
+            edges,
+        );
         let mut nodes: Vec<Node> = ids
-            .into_iter()
-            .map(|id| return self.node(id.clone()))
+            .iter()
+            .map(|id| return self.node((*id).clone(), &proven))
             .collect();
         nodes.sort_by(|left, right| return (left.depth, &left.id).cmp(&(right.depth, &right.id)));
         return nodes;
@@ -431,11 +572,18 @@ impl Merge {
                     (Some(base), None) if !base.in_changed_code => EdgeChange::NoLongerResolves,
                     (Some(_), None) => EdgeChange::Removed,
                 };
+                let resolution = base
+                    .iter()
+                    .chain(&head)
+                    .map(|sites| return sites.resolution)
+                    .min()
+                    .unwrap_or(Resolution::ByName);
                 return Edge {
                     from: key.from,
                     to: key.to,
                     via: key.via,
                     change,
+                    resolution,
                     base: listed(base),
                     head: listed(head),
                 };
@@ -444,10 +592,65 @@ impl Merge {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoverageTarget {
+    pub node: usize,
+    pub path: String,
+    pub function: String,
+}
+
 impl Graph {
+    #[must_use]
+    pub fn coverage_targets(&self) -> Vec<CoverageTarget> {
+        return self
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(position, node)| {
+                let NodeId::Member(target) = &node.id else {
+                    return None;
+                };
+                if !target.kind.is_callable() {
+                    return None;
+                }
+                let base = node.base.as_ref()?;
+                let function = target.class.as_ref().map_or_else(
+                    || return target.member.clone(),
+                    |class| return format!("{class}::{}", target.member),
+                );
+                return Some(CoverageTarget {
+                    node: position,
+                    path: base.path.clone(),
+                    function,
+                });
+            })
+            .collect();
+    }
+
+    pub fn cover(&mut self, covered: impl IntoIterator<Item = (usize, NodeCoverage)>) {
+        for (position, coverage) in covered {
+            if let Some(node) = self.nodes.get_mut(position) {
+                node.coverage = Some(coverage);
+            }
+        }
+        let untested = self
+            .nodes
+            .iter()
+            .filter(|node| {
+                return node
+                    .coverage
+                    .as_ref()
+                    .is_some_and(NodeCoverage::is_untested);
+            })
+            .map(|node| return node.id.clone())
+            .collect();
+        self.risks.untested = Some(untested);
+    }
+
     pub fn walk(
         base: Revision<'_>,
         head: Revision<'_>,
+        routes: &Routes,
         within: &[String],
         depth: u32,
     ) -> Result<Self, GraphError> {
@@ -474,15 +677,27 @@ impl Graph {
             head_side.absorb(head.index, found, level, &mut frontier)?;
         }
         let [base_side, head_side] = sides;
+        let modifications = modifications(&base_side, &head_side, base, head);
         let mut merge = Merge {
             base: base_side,
             head: head_side,
+            modifications,
         };
-        let nodes = merge.nodes();
         let edges = merge.edges();
+        let mut nodes = merge.nodes(&edges);
+        let table = RouteTable::new(routes, head.index);
+        for node in &mut nodes {
+            node.entries = node_entries(&node.id, base.index, head.index, &table);
+        }
+        let impacts = review::impacts(&nodes, &edges);
+        for (node, impact) in nodes.iter_mut().zip(impacts) {
+            node.impact = impact;
+        }
+        let risks = Risks::of(&nodes, &edges, table.broken);
         return Ok(Self {
             version: VERSION,
             depth,
+            risks,
             nodes,
             edges,
             untyped: Sides {
