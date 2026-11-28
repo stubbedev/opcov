@@ -11,6 +11,26 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+### Added
+
+- `opcov graph` describes a PHP change for review tools as one JSON graph:
+  the members the diff changes and the code that uses them, on both the base
+  and the head side of the diff, with each member marked added, removed,
+  modified or unchanged and each call kept, added, removed, or resolving to
+  the member only on one side from code the diff does not touch. The base
+  side is rebuilt from the working tree and the diff alone, so a removed
+  member's callers are found without a second checkout. A file the change
+  cannot affect is analysed once for both sides. On an 8,881-file Laravel
+  application a ten-commit branch takes 4.4 s.
+
+### Changed
+
+- The index builds the Eloquent facts of its models in parallel, so
+  `opcov consumers` on an 8,881-file Laravel application takes 3.5 s instead
+  of 3.8 s, with the same results.
+- A search no longer analyses a file that names a target only as a variable
+  (`$name`); `Class::$name` still counts as a use of a static property.
+
 ## [0.4.0] - 2026-11-26
 
 ### Added

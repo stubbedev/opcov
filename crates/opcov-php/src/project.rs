@@ -1,6 +1,7 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use mago_allocator::LocalArena;
@@ -25,14 +26,8 @@ const SOURCE_EXTENSION: &str = "php";
 
 #[derive(Debug)]
 pub enum ProjectError {
-    Read {
-        path: PathBuf,
-        error: std::io::Error,
-    },
-    Map {
-        path: PathBuf,
-        reason: &'static str,
-    },
+    Read { path: PathBuf, error: io::Error },
+    Map { path: PathBuf, reason: &'static str },
 }
 
 impl fmt::Display for ProjectError {
@@ -171,9 +166,16 @@ fn returned_map(
     };
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Overlaid {
+    Absent,
+    Contents(Vec<u8>),
+}
+
 #[derive(Debug, Clone)]
 pub struct Project {
     root: PathBuf,
+    overlay: BTreeMap<PathBuf, Overlaid>,
     vendor: PathBuf,
     namespaces: HashMap<String, Vec<PathBuf>>,
     classes: HashMap<String, PathBuf>,
@@ -229,6 +231,7 @@ impl Project {
         let development = Self::autoload_scope(root, &manifest, AUTOLOAD_DEV);
         return Ok(Self {
             root: root.to_path_buf(),
+            overlay: BTreeMap::new(),
             vendor: vendor_dir,
             namespaces,
             classes,
@@ -285,6 +288,31 @@ impl Project {
     }
 
     #[must_use]
+    pub fn overlaid(mut self, overlay: BTreeMap<PathBuf, Overlaid>) -> Self {
+        self.overlay = overlay
+            .into_iter()
+            .map(|(path, overlaid)| return (self.root.join(path), overlaid))
+            .collect();
+        return self;
+    }
+
+    pub(crate) fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        return match self.overlay.get(path) {
+            Some(Overlaid::Contents(contents)) => Ok(contents.clone()),
+            Some(Overlaid::Absent) => Err(io::Error::from(io::ErrorKind::NotFound)),
+            None => std::fs::read(path),
+        };
+    }
+
+    fn exists(&self, path: &Path) -> bool {
+        return match self.overlay.get(path) {
+            Some(Overlaid::Contents(_)) => true,
+            Some(Overlaid::Absent) => false,
+            None => path.is_file(),
+        };
+    }
+
+    #[must_use]
     pub fn root(&self) -> &Path {
         return &self.root;
     }
@@ -329,39 +357,55 @@ impl Project {
                 return directories
                     .iter()
                     .map(|directory| return directory.join(&relative))
-                    .find(|candidate| return candidate.is_file());
+                    .find(|candidate| return self.exists(candidate));
             });
     }
 
     #[must_use]
     pub fn source_files(&self) -> Vec<PathBuf> {
-        return files_under(&self.scope);
+        return self.files_under(&self.scope);
     }
 
     #[must_use]
     pub fn all_files(&self) -> Vec<PathBuf> {
         let mut entries = self.scope.clone();
         entries.extend(self.development.iter().cloned());
-        return files_under(&entries);
+        return self.files_under(&entries);
+    }
+
+    fn files_under(&self, entries: &[PathBuf]) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        for entry in entries {
+            collect_sources(entry, &mut files);
+        }
+        if !self.overlay.is_empty() {
+            files.retain(|file| return self.overlay.get(file) != Some(&Overlaid::Absent));
+            files.extend(
+                self.overlay
+                    .iter()
+                    .filter(|(path, overlaid)| {
+                        return matches!(overlaid, Overlaid::Contents(_))
+                            && is_source(path)
+                            && entries.iter().any(|entry| return path.starts_with(entry));
+                    })
+                    .map(|(path, _)| return path.clone()),
+            );
+        }
+        files.sort();
+        files.dedup();
+        return files;
     }
 }
 
-fn files_under(entries: &[PathBuf]) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    for entry in entries {
-        collect_sources(entry, &mut files);
-    }
-    files.sort();
-    files.dedup();
-    return files;
+fn is_source(path: &Path) -> bool {
+    return path
+        .extension()
+        .is_some_and(|extension| return extension == SOURCE_EXTENSION);
 }
 
 fn collect_sources(path: &Path, files: &mut Vec<PathBuf>) {
     if path.is_file() {
-        if path
-            .extension()
-            .is_some_and(|extension| return extension == SOURCE_EXTENSION)
-        {
+        if is_source(path) {
             files.push(path.to_path_buf());
         }
         return;

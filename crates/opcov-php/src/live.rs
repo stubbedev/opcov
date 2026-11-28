@@ -37,7 +37,7 @@ impl Index {
         let Some(source) = self.sources.get(position) else {
             return Ok(Err(format!("{relative} is not an indexed project source")));
         };
-        let file = match load(project.root(), &project.root().join(relative)) {
+        let file = match load(project, &project.root().join(relative)) {
             Ok(file) => file,
             Err(IndexError::Read { error, .. }) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(Err(format!("{relative} was deleted")));

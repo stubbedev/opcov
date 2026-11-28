@@ -172,7 +172,7 @@ PCOV is listed in [branch-semantics.md](docs/branch-semantics.md).
 - [install.md](docs/install.md): every install channel and platform requirement
 - [configuration.md](docs/configuration.md): INI settings and the `\opcov\` API
 - [phpunit.md](docs/phpunit.md): PHPUnit, Pest, paratest and the 13.3 driver
-- [cli.md](docs/cli.md): `opcov merge`, `convert`, `gate`, `impact`, `stitch`, `consumers`, `serve`, `check`, `doctor`
+- [cli.md](docs/cli.md): `opcov merge`, `convert`, `gate`, `impact`, `stitch`, `consumers`, `graph`, `serve`, `check`, `doctor`
 - [gate.md](docs/gate.md): gating changed code in CI
 - [troubleshooting.md](docs/troubleshooting.md): every refusal message and its fix
 - [support.md](docs/support.md): versioning and supported PHP versions

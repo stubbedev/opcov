@@ -10,7 +10,9 @@ use opcov_core::report::{FileCoverage, Header, HitSet, Sha256, SourcePath, TestI
 use opcov_syntax::{Outline, SourceFile};
 use serde::{Serialize, Serializer};
 
-use crate::changes::{Content, FileChange, FilePatch, base_change, normalize, original, resolve};
+use crate::changes::{
+    Content, FileChange, FilePatch, base_change, normalize, rebuild_base, resolve,
+};
 use crate::failure::{Failure, Verdict};
 use crate::gate::{
     PHP_EXTENSION, Unmeasurable, changed_functions, owner_of_line, selection, unmeasurable,
@@ -351,12 +353,7 @@ impl Context<'_> {
                 classes.into_iter().collect(),
             )));
         };
-        let base_bytes =
-            original(current_bytes.as_deref().unwrap_or_default(), hunks).map_err(|error| {
-                return Failure::failed(format!(
-                    "cannot rebuild the base version of {old} from the diff: {error}"
-                ));
-            })?;
+        let base_bytes = rebuild_base(&old, current_bytes.as_deref().unwrap_or_default(), hunks)?;
         let base = Version::parse(&old, &base_bytes)?;
         let versions: Vec<&Version> = std::iter::once(&base).chain(current.as_ref()).collect();
         if self.is_test_file(&versions) {

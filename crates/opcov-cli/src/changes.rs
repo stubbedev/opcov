@@ -6,6 +6,8 @@ use std::path::{Component, Path, PathBuf};
 use opcov_core::cfg::Line;
 use opcov_core::report::{PathBase, SourcePath};
 
+use crate::failure::Failure;
+
 mod diff;
 mod lines;
 mod list;
@@ -102,6 +104,20 @@ impl ChangeSet {
         return set;
     }
 
+    pub(crate) fn of_base_patch(diff: &Patch) -> Self {
+        let mut set = Self::default();
+        for file in diff.files() {
+            let (Some(path), Content::Text(hunks)) = (&file.old, &file.content) else {
+                continue;
+            };
+            let change = base_change(hunks);
+            if change != FileChange::Parts(BTreeSet::new()) {
+                set.add(path.clone(), change);
+            }
+        }
+        return set;
+    }
+
     pub(crate) fn files(&self) -> impl Iterator<Item = (&Path, &FileChange)> {
         return self
             .0
@@ -174,6 +190,18 @@ pub(crate) fn base_change(hunks: &[Hunk]) -> FileChange {
         }
     }
     return FileChange::Parts(changes);
+}
+
+pub(crate) fn rebuild_base(
+    old: &dyn fmt::Display,
+    current: &[u8],
+    hunks: &[Hunk],
+) -> Result<Vec<u8>, Failure> {
+    return original(current, hunks).map_err(|error| {
+        return Failure::failed(format!(
+            "cannot rebuild the base version of {old} from the diff: {error}"
+        ));
+    });
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -23,6 +23,7 @@ mod convert;
 mod doctor;
 mod failure;
 mod gate;
+mod graph;
 mod impact;
 mod index;
 mod local;
@@ -71,6 +72,10 @@ enum Command {
         about = "Find the code that uses changed PHP members: methods, functions, constants, properties and the code the framework calls"
     )]
     Consumers(ConsumersArgs),
+    #[command(
+        about = "Describe a PHP change as a graph of its changed members and their consumers on both sides of the diff, as JSON for review tools"
+    )]
+    Graph(GraphArgs),
     #[command(
         about = "Keep the PHP index of a project warm and up to date, so opcov consumers answers in milliseconds"
     )]
@@ -312,6 +317,42 @@ struct ConsumersArgs {
         help = "Search in this process even when opcov serve runs for the project"
     )]
     no_serve: bool,
+}
+
+#[derive(Debug, Args)]
+struct GraphArgs {
+    #[arg(
+        long,
+        value_name = "DIR",
+        help = "Project root, the directory holding composer.json and vendor/, checked out at the head of the change [default: the current directory]"
+    )]
+    root: Option<PathBuf>,
+    #[arg(
+        long,
+        value_name = "DIFF",
+        help = "Unified diff from the base to the working tree, relative to the root (`git diff $(git merge-base origin/main HEAD)`), or `-` for standard input"
+    )]
+    diff: PathBuf,
+    #[arg(
+        long,
+        value_name = "N",
+        default_value_t = 1,
+        help = "Leading path components to strip from diff paths (1 removes git's `a/` and `b/`)"
+    )]
+    strip: usize,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Search only this directory or file, relative to the root (repeatable) [default: every autoloaded project source]"
+    )]
+    path: Vec<String>,
+    #[arg(
+        long,
+        value_name = "N",
+        default_value_t = 2,
+        help = "Call-graph levels of consumers to follow on each side (see opcov consumers --depth)"
+    )]
+    depth: u32,
 }
 
 #[derive(Debug, Args)]
@@ -631,6 +672,14 @@ fn consumers_report(args: &ConsumersArgs) -> Result<Verdict, Failure> {
     return Ok(Verdict::Clean);
 }
 
+fn graph_report(args: &GraphArgs) -> Result<Verdict, Failure> {
+    let root = project_root(args.root.as_deref())?;
+    let patch = read_patch(&args.diff, args.strip)?;
+    let graph = graph::build(&root, &patch, &args.path, args.depth)?;
+    write_stdout(|out| return graph::render_json(out, &graph))?;
+    return Ok(Verdict::Clean);
+}
+
 fn emit_filter(result: &impact::ImpactResult<'_>) -> Result<Verdict, Failure> {
     if result.verdict() == Verdict::Findings {
         write_stderr(|out| return impact::render_text(out, result))?;
@@ -711,6 +760,7 @@ fn main() -> ExitCode {
         Command::Impact(args) => impact_report(args),
         Command::Stitch(args) => stitch_report(args),
         Command::Consumers(args) => consumers_report(args),
+        Command::Graph(args) => graph_report(args),
         Command::Serve(args) => serve_command(args),
         Command::Check(args) => check_command(args),
         Command::Doctor(args) => doctor(args),

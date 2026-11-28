@@ -11,6 +11,7 @@ use mago_codex::ttype::union::TUnion;
 use mago_database::file::{File, FileId, HasFileId};
 use mago_syntax::walker::Walker;
 use mago_word::{Word, word};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::analysis::{Context, with_analysis};
 use crate::consumers::Untyped;
@@ -169,14 +170,15 @@ pub(crate) fn apply(
         },
         sources,
     );
-    let models: Vec<Model> = descendants(metadata, MODEL)
-        .into_iter()
-        .map(|name| return Model::of(metadata, name))
-        .collect();
-    let mut planned: Vec<(Word, Members)> = models
-        .iter()
-        .map(|model| return (model.name, model.members(metadata)))
-        .collect();
+    let shared: &CodebaseMetadata = metadata;
+    let (models, mut planned): (Vec<Model>, Vec<(Word, Members)>) = descendants(shared, MODEL)
+        .into_par_iter()
+        .map(|name| {
+            let model = Model::of(shared, name);
+            let members = model.members(shared);
+            return (model, (name, members));
+        })
+        .unzip();
     let mut forwards: Forwards = models.iter().map(model_forwards).collect();
     forwards.extend(facades.iter().map(|(facade, target)| {
         return (

@@ -1,9 +1,10 @@
 #[cfg(test)]
 mod project {
+    use std::collections::BTreeMap;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
-    use opcov_php::Project;
+    use opcov_php::{Overlaid, Project};
 
     const EMPTY_MAP: &str = "<?php\n\n$vendorDir = dirname(__DIR__);\n$baseDir = dirname($vendorDir);\n\nreturn array(\n);\n";
 
@@ -36,6 +37,45 @@ mod project {
         assert_eq!(
             project.all_files(),
             [root.join("src/Calc.php"), root.join("tests/CalcTest.php")]
+        );
+    }
+
+    #[test]
+    fn an_overlay_replaces_removes_and_adds_project_sources() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/project");
+        let plain = Project::open(&root).unwrap();
+        let overlaid = plain.clone().overlaid(BTreeMap::from([
+            (PathBuf::from("app/Services/Clock.php"), Overlaid::Absent),
+            (
+                PathBuf::from("app/Services/Calendar.php"),
+                Overlaid::Contents(b"<?php\n".to_vec()),
+            ),
+            (
+                PathBuf::from("app/notes.txt"),
+                Overlaid::Contents(b"not php".to_vec()),
+            ),
+            (
+                PathBuf::from("config/extra.php"),
+                Overlaid::Contents(b"<?php\n".to_vec()),
+            ),
+        ]));
+        let mut expected = plain.source_files();
+        expected.retain(|path| return *path != root.join("app/Services/Clock.php"));
+        expected.push(root.join("app/Services/Calendar.php"));
+        expected.sort();
+        assert_eq!(
+            overlaid.source_files(),
+            expected,
+            "an absent file leaves, a PHP file inside the autoload scope joins, other files do not"
+        );
+        assert_eq!(
+            (
+                overlaid.class_file("App\\Services\\Clock"),
+                overlaid.class_file("App\\Services\\Calendar"),
+                plain.class_file("App\\Services\\Calendar"),
+            ),
+            (None, Some(root.join("app/Services/Calendar.php")), None),
+            "PSR-4 lookups see the overlay"
         );
     }
 }

@@ -29,3 +29,7 @@ mod impact;
 #[cfg(test)]
 #[path = "cli/stitch.rs"]
 mod stitch;
+
+#[cfg(test)]
+#[path = "cli/graph.rs"]
+mod graph;

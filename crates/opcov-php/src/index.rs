@@ -16,7 +16,7 @@ use mago_prelude::Prelude;
 use mago_syntax::parser::parse_file;
 use mago_syntax::walker::Walker;
 use mago_word::Word;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
@@ -129,7 +129,7 @@ pub(crate) struct Record {
 pub(crate) struct Source {
     pub(crate) file: File,
     pub(crate) path: String,
-    pub(crate) facts: OnceLock<FileFacts>,
+    pub(crate) facts: Arc<OnceLock<FileFacts>>,
     pub(crate) record: Record,
 }
 
@@ -139,7 +139,7 @@ impl Source {
         return Self {
             file,
             path,
-            facts: OnceLock::new(),
+            facts: Arc::new(OnceLock::new()),
             record,
         };
     }
@@ -163,15 +163,15 @@ fn logical_name(root: &Path, path: &Path) -> String {
         .into_owned();
 }
 
-pub(crate) fn load(root: &Path, path: &Path) -> Result<File, IndexError> {
-    let content = std::fs::read(path).map_err(|error| {
+pub(crate) fn load(project: &Project, path: &Path) -> Result<File, IndexError> {
+    let content = project.read(path).map_err(|error| {
         return IndexError::Read {
             path: path.to_path_buf(),
             error,
         };
     })?;
     return Ok(File::ephemeral(
-        Cow::Owned(logical_name(root, path).into_bytes()),
+        Cow::Owned(logical_name(project.root(), path).into_bytes()),
         Cow::Owned(content),
     ));
 }
@@ -315,10 +315,10 @@ impl Walk<'_> {
             if let Some(obtained) = caching.reuse(&key) {
                 return Ok(obtained);
             }
-            let file = load(self.root, path)?;
+            let file = load(self.project, path)?;
             return Obtained::encoded(key, scan(&file, self.settings, reach));
         }
-        return self.obtain_file(&load(self.root, path)?, reach);
+        return self.obtain_file(&load(self.project, path)?, reach);
     }
 
     fn visit<'scope>(&'scope self, scope: &rayon::Scope<'scope>, visit: Visit) {
@@ -422,7 +422,7 @@ fn scan_reachable(
     let sources: Vec<File> = project
         .source_files()
         .par_iter()
-        .map(|path| return load(root, path))
+        .map(|path| return load(project, path))
         .collect::<Result<_, _>>()?;
     let seen: Mutex<HashSet<PathBuf>> = Mutex::new(project.source_files().into_iter().collect());
     let looked_up: Mutex<HashSet<String>> = Mutex::new(HashSet::new());

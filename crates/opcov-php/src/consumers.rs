@@ -1,4 +1,5 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
+use std::sync::{Arc, OnceLock};
 
 use aho_corasick::{AhoCorasick, MatchKind};
 use mago_analyzer::artifacts::AnalysisArtifacts;
@@ -6,7 +7,7 @@ use mago_database::file::File;
 use mago_names::ResolvedNames;
 use mago_syntax::cst::Program;
 use mago_syntax::walker::Walker;
-use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
+use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 use crate::analysis::{Context, with_analysis};
 use crate::facts::{FileFacts, Resolved, Resolver};
@@ -41,10 +42,17 @@ const fn is_name_byte(byte: u8) -> bool {
     return byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80;
 }
 
-struct Mentions(Option<AhoCorasick>);
+fn is_variable(preceding: &[u8]) -> bool {
+    let Some(sigil) = preceding.strip_suffix(b"$") else {
+        return false;
+    };
+    return !sigil.trim_ascii_end().ends_with(b"::");
+}
+
+pub(crate) struct Mentions(Option<AhoCorasick>);
 
 impl Mentions {
-    fn new(needles: &BTreeSet<String>) -> Result<Self, aho_corasick::BuildError> {
+    pub(crate) fn new(needles: &BTreeSet<String>) -> Result<Self, aho_corasick::BuildError> {
         if needles.is_empty() {
             return Ok(Self(None));
         }
@@ -55,18 +63,18 @@ impl Mentions {
             .map(|automaton| return Self(Some(automaton)));
     }
 
-    fn in_source(&self, source: &[u8]) -> bool {
+    pub(crate) fn in_source(&self, source: &[u8]) -> bool {
         let Some(automaton) = &self.0 else {
             return false;
         };
         return automaton.find_overlapping_iter(source).any(|found| {
-            let before = found
-                .start()
-                .checked_sub(1)
-                .and_then(|position| return source.get(position));
+            let preceding = source.get(..found.start()).unwrap_or_default();
             let after = source.get(found.end());
-            return !before.is_some_and(|byte| return is_name_byte(*byte))
-                && !after.is_some_and(|byte| return is_name_byte(*byte));
+            return !preceding
+                .last()
+                .is_some_and(|byte| return is_name_byte(*byte))
+                && !after.is_some_and(|byte| return is_name_byte(*byte))
+                && !is_variable(preceding);
         });
     }
 }
@@ -168,12 +176,13 @@ impl Index {
             .count();
     }
 
-    #[must_use]
-    pub fn uses(&self, request: &Request) -> Search {
-        let matcher = &Matcher::new(&self.metadata, &self.forwards, &self.hooks, request);
-        let needles = matcher.needles();
-        let mentions = Mentions::new(&needles);
-        let analysed: Vec<(&Source, &FileFacts)> = self
+    fn matcher<'s>(&'s self, request: &'s Request) -> Matcher<'s> {
+        return Matcher::new(&self.metadata, &self.forwards, &self.hooks, request);
+    }
+
+    fn wanted<'s>(&'s self, request: &Request, needles: &BTreeSet<String>) -> Vec<&'s Source> {
+        let mentions = Mentions::new(needles);
+        return self
             .sources
             .par_iter()
             .filter(|source| {
@@ -181,11 +190,37 @@ impl Index {
                     return false;
                 }
                 return match (source.facts.get(), &mentions) {
-                    (Some(facts), _) => facts.mentions(&needles),
+                    (Some(facts), _) => facts.mentions(needles),
                     (None, Ok(mentions)) => mentions.in_source(source.file.contents.as_ref()),
                     (None, Err(_)) => true,
                 };
             })
+            .collect();
+    }
+
+    pub(crate) fn analyse_wanted(indexes: &[&Self], request: &Request) {
+        let mut claimed: HashSet<*const OnceLock<FileFacts>> = HashSet::new();
+        let mut pending: Vec<(&Self, &Source)> = Vec::new();
+        for index in indexes {
+            let needles = index.matcher(request).needles();
+            for source in index.wanted(request, &needles) {
+                if source.facts.get().is_none() && claimed.insert(Arc::as_ptr(&source.facts)) {
+                    pending.push((index, source));
+                }
+            }
+        }
+        pending.par_iter().for_each(|(index, source)| {
+            index.facts_of(source);
+        });
+    }
+
+    #[must_use]
+    pub fn uses(&self, request: &Request) -> Search {
+        let matcher = &self.matcher(request);
+        let needles = matcher.needles();
+        let analysed: Vec<(&Source, &FileFacts)> = self
+            .wanted(request, &needles)
+            .into_par_iter()
             .map(|source| return (source, self.facts_of(source)))
             .collect();
         let mut found: Vec<Use> = analysed

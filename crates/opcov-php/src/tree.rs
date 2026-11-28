@@ -30,7 +30,7 @@ pub struct FileChange {
 }
 
 impl FileChange {
-    fn touches(&self, member: &Member) -> bool {
+    pub(crate) fn touches(&self, member: &Member) -> bool {
         return match &self.changed {
             Changed::Whole => true,
             Changed::Parts { ranges, deletions } => {
@@ -78,6 +78,22 @@ pub struct Answer {
     pub index: IndexStats,
 }
 
+pub(crate) fn split_via(used: &str) -> (&str, Option<&str>) {
+    return used
+        .split_once(VIA)
+        .map_or((used, None), |(target, class)| return (target, Some(class)));
+}
+
+pub(crate) fn attributed(member: &Member, via: Option<&str>) -> Member {
+    let mut member = member.clone();
+    if let Some(class) = via
+        && member.target.class.is_some()
+    {
+        member.target.class = Some(class.to_owned());
+    }
+    return member;
+}
+
 impl Index {
     #[must_use]
     pub fn answer(&self, query: &Query) -> Answer {
@@ -93,7 +109,7 @@ impl Index {
         };
     }
 
-    fn members_of(&self, path: &str) -> Vec<Member> {
+    pub(crate) fn members_of(&self, path: &str) -> Vec<Member> {
         let Some(file) = self
             .positions
             .get(path)
@@ -164,20 +180,9 @@ impl Index {
                 let in_file = members
                     .entry(found.path.clone())
                     .or_insert_with(|| return self.members_of(&found.path));
-                let via = found
-                    .target
-                    .split_once(VIA)
-                    .map(|(_, class)| return class.to_owned());
+                let via = split_via(&found.target).1;
                 let owner = innermost_callable(in_file, found.line)
-                    .cloned()
-                    .map(|mut member| {
-                        if let Some(class) = &via
-                            && member.target.class.is_some()
-                        {
-                            member.target.class = Some(class.clone());
-                        }
-                        return member;
-                    });
+                    .map(|member| return attributed(member, via));
                 let key = owner.as_ref().map_or_else(
                     || return format!("{}:{}", found.path, found.line),
                     |member| return member.target.to_string(),

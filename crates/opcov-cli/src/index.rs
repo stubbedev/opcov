@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{ErrorKind, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use opcov_php::{Build, CacheError, Index, Project, ScanCache};
@@ -60,17 +60,25 @@ fn previous(path: &Path, build: &[u8], bytes: Option<&[u8]>) -> Result<ScanCache
     };
 }
 
-pub(crate) fn build(project: &Project) -> Result<Index, Failure> {
+fn build_cached(project: &Project) -> Result<(PathBuf, Build), Failure> {
     let path = local::path(project.root(), CACHE_NAME);
     let build = build_identity()?;
     let read = read(&path)?;
-    let Build {
-        index,
-        cache,
-        changed,
-        ..
-    } = Index::build_cached(project, previous(&path, &build, read.as_deref())?)
+    let scanned = Index::build_cached(project, previous(&path, &build, read.as_deref())?)
         .map_err(|error| return Failure::failed(error.to_string()))?;
+    return Ok((path, scanned));
+}
+
+pub(crate) fn build(project: &Project) -> Result<Index, Failure> {
+    let (
+        path,
+        Build {
+            index,
+            cache,
+            changed,
+            ..
+        },
+    ) = build_cached(project)?;
     if !changed {
         return Ok(index);
     }
@@ -84,4 +92,8 @@ pub(crate) fn build(project: &Project) -> Result<Index, Failure> {
         return Ok(out);
     })?;
     return Ok(index);
+}
+
+pub(crate) fn build_unpersisted(project: &Project) -> Result<Index, Failure> {
+    return Ok(build_cached(project)?.1.index);
 }

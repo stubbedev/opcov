@@ -11,17 +11,18 @@ and merges, converts and checks it. Every subcommand prints `--help`.
 | `opcov impact` | From a baseline report, show the coverage of the functions a change touches and choose the tests that can reach them. |
 | `opcov stitch` | Lay a run of the tests a change reaches over the baseline report, giving the report a run of every test would give. |
 | `opcov consumers` | Find the code that uses changed PHP members, including the code the framework calls. |
+| `opcov graph` | Describe a PHP change for review tools: its changed members and their consumers on both sides of the diff, as one JSON graph. |
 | `opcov serve` | Keep a project's PHP index warm and up to date, so `opcov consumers` answers in milliseconds. |
 | `opcov check` | Check a PHP change in one command: run the tests that reach it, keep the report current, and gate the changed code and its consumers. |
 | `opcov doctor` | Check that a PHP binary can collect coverage with opcov, or with `--report` diagnose a report: outcomes that match no source construct. |
 
 ## Exit codes
 
-| Code | `merge` | `convert` | `gate` | `impact` | `stitch` | `consumers` | `serve` | `check` | `doctor` | `doctor --report` |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 0 | merged | converted | pass: no findings | the selection bounds the change | stitched | searched | stopped | pass, or nothing changed | PHP loads opcov and the probe self-test passed | every outcome that counts toward verdicts has a source construct |
-| 1 | refused: the inputs do not merge (mismatching generator, settings, paths, file hash or model) | (not used) | findings | run every test: a change the baseline cannot bound | refused: a change the baseline cannot bound, a selected test the partial run lacks, or reports that do not merge | (not used) | (not used) | findings, a failing test command, or changed functions no test reaches | problems found | findings |
-| 2 | could not run | could not run | could not run | could not run, or the baseline is not of the diff's base | could not run, the baseline is not of the diff's base, or the partial report is not of the working tree | could not run: no targets, an invalid request, no Composer autoload maps, or an error from `opcov serve` | could not run, or already running for the project | could not run, or the test command wrote no report | could not run | could not run |
+| Code | `merge` | `convert` | `gate` | `impact` | `stitch` | `consumers` | `graph` | `serve` | `check` | `doctor` | `doctor --report` |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | merged | converted | pass: no findings | the selection bounds the change | stitched | searched | described | stopped | pass, or nothing changed | PHP loads opcov and the probe self-test passed | every outcome that counts toward verdicts has a source construct |
+| 1 | refused: the inputs do not merge (mismatching generator, settings, paths, file hash or model) | (not used) | findings | run every test: a change the baseline cannot bound | refused: a change the baseline cannot bound, a selected test the partial run lacks, or reports that do not merge | (not used) | (not used) | (not used) | findings, a failing test command, or changed functions no test reaches | problems found | findings |
+| 2 | could not run | could not run | could not run | could not run, or the baseline is not of the diff's base | could not run, the baseline is not of the diff's base, or the partial report is not of the working tree | could not run: no targets, an invalid request, no Composer autoload maps, or an error from `opcov serve` | could not run: no Composer autoload maps, a diff whose head is not the working tree, or a binary change to a PHP file | could not run, or already running for the project | could not run, or the test command wrote no report | could not run | could not run |
 
 "Could not run" covers usage errors, unreadable or invalid reports, missing or
 unreadable inputs, a source file whose SHA-256 differs from the report's, a
@@ -639,6 +640,140 @@ file is analysed at most once however many levels search it; `analysed`
 counts those files. When the analyzer fails on a file, its uses are matched
 by name, as for a receiver of unknown type, and the file is listed under
 `untyped` with the analyzer's error.
+
+## `opcov graph`
+
+```sh
+git diff "$(git merge-base origin/main HEAD)" | opcov graph --diff - > graph.json
+opcov graph --diff branch.diff --depth 3 --path app
+```
+
+`graph` describes a change for a tool that renders it for review. It finds
+the members the diff changes and the code that uses them, as `consumers`
+does, on both sides of the diff: the base the branch merges into and the
+head in the working tree. It writes one JSON document with every member and
+call it found, each marked with how the change affected it. A member removed
+by the branch is found with its callers on the base side, and a call that
+moved, disappeared or started to land elsewhere shows on the side it is on.
+
+| Option | Meaning |
+|---|---|
+| `--root <DIR>` | The project root, checked out at the head of the change (default: the current directory). |
+| `--diff <DIFF>` | A unified diff from the base to the working tree, relative to the root, or `-` for standard input. Any context size works, `-U0` too. |
+| `--strip <N>` | Leading path components to remove from diff paths (default 1, which removes git's `a/` and `b/`). |
+| `--path <PATH>` | Search only this directory or file, relative to the root (repeatable), on both sides. The default is every source the root `composer.json` autoloads. |
+| `--depth <N>` | Call-graph levels of consumers to follow (default 2). |
+
+### The base side
+
+`graph` needs no second checkout. It rebuilds the base version of every
+changed PHP file by applying the diff in reverse to the working tree, and
+indexes the project a second time with those versions in place: a file the
+branch deleted is back, a file it created or renamed away is gone. The
+working tree must be the head of the diff; a file that does not match the
+diff's context and added lines stops the run with the file and the line.
+Only the autoloaded PHP sources take their base version. `composer.json`,
+the autoload maps, `vendor/` and `config/` are read from the working tree for
+both sides, so a class the base autoloads only through a classmap entry the
+branch removed is not found on the base side.
+
+The head index is cached in `<root>/.opcov/index.cache` like a search by
+`consumers`, and the base index reuses that cache for every unchanged file
+without writing to it. `graph` runs in process and does not ask
+`opcov serve`. Both indexes are built at the same time, so both are held at
+once.
+
+A file the change cannot affect is analysed once, for both sides. That is a
+file whose contents are the same on both sides, that does not hold a trait
+whose using classes differ, and that names none of the declarations whose
+signature the change alters: a changed, added or removed method, property,
+constant or function, a class that exists on one side only, or the class of
+a changed constructor and its subclasses. A name written only as a variable
+does not count. Each other file is analysed on each side. Each side analyses
+every file itself when the change alters a class header (its docblock,
+`extends`, `implements`, attributes or trait uses), a method PHP calls
+implicitly (magic methods, `ArrayAccess`, iterators, `Countable`,
+`JsonSerializable`) or the class a facade or a model forwards to, when a
+class one side lacks is referenced by an unchanged file, when a changed file
+declares a class twice, or when it changes a PHP file the index scans but
+does not search.
+
+On an 8,881-file Laravel application, a ten-commit branch at depth 2 takes
+4.4 s and 2.9 GB, or 5.6 s without a cache, where
+`consumers --depth 2 --no-serve` takes 3.3 s.
+
+### How both sides are searched
+
+Each level searches both sides for the same members: the changed members of
+either side first, then every consumer either side found at the level
+before. A call missing from one side is therefore missing from that side's
+code, not from its search. What a use is follows `consumers`, so a call
+through a typed receiver still matches a member the branch removed: a
+`kept` edge into a `removed` node is a caller the branch did not update.
+
+### Output
+
+```json
+{
+  "version": 1,
+  "depth": 2,
+  "nodes": [
+    {"id": "method App\\Services\\Report::render", "kind": "method", "change": "modified", "depth": 0,
+     "base": {"path": "app/Services/Report.php", "first": 20, "last": 23},
+     "head": {"path": "app/Services/Report.php", "first": 18, "last": 21}}
+  ],
+  "edges": [
+    {"from": "method App\\Uses\\Receivers::run", "to": "method App\\Services\\Report::render",
+     "via": null, "change": "kept",
+     "base": [{"path": "app/Uses/Receivers.php", "line": 15}],
+     "head": [{"path": "app/Uses/Receivers.php", "line": 15}]}
+  ],
+  "untyped": {"base": [{"path", "error"}], "head": []},
+  "index": {"base": {"scanned", "sources", "models", "facades"}, "head": {}}
+}
+```
+
+`version` is the version of this layout. Nodes are ordered by `depth` and
+`id`, edges by `from`, `to` and `via`, and the document is byte-identical
+across runs.
+
+**Nodes** are members, with the target syntax of `consumers` as `id`
+(`method Class::name`, `constant Class::NAME`, `property Class::name`,
+`function name`, `global-constant NAME`), and the code outside any function
+in a file, `script <path>`. `kind` is `method`, `constant`, `property`,
+`function`, `global-constant` or `script`. `depth` is 0 for a changed member
+and otherwise the level at which either side first reached it. `base` and
+`head` are its lines on that side, or null where it does not exist; a
+script's lines span the uses found in it.
+
+| `change` | Member | Script |
+|---|---|---|
+| `modified` | The diff changes its lines and it exists on both sides. | Its file is in the diff on both sides. |
+| `added` | The diff changes its lines and it exists only on the head. | Its file exists only on the head side of the diff. |
+| `removed` | The diff changes its lines and it exists only on the base. | Its file exists only on the base side of the diff. |
+| `unchanged` | A consumer the diff does not touch. | Its file is not in the diff. |
+
+**Edges** go from the consumer to the member it uses. `base` and `head` list
+the lines of the uses on each side; a `kept` edge whose lists differ gained
+or lost uses. `via` is the using class when the use is a trait's
+`(new static())->member()`; `from` is then that class's copy of the trait
+method.
+
+| `change` | Meaning |
+|---|---|
+| `kept` | Used on both sides. |
+| `added` | Used only on the head, and the code around the use changed. |
+| `removed` | Used only on the base, and the code around the use changed. |
+| `now_resolves` | Used only on the head, from code the diff does not touch: a change elsewhere, such as a new class or a removed override, made the call land on the member. |
+| `no_longer_resolves` | Used only on the base, from code the diff does not touch: a change elsewhere, such as an override the branch added, sends the call to another member. |
+
+The code around a use is the method or function that holds it on that side,
+the trait's own method for a trait copy, or the whole file for code outside
+any function.
+
+`untyped` lists, per side, the files the analyzer could not type, whose uses
+were matched by name, and `index` counts each side's index as `consumers`
+does.
 
 ## `opcov serve`
 

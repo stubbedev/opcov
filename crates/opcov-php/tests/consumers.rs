@@ -1,9 +1,15 @@
 #[cfg(test)]
+#[path = "support/fixture.rs"]
+mod fixture;
+
+#[cfg(test)]
 mod consumers {
     use std::path::Path;
     use std::sync::OnceLock;
 
     use opcov_php::{Index, Project, Request};
+
+    use crate::fixture::project_copy;
 
     fn index() -> &'static Index {
         static INDEX: OnceLock<Index> = OnceLock::new();
@@ -141,6 +147,48 @@ mod consumers {
         assert!(
             found.is_empty(),
             "no use of render sits under app/Actions: {found:?}"
+        );
+    }
+
+    #[test]
+    fn a_variable_named_like_a_target_is_no_mention_but_a_static_property_is() {
+        let root = project_copy("consumers-variables");
+        std::fs::write(
+            root.join("app/Services/Settings.php"),
+            "<?php\n\nnamespace App\\Services;\n\nfinal class Settings\n{\n    public static string $zone = 'UTC';\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("app/Uses/Variables.php"),
+            "<?php\n\nnamespace App\\Uses;\n\nfinal class Variables\n{\n    public function local(): string\n    {\n        $zone = 'local';\n        return $zone;\n    }\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("app/Uses/StaticProperty.php"),
+            "<?php\n\nnamespace App\\Uses;\n\nuse App\\Services\\Settings;\n\nfinal class StaticProperty\n{\n    public function read(): string\n    {\n        return Settings:: $zone;\n    }\n}\n",
+        )
+        .unwrap();
+        let index = Index::build(&Project::open(&root).unwrap()).unwrap();
+        let request: Request = serde_json::from_str(
+            r#"{"targets": ["property App\\Services\\Settings::zone"], "within": ["app/Uses/Variables.php", "app/Uses/StaticProperty.php"]}"#,
+        )
+        .unwrap();
+        let search = index.uses(&request);
+        let found: Vec<String> = search
+            .uses
+            .iter()
+            .map(|found| return format!("{}:{} {}", found.path, found.line, found.target))
+            .collect();
+        assert_eq!(
+            (search.analysed, found),
+            (
+                1,
+                vec![
+                    "app/Uses/StaticProperty.php:11 property App\\Services\\Settings::zone"
+                        .to_owned()
+                ]
+            ),
+            "the $zone variable leaves Variables.php unanalysed; Settings:: $zone reads the static property"
         );
     }
 }
