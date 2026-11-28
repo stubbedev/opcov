@@ -11,6 +11,8 @@ as the release notes, and refuses to release a version that has no section here.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-28
+
 ### Added
 
 - `opcov graph --base <revision> [--head <revision>]` describes a change
@@ -317,7 +319,8 @@ changed-code gate's coverage step is about 314x faster than Xdebug path
 coverage. On a 4.97M-line corpus, compiling with every file selected takes
 about 1.6x plain compilation (`docs/scale.md`).
 
-[Unreleased]: https://github.com/stubbedev/opcov/compare/v0.5.0...main
+[Unreleased]: https://github.com/stubbedev/opcov/compare/v0.6.0...main
+[0.6.0]: https://github.com/stubbedev/opcov/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/stubbedev/opcov/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/stubbedev/opcov/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/stubbedev/opcov/compare/v0.3.0...v0.3.1
